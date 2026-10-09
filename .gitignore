@@ -28,3 +28,9 @@ tools/weixin-local-assistant/config.txt
 *.ts.net.crt
 *.ts.net.key
 /public/models/world-builder/
+
+# Android build artifacts
+android-shell/.gradle/
+android-shell/app/build/
+*.apk
+FloatShell-*.apk

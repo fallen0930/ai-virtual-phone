@@ -1,0 +1,338 @@
+/* ── 存储空间清理 App ── */
+
+.storage-cleaner-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--c-app-bg);
+  color: var(--c-text);
+}
+
+.storage-cleaner-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 总览卡片 ── */
+.storage-overview-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 18px;
+  background: linear-gradient(135deg, var(--c-icon-teal), var(--c-icon-violet));
+  border-radius: 18px;
+  color: white;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+
+.storage-overview-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+}
+
+.storage-overview-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.storage-overview-size {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+}
+
+.storage-overview-desc {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+/* ── 一键清理 ── */
+.quick-clean-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--c-card-bg);
+  border: 1px solid var(--c-card-border);
+  border-radius: 14px;
+  color: var(--c-text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.quick-clean-btn:hover:not(:disabled) {
+  background: var(--c-card-hover);
+  transform: translateY(-1px);
+}
+
+.quick-clean-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.quick-clean-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.quick-clean-btn svg:first-child {
+  color: var(--c-icon-amber);
+  flex-shrink: 0;
+}
+
+.quick-clean-size {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--c-icon-amber);
+  font-weight: 600;
+}
+
+/* ── 分类列表 ── */
+.storage-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.storage-category-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--c-card-bg);
+  border: 1px solid var(--c-card-border);
+  border-radius: 14px;
+  transition: background 0.2s ease;
+}
+
+.storage-category-item:hover {
+  background: var(--c-card-hover);
+}
+
+.storage-category-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.storage-category-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.storage-category-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.storage-category-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.storage-category-size {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text);
+  flex-shrink: 0;
+}
+
+.storage-category-bar {
+  height: 6px;
+  background: var(--c-card-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.storage-category-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.storage-category-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.storage-category-count {
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+
+.storage-category-desc {
+  font-size: 11px;
+  color: var(--c-text-tertiary);
+  text-align: right;
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-category-clean-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--c-card-border);
+  background: var(--c-bg);
+  color: var(--c-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.storage-category-clean-btn:hover:not(:disabled) {
+  background: #fef2f2;
+  color: #ef4444;
+  border-color: #fecaca;
+}
+
+.storage-category-clean-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── 空状态 / 扫描提示 ── */
+.storage-empty,
+.storage-scan-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  gap: 12px;
+  color: var(--c-text-tertiary);
+}
+
+.storage-empty svg {
+  color: var(--c-icon-teal);
+  opacity: 0.6;
+}
+
+.storage-empty p {
+  font-size: 14px;
+}
+
+.storage-scan-hint p {
+  font-size: 13px;
+  text-align: center;
+  max-width: 240px;
+}
+
+/* ── 底部提示 ── */
+.storage-footer-tip {
+  text-align: center;
+  padding: 4px 8px;
+}
+
+.storage-footer-tip p {
+  font-size: 12px;
+  color: var(--c-text-tertiary);
+  line-height: 1.5;
+}
+
+/* ── 清理确认弹窗 ── */
+.storage-clean-modal {
+  max-width: 320px;
+}
+
+.storage-clear-summary {
+  font-size: 14px;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.storage-clear-summary b {
+  color: var(--c-icon-rose);
+  font-weight: 700;
+}
+
+.storage-clear-desc {
+  font-size: 13px;
+  color: var(--c-text-secondary);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.storage-clear-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storage-clear-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--c-card-bg);
+  border: 1.5px solid var(--c-card-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  color: var(--c-text);
+  font-size: 14px;
+}
+
+.storage-clear-option:hover:not(:disabled) {
+  border-color: var(--c-icon-teal);
+}
+
+.storage-clear-option.is-selected {
+  border-color: var(--c-icon-rose);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.storage-clear-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.storage-clear-option-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.storage-clear-option-note {
+  flex: 1;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+  text-align: right;
+}
+
+.storage-clear-option-arrow {
+  color: var(--c-text-tertiary);
+  flex-shrink: 0;
+}

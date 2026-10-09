@@ -38,6 +38,7 @@ import { CheckPhoneApp } from "@/components/checkphone/checkphone-app";
 import { ShoppingApp } from "@/components/shopping/shopping-app";
 import { GameHubApp } from "@/components/game/game-hub-app";
 import { MixologyApp } from "@/components/mixology/mixology-app";
+import { StorageCleanerApp } from "@/components/storage-cleaner/storage-cleaner-app";
 import InterviewMagazineApp from "@/components/interview/interview-magazine-app";
 import { CoCreateApp } from "@/components/cocreate/cocreate-app";
 import { AppMarketApp } from "@/components/app-market/app-market-app";
@@ -4093,6 +4094,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     if (activeApp === "mixology") {
       return <MixologyApp onClose={() => setActiveApp(null)} />;
+    }
+
+    if (activeApp === "storage_cleaner") {
+      return <StorageCleanerApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     }
 
     if (activeApp === "appmarket") {

@@ -1,0 +1,53 @@
+AI Virtual Phone
+
+This project is independently implemented and licensed under the GNU Affero
+General Public License v3.0 only (AGPL-3.0-only).
+
+Some product ideas and interaction patterns were inspired by SillyTavern,
+including presets, regex-based processing, and world/lore book concepts.
+
+SillyTavern: https://github.com/SillyTavern/SillyTavern
+SillyTavern is licensed under AGPL-3.0.
+
+Bundled fonts (public/fonts/):
+
+- ximai.woff2: 字制区喜脉喜欢体 (FontQu Smile), © 探火（深圳）品牌策划有限公司,
+  designer 肖维野纳. Licensed under the SIL Open Font License 1.1.
+- xiaozhitiao.woff2: 鸿雷小纸条青春体, © 鸿雷字记 (HongLei Design).
+  Released as a free-for-commercial-use font (via MaoKen / 猫啃网).
+- huiwen.woff2, notewall/huiwen-upload.woff2: 汇文明朝体, a free and open font.
+- notewall/chen-yuluoyan-thin.woff2: 辰宇落雁体 (Chen Yu Luo Yan), licensed
+  under the SIL Open Font License 1.1.
+- 字体/MISANS-*.woff2: MiSans, © Xiaomi. Free for commercial use and
+  redistribution under the MiSans font license.
+- special-elite.woff2: Special Elite, © Brian J. Bonislawsky DBA Astigmatic
+  (AOETI). Licensed under the Apache License, Version 2.0 (via Google Fonts).
+- splash/, interview/, game-hall/ fonts (Inter, JetBrains Mono, Instrument
+  Serif, Major Mono Display, Bodoni Moda, Cinzel, EB Garamond, Long Cang,
+  Noto Serif SC, Press Start 2P, Caveat, Fredoka, Zen Maru Gothic): from
+  Google Fonts, licensed under the SIL Open Font License 1.1 (Inter,
+  JetBrains Mono under OFL 1.1 as published by their projects).
+
+In-app font picker ids "huangyou" / "shangshangqian" are legacy identifiers
+kept for stored-data compatibility; the actual bundled fonts are the
+commercially-licensed 喜脉喜欢体 and 鸿雷小纸条青春体 listed above.
+
+Bundled artwork:
+
+- public/widgets/*老橙子素材*.png: commercial sticker artwork by 老橙子,
+  used under a commercial-use license purchased by the project author.
+  These image files are NOT covered by this project's AGPL-3.0 license.
+  They are included solely as part of this application's built-in UI.
+  Do not extract, reuse, or redistribute them outside this project.
+  （此素材为作者购买的商用素材，不随本项目开源授权；仅作为应用内置
+  界面素材使用，禁止单独提取、二次分发或用于其他项目。）
+- public/models/ 3D assets: generated with Tripo AI under a paid plan
+  (outputs owned by the project author).
+- assets/glass-icons/*.svg (inlined into the app bundle): glass-style icons © Nucleo (https://nucleoapp.com),
+  used under the Nucleo license, which permits up to 100 icons in open source
+  projects provided this copyright notice is included. Colors were adjusted to
+  match this app's palette. These icon files are NOT covered by this project's
+  AGPL-3.0 license; do not extract or redistribute them as an icon set.
+  （玻璃图标来自 Nucleo，按其授权中"开源项目 ≤100 个图标并附版权声明"的条款使用，
+  颜色按本应用配色做了调整；这些文件不随本项目 AGPL 授权，禁止单独提取或作为
+  图标库再分发。）

@@ -1,0 +1,1457 @@
+/* ── Phone shell ── */
+
+.phone-shell-wrap {
+  --phone-total-width: calc(var(--phone-screen-width) + (2 * (var(--phone-frame-size) + var(--phone-case-padding) + var(--phone-case-border-size))));
+  display: grid;
+  gap: 10px;
+  width: calc(var(--phone-total-width) + 8px);
+  margin-inline: auto;
+  font-family: var(--app-font-family);
+}
+
+/* Outer metal mid-frame (stainless steel band) */
+.phone-case {
+  position: relative;
+  width: var(--phone-total-width);
+  margin-inline: auto;
+  border-radius: var(--phone-case-radius);
+  padding: var(--phone-case-padding);
+  border: 0.5px solid rgba(0, 0, 0, 0.35);
+  background:
+    linear-gradient(175deg,
+      #a8adb2 0%,
+      #8a9096 6%,
+      #6a7078 16%,
+      #565c64 30%,
+      #7a8088 42%,
+      #9aa0a6 48%,
+      #6e747c 56%,
+      #585e66 68%,
+      #788088 80%,
+      #969ca4 90%,
+      #a0a6ac 100%);
+  box-shadow:
+    0 30px 60px rgba(60, 60, 60, 0.4),
+    0 10px 24px rgba(80, 80, 80, 0.25),
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    inset 1.5px 0 0 rgba(255, 255, 255, 0.4),
+    inset -1px 0 0 rgba(0, 0, 0, 0.18);
+}
+
+/* Inner black bezel */
+.phone-frame {
+  position: relative;
+  border-radius: var(--phone-frame-radius);
+  padding: var(--phone-frame-size);
+  background: #0c0c0c;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.02);
+}
+
+/* Left side buttons — silent switch */
+.phone-case::before {
+  content: "";
+  position: absolute;
+  left: -2.5px;
+  top: 155px;
+  width: 3px;
+  height: 22px;
+  border-radius: 2px 0 0 2px;
+  background: linear-gradient(90deg, #6e747a, #8e949a, #6e747a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    -1px 0 3px rgba(0, 0, 0, 0.15);
+}
+
+/* Left side — volume buttons */
+.phone-frame::before {
+  content: "";
+  position: absolute;
+  left: -5.5px;
+  top: 200px;
+  width: 3px;
+  height: 32px;
+  border-radius: 2px 0 0 2px;
+  background: linear-gradient(90deg, #6e747a, #8e949a, #6e747a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    -1px 0 3px rgba(0, 0, 0, 0.15),
+    0 42px 0 0 #b8bcc0;
+}
+
+/* Left side — volume down */
+.phone-frame::after {
+  content: "";
+  position: absolute;
+  left: -5.5px;
+  top: 244px;
+  width: 3px;
+  height: 32px;
+  border-radius: 2px 0 0 2px;
+  background: linear-gradient(90deg, #6e747a, #8e949a, #6e747a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    -1px 0 3px rgba(0, 0, 0, 0.15);
+}
+
+/* Right side — power/side button */
+.phone-case::after {
+  content: "";
+  position: absolute;
+  right: -2.5px;
+  top: 218px;
+  width: 3px;
+  height: 56px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, #6e747a, #8e949a, #6e747a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    1px 0 3px rgba(0, 0, 0, 0.15);
+  z-index: 1;
+}
+
+/* ── Phone screen ── */
+
+.phone-shell {
+  position: relative;
+  width: var(--phone-screen-width);
+  height: var(--phone-screen-height);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--phone-screen-radius);
+  background: #ffffff;
+  overflow: hidden;
+  padding: 12px;
+  isolation: isolate;
+}
+
+.phone-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.phone-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-color: #c2e2f0;
+  background-image:
+    radial-gradient(ellipse 160% 140% at 90% 0%, rgba(60, 130, 210, 0.75) 0%, rgba(90, 160, 225, 0.35) 40%, transparent 80%),
+    radial-gradient(ellipse 160% 140% at 5% 100%, rgba(100, 218, 195, 0.4) 0%, rgba(150, 235, 218, 0.15) 40%, transparent 80%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  transition: opacity 220ms ease;
+}
+
+/* ── Status bar ── */
+
+/* --status-bar-color 跟随全局文字色，自动适应明暗背景 */
+.phone-shell {
+  --status-bar-color: var(--c-text-title, #1a1a1a);
+}
+
+.phone-status-bar {
+  position: absolute;
+  top: var(--status-bar-top, 12px);
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: var(--status-bar-height, 36px);
+  padding: 0 24px;
+  z-index: 10;
+  color: var(--status-bar-color);
+  font-family: inherit;
+  transition: color 0.3s ease;
+}
+
+.status-island {
+  width: 126px;
+  height: 36px;
+  border-radius: 20px;
+  background: #0a0a0a;
+  visibility: var(--status-island-visibility, visible);
+}
+
+.phone-shell-wrap[data-hide-top-bar="1"] .phone-status-bar>* {
+  visibility: hidden;
+}
+
+.status-time {
+  font-size: calc(13px*var(--app-text-scale,1));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  justify-self: start;
+  line-height: 1;
+  margin-left: 14px;
+  font-feature-settings: "tnum" 1;
+}
+
+.status-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+  margin-right: 14px;
+}
+
+.status-signal {
+  width: 17px;
+  height: 12px;
+  display: block;
+  color: var(--status-bar-color);
+  transition: color 0.3s ease;
+}
+
+.status-wifi {
+  width: 16px;
+  height: 12px;
+  display: block;
+  color: var(--status-bar-color);
+  transition: color 0.3s ease;
+}
+
+.status-battery {
+  width: 26px;
+  height: 12px;
+  display: block;
+  color: var(--status-bar-color);
+  transition: color 0.3s ease;
+  overflow: visible;
+}
+
+/* ── Hide case mode ── */
+
+.phone-shell-wrap[data-hide-case="1"] {
+  --phone-case-padding: 0px;
+  --phone-case-border-size: 0px;
+  --phone-frame-size: 0px;
+  --phone-frame-radius: var(--phone-screen-radius);
+  --phone-case-radius: var(--phone-screen-radius);
+}
+
+.phone-shell-wrap[data-hide-case="1"] .phone-case {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.phone-shell-wrap[data-hide-case="1"] .phone-case::before,
+.phone-shell-wrap[data-hide-case="1"] .phone-case::after {
+  display: none;
+}
+
+.phone-shell-wrap[data-hide-case="1"] .phone-frame {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.phone-shell-wrap[data-hide-case="1"] .phone-frame::before,
+.phone-shell-wrap[data-hide-case="1"] .phone-frame::after {
+  display: none;
+}
+
+/* ── Desktop workspace ── */
+
+.phone-workspace {
+  margin-top: var(--home-grid-top-offset);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* 仅桌面态外扩吃掉壳的 12px 内边距：图标/组件的投影原本渗入内边距区、
+   在工作区 overflow 裁剪边上被生硬截断，形成一条纵向"背景接缝"。外扩后
+   裁剪边与屏幕边重合，阴影自然淡出；网格列仍按屏幕居中，位置不变。
+   App 打开时（.app-open）必须保持原始宽度，否则所有 App 页面会被拓宽。 */
+.phone-workspace:not(.app-open) {
+  margin-inline: -12px;
+}
+.phone-workspace img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
+}
+
+/* Swipe layer wraps the icon grid to allow drag-to-switch pages */
+.phone-swipe-layer {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  will-change: transform;
+  /* Single source of truth: --swipe-page (React) = current page; --swipe-drag
+     (set imperatively while the finger is down) = live offset. */
+  transform: translate3d(calc(-100% * var(--swipe-page, 0) + var(--swipe-drag, 0px)), 0, 0);
+  transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* While dragging we want 1:1 finger tracking, so suppress the settle transition. */
+.phone-swipe-layer.phone-swipe-dragging {
+  transition: none;
+}
+
+/* ── Icon grid ── */
+
+.icon-grid {
+  flex: 0 0 100%;
+  width: 100%;
+  -webkit-touch-callout: none;
+  /* 窄视口（系统显示大小调大，CSS 视口 330~370px）下格子收缩；
+     视口 ≥374px 算出值 ≥66 被钳回 66px——正常手机零变化。dock 用同一公式保持上下对齐。 */
+  --slot-size: clamp(56px, calc((100vw - 108px) / 4), 66px);
+  --slot-gap-x: 20px;
+  --slot-gap-y: var(--home-row-gap-y);
+  --slot-icon-width: min(62px, var(--slot-size));
+  --slot-icon-height: min(62px, var(--slot-size));
+  --slot-row-step: calc(var(--slot-icon-height) + var(--slot-gap-y));
+  --slot-icon-offset-x: calc((var(--slot-size) - var(--slot-icon-width)) / 2);
+  margin-top: 2px;
+  display: grid;
+  grid-template-columns: repeat(4, var(--slot-size));
+  grid-template-rows: repeat(6, minmax(0, 1fr));
+  column-gap: var(--slot-gap-x);
+  row-gap: var(--slot-gap-y);
+  min-height: 0;
+  justify-content: center;
+  padding: 0 0 var(--home-grid-bottom-trim);
+}
+
+/* 三种网格模式统一使用 --home-grid-bottom-trim：此前这里硬编码 1px，
+   把变量在首页/组件页架空，导致底部留白只对纯图标翻页生效。 */
+.icon-grid-page1 {
+  padding-bottom: var(--home-grid-bottom-trim);
+}
+
+
+/* Explicit grid mode (used when widgets present) */
+.icon-grid-explicit {
+  padding-bottom: var(--home-grid-bottom-trim);
+}
+
+.icon-grid .widget-glass {
+  justify-self: start;
+  align-self: start;
+  margin-left: var(--slot-icon-offset-x);
+}
+
+.icon-grid .widget-1x2 {
+  width: calc(var(--slot-icon-width) + var(--slot-size) + var(--slot-gap-x));
+  height: var(--slot-icon-height);
+}
+
+.icon-grid .widget-2x2 {
+  width: calc(var(--slot-icon-width) + var(--slot-size) + var(--slot-gap-x));
+  height: calc(var(--slot-icon-height) + var(--slot-row-step));
+}
+
+.icon-grid .widget-1x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: 58px;
+}
+
+.icon-grid .widget-2x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + var(--slot-row-step));
+}
+
+.icon-grid .widget-3x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (2 * var(--slot-row-step)));
+}
+
+/* 扩展的大型网格公式 */
+.icon-grid .widget-1x1 {
+  width: var(--slot-icon-width);
+  height: var(--slot-icon-height);
+}
+
+.icon-grid .widget-2x1 {
+  width: var(--slot-icon-width);
+  height: calc(var(--slot-icon-height) + var(--slot-row-step));
+}
+
+.icon-grid .widget-2x3 {
+  width: calc(var(--slot-icon-width) + (2 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + var(--slot-row-step));
+}
+
+.icon-grid .widget-3x2 {
+  width: calc(var(--slot-icon-width) + var(--slot-size) + var(--slot-gap-x));
+  height: calc(var(--slot-icon-height) + (2 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-3x3 {
+  width: calc(var(--slot-icon-width) + (2 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (2 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-4x2 {
+  width: calc(var(--slot-icon-width) + var(--slot-size) + var(--slot-gap-x));
+  height: calc(var(--slot-icon-height) + (3 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-4x3 {
+  width: calc(var(--slot-icon-width) + (2 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (3 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-4x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (3 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-5x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (4 * var(--slot-row-step)));
+}
+
+.icon-grid .widget-6x4 {
+  width: calc(var(--slot-icon-width) + (3 * (var(--slot-size) + var(--slot-gap-x))));
+  height: calc(var(--slot-icon-height) + (5 * var(--slot-row-step)));
+}
+
+.icon-item,
+.dock-item {
+  border: 0;
+  background: transparent;
+  border-radius: 18px;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 5px;
+  width: var(--slot-size);
+  min-height: 84px;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: none;
+  /* grid-row/grid-column 不可过渡（让位平滑由 JS FLIP 实现） */
+  transition: transform 0.4s cubic-bezier(0.25, 1.25, 0.3, 1), opacity 0.3s ease;
+}
+
+.icon-item:active,
+.dock-item:active {
+  transform: scale(0.88);
+  opacity: 0.8;
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.1s ease;
+}
+
+.icon-glyph-box {
+  /* 跟随格子收缩（无 --slot-size 上下文时回退 58px 原值） */
+  width: min(58px, var(--slot-size, 58px));
+  height: min(58px, var(--slot-size, 58px));
+  border-radius: 16px;
+  border: none;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--c-desktop-icon-box, #ffffff);
+  box-shadow: none;
+}
+
+/* Base Effects overrides for icon-glyph-box */
+/* 立体打光整体减淡：斜光层次保留，各层高光强度降约四成，凸面感变弱 */
+.phone-shell[data-icon-effect="glass"] .icon-glyph-box {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.17),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 6%, transparent),
+      rgba(255, 255, 255, 0.07)),
+    color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.28),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 8px 32px rgb(0 0 0 / calc(0.15 * var(--desktop-shadow-strength, 0))),
+    0 0 18px color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent);
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.phone-shell[data-icon-effect="glass"] .icon-glyph-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.06) 42%,
+      transparent 72%);
+  mix-blend-mode: screen;
+}
+
+.phone-shell[data-icon-effect="glass"] .icon-glyph-box::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  z-index: 3;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.48),
+      rgba(255, 255, 255, 0.14) 40%,
+      rgba(255, 255, 255, 0.12) 62%,
+      rgba(255, 255, 255, 0.18));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.phone-shell[data-glass-pass="1"][data-icon-effect="glass"] .icon-glyph-box {
+  backdrop-filter: blur(22.01px) saturate(140%);
+  -webkit-backdrop-filter: blur(22.01px) saturate(140%);
+}
+
+.phone-shell[data-icon-effect="transparent"] .icon-glyph-box {
+  /** background-color: transparent !important; */
+  box-shadow: none !important;
+}
+
+.icon-glyph-box-skin {
+  overflow: hidden;
+  border: none;
+}
+
+.icon-skin-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+}
+
+
+.icon-glyph {
+  width: 28px;
+  height: 28px;
+  color: var(--c-desktop-icon, #2f343b);
+  position: relative;
+  z-index: 2;
+}
+
+.icon-glyph-hidden {
+  opacity: 0;
+}
+
+.desktop-icon-badge {
+  position: absolute;
+  z-index: 5;
+  top: 4px;
+  right: 4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #ef4444;
+  border: 1.5px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.22);
+  font-size: calc(9.5px*var(--app-text-scale,1));
+  font-weight: 850;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.icon-label {
+  font-size: calc(9.9px*var(--app-text-scale,1));
+  font-weight: 500;
+  text-align: center;
+  color: var(--c-home-label);
+  text-shadow: none;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Edit mode (long-press drag) ── */
+
+.edit-mode .icon-item {
+  animation: jiggle 0.22s ease-in-out infinite;
+}
+/* FLIP 让位动画进行中暂停抖动——CSS animation 的 transform 会覆盖行内 FLIP 位移 */
+.edit-mode .icon-item[data-flip-active] {
+  animation: none;
+}
+.edit-mode .icon-item:nth-child(even) {
+  animation-delay: -0.11s;
+  animation-duration: 0.26s;
+}
+.edit-mode .widget-glass {
+  animation: jiggle 0.28s ease-in-out infinite;
+  animation-delay: -0.06s;
+}
+.edit-mode .icon-item.dragging,
+.edit-mode .widget-drag-wrap.dragging .widget-glass {
+  opacity: 0.25;
+  animation: none;
+}
+/* 编辑态下 DIY code 组件的 iframe 放弃指针事件：否则按在 iframe 上的
+   pointerdown 进不了宿主的拖拽处理，组件拖不动 */
+.edit-mode .widget-glass iframe {
+  pointer-events: none;
+}
+/* Dock icons jiggle & drag just like grid icons in edit mode. */
+.dock.edit-mode .dock-item {
+  animation: jiggle 0.22s ease-in-out infinite;
+}
+.dock.edit-mode .dock-item[data-flip-active] {
+  animation: none;
+}
+.dock.edit-mode .dock-item:nth-child(even) {
+  animation-delay: -0.11s;
+  animation-duration: 0.26s;
+}
+.dock.edit-mode .dock-item.dragging {
+  opacity: 0.25;
+  animation: none;
+}
+.widget-drag-wrap {
+  display: contents;
+  -webkit-touch-callout: none;
+}
+
+.icon-grid .widget-glass {
+  /* grid-row/grid-column 不可过渡（让位平滑由 JS FLIP 实现） */
+  transition: transform 0.4s cubic-bezier(0.25, 1.25, 0.3, 1), opacity 0.3s ease;
+}
+
+.icon-grid .widget-glass:active {
+  transform: scale(0.95);
+  opacity: 0.85;
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.1s ease;
+}
+
+.drag-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+  pointer-events: none;
+  display: none;
+  will-change: transform;
+}
+.drag-ghost > * {
+  animation: none !important;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.28));
+  transform: scale(1.12);
+  transform-origin: center center;
+}
+
+.drop-indicator {
+  border-radius: 14px;
+  /* 弱化存在感：去填充、细实线、低透明度 */
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+  justify-self: center;
+  align-self: start;
+  width: var(--slot-icon-width, 62px);
+  height: var(--slot-icon-height, 62px);
+}
+
+.widget-delete-btn {
+  display: none;
+  justify-self: end;
+  align-self: start;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: calc(15px*var(--app-text-scale,1));
+  line-height: 20px;
+  text-align: center;
+  padding: 0;
+  margin-top: -4px;
+  margin-right: 2px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+.edit-mode .widget-delete-btn {
+  display: block;
+  animation: none;
+}
+
+.edit-mode-edit,
+.edit-mode-done {
+  position: absolute;
+  top: 60px;
+  z-index: 400;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border: none;
+  border-radius: 18px;
+  padding: 7px 18px;
+  font-size: calc(14px*var(--app-text-scale,1));
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.edit-mode-edit { left: 16px; }
+.edit-mode-done { right: 16px; }
+
+/* ── Widget Picker Bottom Sheet ── */
+.widget-picker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: flex-end;
+}
+.widget-picker-sheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  width: 100%;
+  max-height: 65%;
+  background: var(--c-panel);
+  border-radius: 20px 20px 0 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.widget-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.widget-picker-sheet .wm-cat-item .widget-glass {
+  pointer-events: none;
+}
+
+/* ── Page controls ── */
+
+.page-controls {
+  margin-top: 6px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(234, 246, 240, 0.48);
+}
+
+.dot.active {
+  width: 8px;
+  height: 8px;
+  background: rgba(245, 253, 249, 0.96);
+  box-shadow: 0 0 0 1px rgba(241, 251, 246, 0.5);
+}
+
+.dot-btn {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* ── Dock ── */
+
+.dock {
+  /* 宽度随图标数量自适应：只有 3 个时 dock 就窄一格，不再留空位。
+     --dock-count 由 JS 按当前 dock 图标数注入（缺省 4，保证首帧/SSR 观感不变）。 */
+  --dock-count: 4;
+  --slot-size: clamp(56px, calc((100vw - 108px) / 4), 66px);
+  --slot-gap-x: 20px;
+  margin-top: 8px;
+  margin-bottom: var(--home-dock-lift);
+  margin-inline: auto;
+  width: min(calc((var(--dock-count) * var(--slot-size)) + ((var(--dock-count) - 1) * var(--slot-gap-x)) + 30px), calc(100% - 8px));
+  /* 默认圆角：9999px(全胶囊)显得太圆，收到 32px 圆角矩形；主题仍可用 --dock-radius 覆盖 */
+  border-radius: var(--dock-radius, 32px);
+  border: var(--dock-border, none);
+  background: var(--c-home-glass);
+  /* 底板高度：图标(58px)在此高度内垂直居中，上下留白 = (高度-58)/2。
+     78→92 让上下各约 10px 增至约 17px，不再挤。可由主题 --dock-height 覆盖。 */
+  min-height: var(--dock-height, 92px);
+  /* 上下 0 内边距 + 网格居中：图标在胶囊内几何对称（旧值 10px/5px 造成图标偏下） */
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--dock-count), var(--slot-size));
+  column-gap: var(--slot-gap-x);
+  row-gap: 0;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(var(--ui-blur-heavy)) saturate(var(--ui-saturate));
+  -webkit-backdrop-filter: blur(var(--ui-blur-heavy)) saturate(var(--ui-saturate));
+  position: relative;
+  overflow: hidden;
+  z-index: 2;
+  transform: translateZ(0);
+  will-change: transform, backdrop-filter;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.phone-shell[data-glass-pass="1"] .dock {
+  backdrop-filter: blur(calc(var(--ui-blur-heavy) + 0.01px)) saturate(var(--ui-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--ui-blur-heavy) + 0.01px)) saturate(var(--ui-saturate));
+}
+
+/* 立体打光整体减淡：与图标同步降约四成 */
+.phone-shell[data-icon-effect="glass"] .dock:not([data-skinned]) {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.14),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 5%, transparent),
+      rgba(255, 255, 255, 0.05)),
+    color-mix(in srgb, var(--c-home-glass, rgba(255, 255, 255, 0.3)) 55%, transparent);
+  border: none;
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.26),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.04),
+    0 8px 32px rgb(0 0 0 / calc(0.14 * var(--desktop-shadow-strength, 0))),
+    0 0 22px color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent);
+  isolation: isolate;
+}
+
+.phone-shell[data-icon-effect="glass"] .dock:not([data-skinned])::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      transparent 8%,
+      rgba(255, 255, 255, 0.32) 50%,
+      transparent 92%) top 0 left 8% / 84% 2px no-repeat,
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.14) 0%,
+      rgba(255, 255, 255, 0.05) 42%,
+      transparent 74%);
+  mix-blend-mode: screen;
+}
+
+.phone-shell[data-icon-effect="glass"] .dock:not([data-skinned])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.45),
+      rgba(255, 255, 255, 0.11) 40%,
+      rgba(255, 255, 255, 0.10) 62%,
+      rgba(255, 255, 255, 0.16));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.phone-shell[data-glass-pass="1"][data-icon-effect="glass"] .dock:not([data-skinned]) {
+  backdrop-filter: blur(24.01px) saturate(140%);
+  -webkit-backdrop-filter: blur(24.01px) saturate(140%);
+}
+
+.dock[data-skinned] {
+  border: none;
+}
+
+.phone-shell[data-borders="on"] .dock {
+  border: var(--desktop-outline-width, 1.5px) solid var(--desktop-outline-color, var(--user-border-color, #000));
+}
+
+.dock-skin-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+}
+
+.dock .icon-label {
+  display: none;
+}
+
+.dock .dock-item {
+  width: var(--slot-size);
+  min-height: 72px;
+  border-radius: 18px;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.dock .dock-glyph-box {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+}
+
+.dock .icon-glyph {
+  width: 28px;
+  height: 28px;
+}
+
+/* ── App pane (placeholder, empty) ── */
+
+.phone-app-pane {
+  margin-top: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+/* ── App open state ── */
+
+.phone-workspace.app-open {
+  margin-top: 0;
+  flex: 1 1 auto;
+}
+
+.phone-workspace.app-open .phone-app-pane {
+  margin-top: 0;
+  flex: 1 1 auto;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.phone-shell.app-open-shell {
+  padding: 0;
+}
+
+.phone-shell.app-open-shell::before {
+  display: none;
+}
+
+.phone-shell.app-open-shell .phone-wallpaper {
+  opacity: 0 !important;
+  transition-duration: 0s !important;
+  /* hide instantly so it doesn't bleed through transparent app during fade-in */
+}
+
+
+/* ── Notice toast ── */
+
+.phone-shell-notice {
+  position: absolute;
+  left: 50%;
+  top: 46px;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(92%, 320px);
+  border-radius: 14px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.9);
+  color: rgba(30, 30, 30, 0.92);
+  padding: 10px 12px;
+  font-size: calc(11.7px*var(--app-text-scale,1));
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 12px 24px rgba(60, 60, 60, 0.18);
+  pointer-events: none;
+}
+
+/* ── Standalone page (characters etc.) ── */
+
+.page-frame {
+  width: min(980px, 94vw);
+  margin: 0 auto;
+  padding: 20px 0 36px;
+}
+
+/* 更窄视口（≤373px）：按 390px 设计稿整体等比缩放（格 66→16.92vw、
+   距 20→5.13vw、图标 58→14.87vw、dock 354→90.77vw），窄屏呈现与正常
+   手机完全相同的比例观感，无多余留白；网格/dock 同源，天然对齐。
+   ≥374px 不受影响。 */
+@media (max-width: 373px) and (hover: none) and (pointer: coarse) {
+  .icon-grid,
+  .dock {
+    --slot-size: 16.92vw;
+    --slot-gap-x: 5.13vw;
+    --slot-icon-width: 15.9vw;
+    --slot-icon-height: 15.9vw;
+  }
+  .icon-glyph-box {
+    width: 14.87vw;
+    height: 14.87vw;
+  }
+  .dock {
+    /* 同样按数量自适应；count=4 时等于原 90.77vw。 */
+    width: min(calc((var(--dock-count) * var(--slot-size)) + ((var(--dock-count) - 1) * var(--slot-gap-x)) + 30px), calc(100% - 8px));
+  }
+  .dock .dock-glyph-box {
+    width: 14.87vw;
+    height: 14.87vw;
+  }
+}
+
+/* ── Mobile responsive ── */
+
+@media (max-width: 500px) and (hover: none) and (pointer: coarse) {
+
+  /* 用户在设置里显式开启「显示系统状态栏」且运行时不在全屏时，控制器才会挂
+     data-pwa-display-mode 标记（见 pwa-manifest-injector）：此时所有 App 共用系统
+     安全区，不再重复预留 48px 虚拟状态栏。未开启开关的用户（含 iOS 装机用户，
+     iOS 永远报 standalone）不受影响，保持沉浸外观。 */
+  html[data-pwa-display-mode="standalone"] .phone-shell,
+  html[data-pwa-display-mode="minimal-ui"] .phone-shell,
+  html[data-pwa-display-mode="browser"] .phone-shell {
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --phone-titlebar-safe-top: env(safe-area-inset-top, 0px);
+    --page-header-safe-top: env(safe-area-inset-top, 0px);
+    --home-grid-top-offset: calc(env(safe-area-inset-top, 0px) + 16px);
+  }
+
+  html[data-pwa-display-mode="standalone"] .phone-shell > .phone-status-bar,
+  html[data-pwa-display-mode="minimal-ui"] .phone-shell > .phone-status-bar,
+  html[data-pwa-display-mode="browser"] .phone-shell > .phone-status-bar {
+    display: none;
+  }
+
+  html[data-pwa-display-mode="standalone"] .phone-shell-wrap,
+  html[data-pwa-display-mode="minimal-ui"] .phone-shell-wrap,
+  html[data-pwa-display-mode="browser"] .phone-shell-wrap {
+    margin-top: 0;
+  }
+
+  :root {
+    --phone-screen-width: 100vw;
+    --phone-screen-height: 100lvh;
+  }
+
+  html,
+  body {
+    overflow: hidden;
+    width: 100%;
+    height: 100lvh;
+    background: var(--c-page-body-bg);
+  }
+
+  .app-root {
+    width: 100vw;
+    height: 100lvh;
+    padding: 0;
+    display: flex;
+    justify-content: flex-start;
+    align-items: flex-start;
+    overflow: hidden;
+    background: var(--c-page-body-bg);
+  }
+
+  .phone-shell-wrap {
+    --phone-case-padding: 0px;
+    --phone-case-border-size: 0px;
+    --phone-frame-size: 0px;
+    --phone-screen-radius: 0px;
+    --phone-frame-radius: 0px;
+    --phone-case-radius: 0px;
+    width: var(--phone-screen-width);
+    margin-inline: 0;
+    gap: 0;
+    transform-origin: top left;
+    /* 状态栏占位上移：部分安卓浏览器不允许网页绘制到真实状态栏，视口从状态栏下方开始；
+       而缩放仍按完整屏高算，844 设计稿被拉成整屏高、却只能从状态栏下方画起，底部被切。
+       用负上边距把整块画面上移 --status-bar-drop 像素：顶部那段（虚拟状态栏区域）超出
+       .app-root 被裁掉，底部栏随之顶回可视区。上移量可在「状态栏」弹窗里按设备调节，
+       让它约等于真实状态栏高度即可铺满。0 = 不上移（iOS 等能全屏的浏览器保持 0）。 */
+    margin-top: calc(-1 * var(--status-bar-drop, 0px));
+    transform: translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px)), 0);
+    transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+
+  .phone-shell-wrap .phone-case {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .phone-shell-wrap .phone-case::before,
+  .phone-shell-wrap .phone-case::after {
+    display: none;
+  }
+
+  .phone-shell-wrap .phone-frame {
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .phone-shell-wrap .phone-frame::before,
+  .phone-shell-wrap .phone-frame::after {
+    display: none;
+  }
+
+  .app-root.splash-root {
+    width: 100vw;
+    height: 100lvh;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: hidden;
+    background: var(--c-page-body-bg);
+  }
+
+  .splash-shell-wrap {
+    width: var(--phone-screen-width);
+    transform-origin: top left;
+  }
+
+  .splash-shell-wrap .phone-case,
+  .splash-shell-wrap .phone-frame {
+    width: var(--phone-screen-width);
+  }
+}
+
+.settings-main-menu,
+.appearance-main-menu {
+  padding-bottom: calc(var(--safe-area-bottom, 0px) + 28px);
+}
+
+/* ══════════════════════════════════════════
+   Global Visual Overrides (Shadows & Borders)
+   ══════════════════════════════════════════ */
+/* 扁平态图标阴影：强度由变量控制 */
+.phone-shell:not([data-icon-effect="glass"]) .icon-glyph-box {
+  box-shadow: 0 4px 12px rgb(0 0 0 / calc(0.08 * var(--desktop-shadow-strength, 0)));
+}
+
+.phone-shell[data-borders="on"] .icon-glyph-box {
+  border: var(--desktop-outline-width, 1.5px) solid var(--desktop-outline-color, var(--user-border-color, #000)) !important;
+}
+
+/* ── 桌面文件夹 ──────────────────────────────────────── */
+/* tile 底板复用 .icon-glyph-box：扁平/毛玻璃、底色、阴影全部跟随
+   个性化装扮里的图标材质设定，文件夹永远和图标一个质感。 */
+
+/* 迷你格铺在玻璃打光层(z1)之上、描边(z3)之下；2×2 最多 4 个，够大够认 */
+.folder-mini-grid {
+  position: absolute;
+  inset: 15%;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 10%;
+  pointer-events: none;
+}
+
+.folder-mini {
+  position: relative;
+  border-radius: 26%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 46%, transparent);
+}
+
+/* 毛玻璃态：迷你格用与大图标同源的打光配方（斜向高光 + 底色透出 + 内描边）。
+   不用真 backdrop-filter——嵌在已有 backdrop-filter 的玻璃盒里采样不可靠，
+   而且每个文件夹 4 个迷你格的实时模糊太贵；身后本来就是 tile 模糊好的壁纸，
+   叠上高光就是"霜上加霜"的效果。 */
+.phone-shell[data-icon-effect="glass"] .folder-mini {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.32),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent) 45%,
+      rgba(255, 255, 255, 0.10)),
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent),
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent)),
+    rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 0.5px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -0.5px 0.5px rgba(255, 255, 255, 0.10);
+}
+
+.phone-shell[data-icon-effect="flat"] .folder-mini {
+  background: color-mix(in srgb, var(--c-desktop-icon, #2f343b) 12%, transparent);
+}
+
+.folder-mini-glyph {
+  width: 62%;
+  height: 62%;
+  color: var(--c-desktop-icon, #2f343b);
+}
+
+/* 拖拽悬停：即将合并成组的目标高亮（松手入组） */
+.icon-item.merge-target .icon-glyph-box {
+  transform: scale(1.16);
+  box-shadow:
+    0 0 0 2.5px color-mix(in srgb, var(--c-desktop-icon, #ffffff) 65%, transparent),
+    0 6px 22px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.18s ease;
+}
+.edit-mode .icon-item.merge-target {
+  animation: none; /* 高亮时停一下抖动，目标更醒目 */
+}
+
+/* ── 文件夹展开面板 ── */
+.folder-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 700; /* 盖过 dock(300)/page-controls(400)，低于 drag-ghost(9999) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  background: rgba(15, 18, 26, 0.28);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  animation: folder-overlay-in 0.2s ease;
+}
+
+@keyframes folder-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.folder-name-input {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  text-align: center;
+  width: 70%;
+  color: var(--c-home-label, #ffffff);
+  font-size: calc(17px * var(--app-text-scale, 1));
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+  outline: none;
+  border-radius: 10px;
+  padding: 4px 8px;
+}
+.folder-name-input:focus {
+  background: color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 26%, transparent);
+  text-shadow: none;
+}
+
+.folder-panel {
+  /* 四边等距的账（以图标"盒"边缘计，标签算在留白里，和 iOS 一致）：
+     侧距 = (212 - 2×58) / 3 = 32；上距 = padding-top 32；
+     下距 = 行内标签区 26 + padding-bottom 6 = 32。改尺寸要一起改。 */
+  width: min(212px, 78%);
+  border-radius: 30px;
+  padding: 0;
+  /* 扁平材质：面板底色直接用图标底色本身——文件夹是"放大的图标盒"，
+     材质与颜色都跟图标走（不再垫组件卡面 --c-home-card，那是组件的颜色）；
+     图标底色半透明时配 backdrop 模糊，透出的壁纸和图标盒同一种朦胧 */
+  background: var(--c-desktop-icon-box, #ffffff);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  animation: folder-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 面板即图标盒：成员标题用图标主色，与图标盒的对比关系天然成立 */
+.phone-shell[data-icon-effect="flat"] .folder-app .icon-label {
+  color: var(--c-desktop-icon, #2f343b);
+}
+
+@keyframes folder-panel-in {
+  from { opacity: 0; transform: scale(0.72); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 毛玻璃材质：配方与 icon-glyph-box 的 glass 效果同源（渐变打光 + 透出底色 + 高光描边） */
+.phone-shell[data-icon-effect="glass"] .folder-panel {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.17),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 6%, transparent),
+      rgba(255, 255, 255, 0.07)),
+    color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 30%, transparent);
+  backdrop-filter: blur(26px) saturate(140%);
+  -webkit-backdrop-filter: blur(26px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.28),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 18px 48px rgba(0, 0, 0, 0.22);
+}
+
+.phone-shell[data-icon-effect="glass"] .folder-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  z-index: 3;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.48),
+      rgba(255, 255, 255, 0.14) 40%,
+      rgba(255, 255, 255, 0.12) 62%,
+      rgba(255, 255, 255, 0.18));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.folder-pages {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.folder-pages::-webkit-scrollbar {
+  display: none;
+}
+
+.folder-page {
+  flex: 0 0 100%;
+  scroll-snap-align: center;
+  display: grid;
+  /* 列宽定死为图标宽，space-evenly 让左边距=列间距=右边距，四向留白统一 */
+  grid-template-columns: repeat(2, 58px);
+  grid-template-rows: repeat(2, minmax(84px, auto));
+  justify-content: space-evenly;
+  row-gap: 4px;
+  padding: 32px 0 6px;
+  align-items: start;
+}
+
+.folder-app {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: pan-x;
+}
+.folder-app:active .icon-glyph-box {
+  transform: scale(0.92);
+  transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* 面板里的图标盒尺寸固定，不吃桌面 --slot-size 收缩。
+   另外补一层"座位"底色：桌面上玻璃盒靠 backdrop 模糊壁纸显形、扁平盒
+   底色 token 默认近乎全透明，进了面板身后是均匀的面板底，两种材质都
+   会隐形成"光杆图标"。座位用文字色低透明度调出，深浅主题都有对比。 */
+.folder-app .icon-glyph-box {
+  width: 58px;
+  height: 58px;
+  background:
+    linear-gradient(0deg, var(--c-desktop-icon-box, transparent), var(--c-desktop-icon-box, transparent)),
+    color-mix(in srgb, var(--c-home-text, #2f343b) 10%, transparent);
+}
+.phone-shell[data-icon-effect="glass"] .folder-app .icon-glyph-box {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.17),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 6%, transparent),
+      rgba(255, 255, 255, 0.07)),
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent),
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent)),
+    rgba(255, 255, 255, 0.28);
+}
+.folder-app .icon-label {
+  color: var(--c-home-label, #2f343b);
+}
+
+/* 圆点浮在下边距里，不撑高面板——有没有第二页四向留白都一致 */
+.folder-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.folder-dots .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c-home-label, #ffffff) 32%, transparent);
+}
+.folder-dots .dot.active {
+  background: color-mix(in srgb, var(--c-home-label, #ffffff) 85%, transparent);
+}

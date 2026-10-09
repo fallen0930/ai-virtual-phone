@@ -1,0 +1,260 @@
+.account-gate-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  padding: max(18px, env(safe-area-inset-top, 0px)) 18px max(18px, env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(circle at 22% 18%, rgba(120, 150, 255, 0.12), transparent 34%),
+    radial-gradient(circle at 78% 86%, rgba(255, 150, 190, 0.12), transparent 38%),
+    #f5f6f8;
+  color: #202633;
+}
+
+main.app-root.account-gate-root {
+  width: 100vw;
+  margin: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.account-gate-panel,
+.account-gate-card {
+  width: min(100%, 390px);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.74);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 22px 60px rgba(35, 43, 60, 0.16);
+}
+
+.account-gate-panel {
+  min-height: 116px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(32, 38, 51, 0.54);
+  font-size: calc(13px*var(--app-text-scale,1));
+  font-weight: 700;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.account-gate-card {
+  border-radius: 28px;
+  padding: 26px 22px 20px;
+}
+
+.account-gate-copy {
+  margin-top: 0;
+}
+
+.account-gate-copy span {
+  display: block;
+  color: rgba(32, 38, 51, 0.46);
+  font-size: calc(11px*var(--app-text-scale,1));
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.account-gate-copy h1 {
+  margin: 8px 0 0;
+  color: #202633;
+  font-size: calc(28px*var(--app-text-scale,1));
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.account-gate-copy p,
+.account-gate-footnote {
+  margin: 8px 0 0;
+  color: rgba(32, 38, 51, 0.62);
+  font-size: calc(13px*var(--app-text-scale,1));
+  line-height: 1.55;
+}
+
+.account-gate-form {
+  display: grid;
+  gap: 13px;
+  margin-top: 22px;
+}
+
+.account-gate-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.account-gate-form label span {
+  color: rgba(32, 38, 51, 0.68);
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 700;
+}
+
+.account-gate-form input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(32, 38, 51, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #202633;
+  outline: none;
+  padding: 0 14px;
+  font-size: calc(14px*var(--app-text-scale,1));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.account-gate-form input:focus {
+  border-color: rgba(90, 118, 255, 0.5);
+  box-shadow: 0 0 0 4px rgba(90, 118, 255, 0.12);
+}
+
+.account-gate-form button {
+  min-height: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 17px;
+  background: #202633;
+  color: white;
+  font-size: calc(15px*var(--app-text-scale,1));
+  font-weight: 800;
+  margin-top: 2px;
+  touch-action: manipulation;
+}
+
+.account-gate-form button:disabled {
+  opacity: 0.72;
+}
+
+@media (max-width: 520px) {
+  main.app-root.account-gate-root {
+    width: 100vw;
+    height: 100vh;
+    height: 100lvh;
+    min-height: 100vh;
+    min-height: 100lvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 30px 72px;
+    padding: max(48px, calc(env(safe-area-inset-top, 0px) + 28px)) 30px max(72px, calc(env(safe-area-inset-bottom, 0px) + 56px));
+  }
+
+  .account-gate-card {
+    width: min(100%, 328px);
+    margin: 0 auto;
+    border-radius: 24px;
+    padding: 20px 16px 17px;
+  }
+
+  .account-gate-copy {
+    margin-top: 0;
+  }
+
+  .account-gate-copy span {
+    font-size: calc(10px*var(--app-text-scale,1));
+  }
+
+  .account-gate-copy h1 {
+    margin-top: 7px;
+    font-size: calc(25px*var(--app-text-scale,1));
+  }
+
+  .account-gate-copy p,
+  .account-gate-footnote {
+    font-size: calc(12px*var(--app-text-scale,1));
+  }
+
+  .account-gate-form {
+    gap: 11px;
+    margin-top: 18px;
+  }
+
+  .account-gate-form label {
+    gap: 6px;
+  }
+
+  .account-gate-form input {
+    min-height: 46px;
+    border-radius: 15px;
+    padding: 0 13px;
+  }
+
+  .account-gate-form button {
+    min-height: 48px;
+    border-radius: 16px;
+  }
+
+  .account-gate-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 380px) {
+  main.app-root.account-gate-root {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+
+  .account-gate-card {
+    width: min(100%, 316px);
+  }
+}
+
+.account-gate-error {
+  border: 1px solid rgba(225, 72, 92, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 236, 239, 0.82);
+  color: #b4233b;
+  padding: 10px 12px;
+  font-size: calc(12px*var(--app-text-scale,1));
+  line-height: 1.45;
+}
+
+.account-gate-spinner {
+  animation: account-gate-spin 0.9s linear infinite;
+}
+
+@keyframes account-gate-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.account-gate-verify-link {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--c-icon, #97896b);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  align-self: flex-start;
+}
+.account-gate-verify-link:active { opacity: 0.7; }
+
+.account-gate-retry-btn {
+  margin-top: 14px;
+  padding: 10px 32px;
+  border-radius: 10px;
+  border: 1px solid var(--c-line, #ddd2b8);
+  background: var(--c-card, #fff);
+  color: var(--c-text-title, #3a342a);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.account-gate-retry-btn:active { transform: scale(0.97); }

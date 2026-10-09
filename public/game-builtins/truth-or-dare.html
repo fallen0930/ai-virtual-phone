@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>真心话大冒险</title>
+<style>
+  :root{
+    --safe-top: var(--ai-phone-game-safe-top, 88px);
+    --safe-bottom: var(--ai-phone-game-safe-bottom, 24px);
+    --bg0:#160d20; --bg1:#241133; --bg2:#3a1942;
+    --ink:#f5ecf7; --muted:#c4b2d6; --faint:rgba(245,236,247,.55);
+    --amber:#ffc16b; --rose:#ff8fae; --violet:#b98cff;
+    --glass:rgba(255,255,255,.06);
+    --glass-strong:rgba(255,255,255,.1);
+    --line:rgba(255,255,255,.12);
+    --serif:"Songti SC","Noto Serif SC","STSong",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{width:100%;height:100%;margin:0;}
+  body{
+    overflow:hidden;
+    font-family:var(--sans);
+    color:var(--ink);
+    background:
+      radial-gradient(120% 80% at 50% -10%, #4a1f55 0%, rgba(74,31,85,0) 55%),
+      radial-gradient(90% 60% at 80% 110%, #5a2546 0%, rgba(90,37,70,0) 60%),
+      linear-gradient(160deg, var(--bg0), var(--bg1) 60%, var(--bg2));
+  }
+  /* 烛光浮尘 */
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(2px 2px at 20% 30%, rgba(255,193,107,.5), transparent),
+      radial-gradient(2px 2px at 70% 60%, rgba(255,143,174,.4), transparent),
+      radial-gradient(1.5px 1.5px at 40% 80%, rgba(185,140,255,.4), transparent),
+      radial-gradient(1.5px 1.5px at 85% 25%, rgba(255,255,255,.35), transparent);
+    opacity:.7;
+  }
+
+  .game-screen{
+    position:relative;z-index:1;
+    min-height:100%;height:100%;
+    box-sizing:border-box;
+    padding:var(--safe-top) 18px var(--safe-bottom);
+    overflow-y:auto;-webkit-overflow-scrolling:touch;
+    display:flex;flex-direction:column;
+  }
+
+  /* ---------- 通用 ---------- */
+  .title{font-family:var(--serif);font-weight:600;letter-spacing:.08em;}
+  .btn{
+    border:1px solid var(--line);border-radius:999px;
+    padding:13px 22px;font-size:15px;font-weight:600;color:var(--ink);
+    background:var(--glass-strong);backdrop-filter:blur(12px);
+    transition:transform .15s ease, background .2s, opacity .2s;
+    cursor:pointer;user-select:none;
+  }
+  .btn:active{transform:scale(.96);}
+  .btn.primary{
+    border:none;color:#2a1230;
+    background:linear-gradient(135deg, var(--amber), var(--rose));
+    box-shadow:0 10px 30px rgba(255,143,174,.3);
+  }
+  .btn.ghost{background:transparent;}
+  .btn[disabled]{opacity:.35;pointer-events:none;}
+  .fade{animation:fade .5s ease both;}
+  @keyframes fade{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  .hidden{display:none !important;}
+
+  /* ---------- 选人页 ---------- */
+  #screen-select{flex:1;display:flex;flex-direction:column;}
+  .head{text-align:center;margin:6px 0 18px;}
+  .head h1{font-size:30px;margin:0;}
+  .head .sub{color:var(--faint);font-size:13px;margin-top:8px;letter-spacing:.12em;}
+  .pick-hint{text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px;}
+  .char-list{display:flex;flex-direction:column;gap:12px;overflow-y:auto;flex:1;padding-bottom:6px;}
+  .char-card{
+    display:flex;align-items:center;gap:14px;padding:12px 14px;
+    border:1px solid var(--line);border-radius:18px;background:var(--glass);
+    transition:transform .15s, border-color .2s, background .2s;cursor:pointer;
+  }
+  .char-card:active{transform:scale(.98);}
+  .char-card.sel{border-color:var(--rose);background:rgba(255,143,174,.12);
+    box-shadow:0 0 0 1px var(--rose) inset, 0 8px 24px rgba(255,143,174,.18);}
+  .avatar{
+    width:52px;height:52px;border-radius:50%;flex:none;overflow:hidden;
+    display:grid;place-items:center;font-family:var(--serif);font-size:20px;color:#2a1230;
+    background:linear-gradient(135deg,var(--amber),var(--violet));
+    box-shadow:0 4px 14px rgba(0,0,0,.3);
+  }
+  .avatar img{width:100%;height:100%;object-fit:cover;display:block;}
+  .char-meta{flex:1;min-width:0;}
+  .char-meta .nm{font-weight:600;font-size:16px;}
+  .char-meta .st{color:var(--faint);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .check{width:24px;height:24px;border-radius:50%;border:1.5px solid var(--line);flex:none;display:grid;place-items:center;color:#2a1230;font-size:14px;}
+  .char-card.sel .check{background:var(--rose);border-color:var(--rose);}
+  .footer{padding-top:14px;}
+  .footer .btn{width:100%;}
+
+  /* ---------- 牌桌 ---------- */
+  #screen-table{flex:1;display:flex;flex-direction:column;}
+  .round-tag{text-align:center;color:var(--muted);font-size:12px;letter-spacing:.2em;margin-bottom:6px;}
+  .stage{position:relative;width:min(80vw,330px);aspect-ratio:1;margin:6px auto 4px;}
+  .table-ring{
+    position:absolute;inset:8%;border-radius:50%;
+    border:1px solid var(--line);
+    background:radial-gradient(circle at 50% 40%, rgba(255,193,107,.10), rgba(0,0,0,.25) 70%);
+    box-shadow:inset 0 0 50px rgba(0,0,0,.4);
+  }
+  .glow{
+    position:absolute;left:50%;top:50%;width:46%;height:46%;
+    transform:translate(-50%,-50%);border-radius:50%;
+    background:radial-gradient(circle, rgba(255,160,120,.35), transparent 70%);
+    filter:blur(6px);animation:breathe 3.6s ease-in-out infinite;
+  }
+  @keyframes breathe{0%,100%{opacity:.55;transform:translate(-50%,-50%) scale(.9);}50%{opacity:.9;transform:translate(-50%,-50%) scale(1.05);}}
+  .bottle-wrap{
+    position:absolute;left:50%;top:50%;width:18%;height:54%;
+    transform-origin:50% 50%;transform:translate(-50%,-50%) rotate(0deg);
+    transition:transform 2.8s cubic-bezier(.17,.67,.21,1);
+  }
+  .bottle{width:100%;height:100%;filter:drop-shadow(0 6px 14px rgba(0,0,0,.45));}
+  .seat{
+    position:absolute;width:64px;transform:translate(-50%,-50%);
+    text-align:center;transition:transform .25s;
+  }
+  .seat .avatar{width:54px;height:54px;margin:0 auto;border:2px solid transparent;}
+  .seat .nm{font-size:12px;margin-top:5px;color:var(--muted);white-space:nowrap;}
+  .seat.me .nm{color:var(--amber);}
+  .seat.active .avatar{border-color:var(--rose);box-shadow:0 0 0 4px rgba(255,143,174,.25),0 6px 18px rgba(255,143,174,.4);transform:scale(1.08);}
+  .seat.active .nm{color:var(--rose);font-weight:700;}
+
+  .panel{
+    flex:1;display:flex;flex-direction:column;gap:12px;
+    margin-top:4px;
+  }
+  .card{
+    border:1px solid var(--line);border-radius:20px;padding:16px 16px 18px;
+    background:var(--glass);backdrop-filter:blur(14px);
+  }
+  .card .who{font-size:12px;color:var(--faint);letter-spacing:.1em;margin-bottom:8px;}
+  .card .q{font-size:17px;line-height:1.6;font-family:var(--serif);}
+  .typebadge{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.1em;
+    padding:4px 12px;border-radius:999px;margin-bottom:10px;}
+  .typebadge.truth{background:rgba(185,140,255,.18);color:var(--violet);border:1px solid rgba(185,140,255,.4);}
+  .typebadge.dare{background:rgba(255,193,107,.16);color:var(--amber);border:1px solid rgba(255,193,107,.4);}
+
+  .bubble{display:flex;gap:10px;align-items:flex-start;}
+  .bubble .avatar{width:40px;height:40px;font-size:16px;}
+  .bubble .body{flex:1;}
+  .bubble .nm{font-size:13px;color:var(--rose);font-weight:600;margin-bottom:4px;}
+  .bubble .txt{font-size:15px;line-height:1.65;color:var(--ink);}
+  .bubble.react .nm{color:var(--violet);}
+  .bubble.react .txt{color:var(--muted);font-size:14px;}
+
+  .answer-box{display:flex;flex-direction:column;gap:10px;}
+  textarea{
+    width:100%;min-height:84px;resize:none;border-radius:16px;padding:12px 14px;
+    border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--ink);
+    font-family:var(--sans);font-size:15px;line-height:1.5;outline:none;
+  }
+  textarea:focus{border-color:var(--rose);}
+
+  .choose-row{display:flex;gap:12px;}
+  .choose-row .btn{flex:1;}
+  .actions{display:flex;gap:12px;margin-top:auto;padding-top:6px;}
+  .actions .btn{flex:1;}
+
+  .loading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14px;}
+  .dots{display:inline-flex;gap:4px;}
+  .dots i{width:6px;height:6px;border-radius:50%;background:var(--rose);animation:bnc 1s infinite;}
+  .dots i:nth-child(2){animation-delay:.15s;}
+  .dots i:nth-child(3){animation-delay:.3s;}
+  @keyframes bnc{0%,80%,100%{transform:translateY(0);opacity:.4;}40%{transform:translateY(-5px);opacity:1;}}
+
+  .history{margin-top:14px;display:flex;flex-direction:column;gap:8px;}
+  .history .h-title{font-size:12px;color:var(--faint);letter-spacing:.2em;text-align:center;margin:6px 0;}
+  .h-item{font-size:13px;color:var(--muted);line-height:1.5;border-left:2px solid var(--line);padding:2px 0 2px 12px;}
+  .h-item b{color:var(--ink);font-weight:600;}
+
+  /* ---------- 结局 ---------- */
+  #screen-end{flex:1;display:flex;flex-direction:column;justify-content:center;text-align:center;gap:18px;}
+  #screen-end h2{font-family:var(--serif);font-size:26px;margin:0;}
+  .recap{border:1px solid var(--line);border-radius:20px;background:var(--glass);
+    padding:18px;text-align:left;max-height:46vh;overflow-y:auto;}
+  .recap .line{font-size:14px;line-height:1.6;color:var(--muted);margin:8px 0;}
+  .recap .line b{color:var(--ink);}
+  .memo{font-size:13px;color:var(--amber);letter-spacing:.05em;}
+  .end-actions{display:flex;flex-direction:column;gap:12px;}
+</style>
+</head>
+<body>
+<div class="game-screen">
+
+  <!-- 选人页 -->
+  <section id="screen-select">
+    <div class="head fade">
+      <h1 class="title">真心话大冒险</h1>
+      <div class="sub">TRUTH&nbsp;·&nbsp;OR&nbsp;·&nbsp;DARE</div>
+    </div>
+    <div class="pick-hint" id="pickHint">挑 3 个人，和你一起围坐这一晚</div>
+    <div class="char-list" id="charList"></div>
+    <div class="footer">
+      <button class="btn primary" id="startBtn" disabled>开始游戏</button>
+    </div>
+  </section>
+
+  <!-- 牌桌 -->
+  <section id="screen-table" class="hidden">
+    <div class="round-tag" id="roundTag">第 1 轮</div>
+    <div class="stage" id="stage">
+      <div class="table-ring"></div>
+      <div class="glow"></div>
+      <div class="bottle-wrap" id="bottleWrap">
+        <svg class="bottle" viewBox="0 0 40 120" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ffe6b0"/><stop offset="0.5" stop-color="#ff9f6b"/><stop offset="1" stop-color="#c85a7a"/>
+            </linearGradient>
+          </defs>
+          <path d="M16 6 h8 v18 q10 6 10 24 v56 q0 8 -8 8 h-12 q-8 0 -8 -8 v-56 q0 -18 10 -24 z" fill="url(#bg)"/>
+          <rect x="15" y="2" width="10" height="8" rx="3" fill="#e9c98a"/>
+          <ellipse cx="14" cy="60" rx="3" ry="14" fill="rgba(255,255,255,.45)"/>
+        </svg>
+      </div>
+      <!-- 座位由 JS 注入 -->
+    </div>
+
+    <div class="panel" id="panel"></div>
+    <div class="history hidden" id="historyWrap">
+      <div class="h-title">今晚的回合</div>
+      <div id="historyList"></div>
+    </div>
+  </section>
+
+  <!-- 结局 -->
+  <section id="screen-end" class="hidden">
+    <h2 class="title">夜色散场</h2>
+    <div class="recap" id="recap"></div>
+    <div class="memo" id="memoNote"></div>
+    <div class="end-actions">
+      <button class="btn primary" id="againBtn">再来一局</button>
+      <button class="btn ghost" id="exitBtn">离开</button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============ 宿主 API 适配（带本地回退，方便单独预览） ============ */
+  const HOST = window.AiPhoneGame || null;
+  const hasHost = !!HOST;
+  const has = (k)=> hasHost && typeof HOST[k] === "function";
+
+  const API = {
+    async listCharacters(){
+      if(has("listAvailableCharacters")) return await HOST.listAvailableCharacters();
+      return [
+        {id:"demo1",name:"沈砚清",subtitle:"清冷温柔的旧识"},
+        {id:"demo2",name:"陈未明",subtitle:"爱拱火的主持人"},
+        {id:"demo3",name:"贺知真",subtitle:"嘴硬心软"},
+        {id:"demo4",name:"林晚",subtitle:"安静的观察者"}
+      ];
+    },
+    async player(){
+      if(has("getPlayerProfile")){ try{ const p=await HOST.getPlayerProfile(); if(p&&p.name) return p; }catch(e){} }
+      return {name:"你"};
+    },
+    async lightPkg(id){
+      if(has("getRoleLightPackage")){ try{ return await HOST.getRoleLightPackage(id); }catch(e){} }
+      return {messages:[]};
+    },
+    async llm(opts){
+      if(has("callLLM")) return await HOST.callLLM(opts);
+      await wait(700); return {content:"（本地预览）这种问题嘛……我可不会轻易告诉你哦。"};
+    },
+    async globalLLM(opts){
+      if(has("callGlobalLLM")) return await HOST.callGlobalLLM(opts);
+      await wait(600);
+      const demo = ["说出此刻你最想对在场某个人讲、却一直没说的一句话。",
+        "模仿在座一个人最有标志性的小动作，让大家猜是谁。",
+        "讲一件你从没跟任何人提过的小秘密。",
+        "对你右手边的人真诚地说一句赞美。"];
+      return {content: demo[Math.floor(Math.random()*demo.length)]};
+    },
+    async save(d){ if(has("saveGame")){ try{ return await HOST.saveGame(d); }catch(e){} } },
+    async load(){ if(has("loadGame")){ try{ return await HOST.loadGame(); }catch(e){} } return null; },
+    async record(d){ if(has("recordGameEvent")){ try{ return await HOST.recordGameEvent(d); }catch(e){} } else { console.log("[recordGameEvent]",d); } },
+    async setTitleBar(d){ if(has("setTitleBar")){ try{ return await HOST.setTitleBar(d); }catch(e){} } },
+    async close(){ if(has("closeGame")){ try{ return await HOST.closeGame(); }catch(e){} } }
+  };
+
+  const wait = (ms)=> new Promise(r=>setTimeout(r,ms));
+  const $ = (id)=> document.getElementById(id);
+  const esc = (s)=> String(s==null?"":s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+  /* ============ 全局状态 ============ */
+  const S = {
+    all: [],
+    chosen: [],            // [{id,name,avatar,subtitle}]
+    player: {name:"你"},
+    seats: [],             // [{type:'me'|'char', id, name, avatar, angle}]
+    pkgCache: {},
+    round: 0,
+    log: [],               // {targetName,type,prompt,answer,reactorName,reaction}
+    busy: false,
+    recorded: false,
+    lastTargetIdx: -1
+  };
+
+  /* ============ 初始化 ============ */
+  async function init(){
+    API.setTitleBar({
+      material:"glass",
+      buttonBackground:"rgba(255,255,255,.08)",
+      buttonColor:"#ffd9a0",
+      buttonBorderColor:"rgba(255,255,255,.16)",
+      buttonRadius:"999px",
+      buttonShadow:"0 8px 20px rgba(0,0,0,.25)",
+      iconOpacity:1
+    });
+
+    S.player = await API.player();
+    S.all = await API.listCharacters() || [];
+    renderCharList();
+
+    $("startBtn").addEventListener("click", startGame);
+    $("againBtn").addEventListener("click", ()=>{ resetForReplay(); });
+    $("exitBtn").addEventListener("click", ()=> API.close());
+  }
+
+  /* ============ 选人页 ============ */
+  function renderCharList(){
+    const wrap = $("charList");
+    wrap.innerHTML = "";
+    if(!S.all.length){
+      wrap.innerHTML = '<div class="pick-hint">这台小手机里还没有可邀请的角色～</div>';
+      return;
+    }
+    S.all.forEach(c=>{
+      const el = document.createElement("div");
+      el.className = "char-card";
+      el.dataset.id = c.id;
+      el.innerHTML = `
+        <div class="avatar">${c.avatar?`<img src="${esc(c.avatar)}" onerror="this.remove()"/>`:""}${initial(c.name)}</div>
+        <div class="char-meta">
+          <div class="nm">${esc(c.name)}</div>
+          ${c.subtitle?`<div class="st">${esc(c.subtitle)}</div>`:""}
+        </div>
+        <div class="check">✓</div>`;
+      el.addEventListener("click", ()=> togglePick(c, el));
+      wrap.appendChild(el);
+    });
+  }
+
+  function initial(name){ const n=(name||"?").trim(); return esc(n.charAt(0)||"?"); }
+
+  function togglePick(c, el){
+    const i = S.chosen.findIndex(x=>x.id===c.id);
+    if(i>=0){ S.chosen.splice(i,1); el.classList.remove("sel"); }
+    else{
+      if(S.chosen.length>=3){ flashHint("最多选 3 个人哦"); return; }
+      S.chosen.push(c); el.classList.add("sel");
+    }
+    const n = S.chosen.length;
+    $("pickHint").textContent = n? `已选 ${n} 人 · ${"●".repeat(n)}${"○".repeat(3-n)}` : "挑 3 个人，和你一起围坐这一晚";
+    $("startBtn").disabled = n<1;
+    $("startBtn").textContent = n? `开始游戏（${n+1} 人入座）` : "开始游戏";
+  }
+
+  let hintTimer;
+  function flashHint(t){
+    const h=$("pickHint"); const old=h.textContent; h.textContent=t;
+    clearTimeout(hintTimer); hintTimer=setTimeout(()=>{ const n=S.chosen.length; h.textContent = n? `已选 ${n} 人 · ${"●".repeat(n)}${"○".repeat(3-n)}`:old; },1400);
+  }
+
+  /* ============ 开始 ============ */
+  function startGame(){
+    buildSeats();
+    show("screen-table");
+    renderSeats();
+    S.round = 0;
+    S.log = [];
+    S.recorded = false;
+    S.lastTargetIdx = -1;
+    renderIdle();
+    persist();
+  }
+
+  function buildSeats(){
+    const total = 1 + S.chosen.length;
+    S.seats = [];
+    // 玩家固定在底部(180°)，其余等分
+    for(let i=0;i<total;i++){
+      const angle = (180 + i*(360/total)) % 360;
+      if(i===0) S.seats.push({type:"me", id:"__me__", name:S.player.name, avatar:null, angle});
+      else{
+        const c = S.chosen[i-1];
+        S.seats.push({type:"char", id:c.id, name:c.name, avatar:c.avatar, angle});
+      }
+    }
+  }
+
+  function renderSeats(){
+    document.querySelectorAll(".seat").forEach(n=>n.remove());
+    const stage = $("stage");
+    const size = stage.clientWidth;
+    const R = size*0.40, cx=size/2, cy=size/2;
+    S.seats.forEach((s,idx)=>{
+      const rad = s.angle*Math.PI/180;
+      const x = cx + R*Math.sin(rad);
+      const y = cy - R*Math.cos(rad);
+      const el=document.createElement("div");
+      el.className="seat"+(s.type==="me"?" me":"");
+      el.dataset.idx=idx;
+      el.style.left=x+"px"; el.style.top=y+"px";
+      el.innerHTML=`<div class="avatar">${s.avatar?`<img src="${esc(s.avatar)}" onerror="this.remove()"/>`:""}${initial(s.name)}</div>
+        <div class="nm">${s.type==="me"?"你":esc(s.name)}</div>`;
+      stage.appendChild(el);
+    });
+  }
+
+  /* ============ 回合：待转 ============ */
+  function renderIdle(){
+    clearActive();
+    $("roundTag").textContent = S.round? `第 ${S.round} 轮 · 已结束 ${S.log.length} 个回合` : "围坐就绪";
+    $("panel").innerHTML = `
+      <div class="card fade" style="text-align:center">
+        <div class="q" style="font-size:16px;color:var(--muted)">${S.round?"转动瓶子，看看命运指向谁":"转动瓶子，让这一晚开始吧"}</div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="spinBtn">转瓶子</button>
+        ${S.log.length?'<button class="btn ghost" id="endBtn">结束今晚</button>':""}
+      </div>`;
+    $("spinBtn").addEventListener("click", spin);
+    const eb=$("endBtn"); if(eb) eb.addEventListener("click", endGame);
+    renderHistory();
+  }
+
+  let curRotation = 0;
+  async function spin(){
+    if(S.busy) return; S.busy=true;
+    $("spinBtn").disabled=true;
+    clearActive();
+    S.round++;
+    $("roundTag").textContent = `第 ${S.round} 轮`;
+
+    // 选目标（避免连续指同一人）
+    let idx;
+    do{ idx = Math.floor(Math.random()*S.seats.length); }
+    while(S.seats.length>1 && idx===S.lastTargetIdx);
+    S.lastTargetIdx = idx;
+    const target = S.seats[idx];
+
+    // 旋转到目标角度
+    const A = target.angle;
+    const cur = ((curRotation % 360)+360)%360;
+    const delta = ((A - cur)+360)%360;
+    curRotation += (3+Math.floor(Math.random()*3))*360 + delta;
+    $("bottleWrap").style.transform = `translate(-50%,-50%) rotate(${curRotation}deg)`;
+
+    await wait(2950);
+    markActive(idx);
+    await beginTurn(target);
+    S.busy=false;
+  }
+
+  function markActive(idx){
+    clearActive();
+    const el=document.querySelector(`.seat[data-idx="${idx}"]`);
+    if(el) el.classList.add("active");
+  }
+  function clearActive(){ document.querySelectorAll(".seat.active").forEach(n=>n.classList.remove("active")); }
+
+  /* ============ 一个回合 ============ */
+  async function beginTurn(target){
+    if(target.type==="me"){
+      renderChoose(target);                 // 玩家自己选真心话/大冒险
+    }else{
+      const type = Math.random()<0.5 ? "truth" : "dare";
+      renderChoose(target, type);           // AI 自动选，展示后继续
+      await wait(900);
+      await runPrompt(target, type);
+    }
+  }
+
+  function renderChoose(target, autoType){
+    const isMe = target.type==="me";
+    $("panel").innerHTML = `
+      <div class="card fade">
+        <div class="who">轮到 ${isMe?"你":esc(target.name)}</div>
+        ${isMe
+          ? `<div class="q" style="font-size:16px">选一个吧——</div>
+             <div class="choose-row" style="margin-top:14px">
+               <button class="btn" id="chTruth">真心话</button>
+               <button class="btn" id="chDare">大冒险</button>
+             </div>`
+          : `<div class="q" style="font-size:16px;color:var(--muted)">${esc(target.name)} 选择了
+               <b style="color:${autoType==="truth"?"var(--violet)":"var(--amber)"}">${autoType==="truth"?"真心话":"大冒险"}</b>…</div>`}
+      </div>`;
+    if(isMe){
+      $("chTruth").addEventListener("click", ()=> runPrompt(target,"truth"));
+      $("chDare").addEventListener("click", ()=> runPrompt(target,"dare"));
+    }
+  }
+
+  async function runPrompt(target, type){
+    const isMe = target.type==="me";
+    const typeLabel = type==="truth"?"真心话":"大冒险";
+    // 出题（主持人 / 通用模型）
+    $("panel").innerHTML = `
+      <div class="card fade">
+        <span class="typebadge ${type}">${typeLabel}</span>
+        <div class="loading"><span>主持人正在出题</span><span class="dots"><i></i><i></i><i></i></span></div>
+      </div>`;
+
+    const names = S.seats.map(s=> s.type==="me"? S.player.name : s.name).join("、");
+    let prompt = "";
+    try{
+      const r = await API.globalLLM({
+        messages:[
+          {role:"system",content:`你是一场深夜朋友聚会上"真心话大冒险"的主持人，只负责出题。语气俏皮、温暖、带点暧昧的小心机。根据要求生成一个${type==="truth"?"【真心话问题】":"【大冒险任务】"}。要求：贴合在场众人之间的关系，能引出真实情绪或有趣互动；只输出题目本身一句话，不要解释、不要引号、不超过40字；保持轻松友好，避免露骨、冒犯或危险内容。`},
+          {role:"user",content:`现在轮到「${isMe?S.player.name:target.name}」。在场的人有：${names}。请为${isMe?S.player.name:target.name}出一个${typeLabel}。`}
+        ]
+      });
+      prompt = (r && r.content || "").trim();
+    }catch(e){ prompt=""; }
+    if(!prompt) prompt = type==="truth" ? "说出此刻你最不想被人看穿的一个念头。" : "用一句话向在座某个人表白，可以是认真的，也可以是玩笑。";
+
+    // 渲染题面 + 作答
+    const t = S.log.length; // 用于占位
+    $("panel").innerHTML = `
+      <div class="card fade">
+        <span class="typebadge ${type}">${typeLabel}</span>
+        <div class="who">出给 ${isMe?"你":esc(target.name)}</div>
+        <div class="q">${esc(prompt)}</div>
+      </div>
+      <div id="answerArea"></div>
+      <div class="actions" id="turnActions"></div>`;
+
+    if(isMe){
+      renderPlayerAnswer(target, type, prompt);
+    }else{
+      await renderCharAnswer(target, type, prompt);
+    }
+  }
+
+  function renderPlayerAnswer(target, type, prompt){
+    const area=$("answerArea");
+    if(type==="truth"){
+      area.innerHTML = `<div class="answer-box fade">
+        <textarea id="ans" placeholder="说点真的……"></textarea>
+      </div>`;
+      $("turnActions").innerHTML = `<button class="btn primary" id="submitAns">说完了</button>`;
+      $("submitAns").addEventListener("click", async ()=>{
+        const v=($("ans").value||"").trim();
+        await finishTurn(target,type,prompt, v || "（沉默了一会儿，没说出口）");
+      });
+    }else{
+      area.innerHTML = `<div class="answer-box fade">
+        <div class="card" style="background:rgba(0,0,0,.2)">
+          <div class="q" style="font-size:14px;color:var(--muted)">完成它，然后告诉大家结果～</div>
+        </div>
+        <textarea id="ans" placeholder="（可选）写下你做了什么 / 留空也行"></textarea>
+      </div>`;
+      $("turnActions").innerHTML = `<button class="btn primary" id="doneDare">完成挑战</button>`;
+      $("doneDare").addEventListener("click", async ()=>{
+        const v=($("ans").value||"").trim();
+        await finishTurn(target,type,prompt, v || "（笑着完成了这个大冒险）");
+      });
+    }
+  }
+
+  async function renderCharAnswer(target, type, prompt){
+    const area=$("answerArea");
+    area.innerHTML = `<div class="bubble fade">
+      <div class="avatar">${target.avatar?`<img src="${esc(target.avatar)}" onerror="this.remove()"/>`:""}${initial(target.name)}</div>
+      <div class="body"><div class="nm">${esc(target.name)}</div>
+      <div class="loading"><span class="dots"><i></i><i></i><i></i></span></div></div>
+    </div>`;
+
+    const answer = await charSpeak(target, type, prompt);
+    area.querySelector(".body").innerHTML =
+      `<div class="nm">${esc(target.name)}</div><div class="txt">${esc(answer)}</div>`;
+
+    // 一个其他角色起哄/反应（更有聚会感）
+    const reactor = pickReactor(target);
+    let reaction = "", reactorName = "";
+    if(reactor){
+      reactorName = reactor.name;
+      const rb=document.createElement("div");
+      rb.className="bubble react fade"; rb.style.marginTop="10px";
+      rb.innerHTML=`<div class="avatar">${reactor.avatar?`<img src="${esc(reactor.avatar)}" onerror="this.remove()"/>`:""}${initial(reactor.name)}</div>
+        <div class="body"><div class="nm">${esc(reactor.name)}</div>
+        <div class="loading"><span class="dots"><i></i><i></i><i></i></span></div></div>`;
+      area.appendChild(rb);
+      reaction = await charReact(reactor, target, type, prompt, answer);
+      rb.querySelector(".body").innerHTML=`<div class="nm">${esc(reactor.name)}</div><div class="txt">${esc(reaction)}</div>`;
+    }
+
+    $("turnActions").innerHTML = `<button class="btn primary" id="nextTurn">下一轮</button>
+      <button class="btn ghost" id="endNow">结束今晚</button>`;
+    $("nextTurn").addEventListener("click", ()=> commit(target,type,prompt,answer,reactorName,reaction));
+    $("endNow").addEventListener("click", ()=>{ commitSilently(target,type,prompt,answer,reactorName,reaction); endGame(); });
+  }
+
+  function pickReactor(target){
+    const others = S.seats.filter(s=> s.type==="char" && s.id!==target.id);
+    if(!others.length) return null;
+    if(Math.random()<0.35) return null; // 不是每次都有人接话
+    return others[Math.floor(Math.random()*others.length)];
+  }
+
+  async function getPkg(id){
+    if(S.pkgCache[id]) return S.pkgCache[id];
+    const p = await API.lightPkg(id); S.pkgCache[id]=p||{messages:[]}; return S.pkgCache[id];
+  }
+
+  async function charSpeak(target, type, prompt){
+    try{
+      const pkg = await getPkg(target.id);
+      const sys = type==="truth"
+        ? `你正在和${S.player.name}等人玩真心话大冒险，现在轮到你回答一个真心话问题。请完全以你自己的性格、语气和说话习惯，真诚地回应。只输出你说的话，30~80字，可带一点点动作神态，但不要写成旁白或剧本格式。`
+        : `你正在和${S.player.name}等人玩真心话大冒险，现在轮到你完成一个大冒险任务。请完全以你自己的性格和语气，第一人称描述你怎么完成它（可以有简短动作）。只输出你的内容，30~80字，不要旁白格式。`;
+      const r = await API.llm({
+        characterId: target.id,
+        messages:[
+          ...(pkg.messages||[]),
+          {role:"system",content:sys},
+          {role:"user",content:`${type==="truth"?"真心话问题":"大冒险任务"}：${prompt}`}
+        ]
+      });
+      const txt=(r&&r.content||"").trim();
+      return txt || fallbackSpeak(type);
+    }catch(e){ return fallbackSpeak(type); }
+  }
+  function fallbackSpeak(type){
+    return type==="truth" ? "……让我想想该怎么说。这种事，本来是不打算告诉别人的。" : "好吧，既然抽到了，我就做给你们看——别笑。";
+  }
+
+  async function charReact(reactor, target, type, prompt, answer){
+    try{
+      const pkg = await getPkg(reactor.id);
+      const r = await API.llm({
+        characterId: reactor.id,
+        messages:[
+          ...(pkg.messages||[]),
+          {role:"system",content:`你正在旁观${S.player.name}等人玩真心话大冒险。刚才${target.name}${type==="truth"?"回答了一个真心话":"完成了一个大冒险"}。请以你自己的性格，给一句简短的现场反应（起哄、调侃、感慨或追问都行）。只输出你说的话，不超过30字。`},
+          {role:"user",content:`${target.name}的内容是：「${answer}」。`}
+        ]
+      });
+      const txt=(r&&r.content||"").trim();
+      return txt || "哦——这个回答有意思。";
+    }catch(e){ return "哦——这个回答有意思。"; }
+  }
+
+  /* ============ 收尾一个回合 ============ */
+  async function finishTurn(target,type,prompt,answer){
+    // 玩家作答后，也让一个角色反应
+    const area=$("answerArea");
+    const reactor = pickReactor(target);
+    let reaction="", reactorName="";
+    if(reactor){
+      reactorName=reactor.name;
+      const rb=document.createElement("div");
+      rb.className="bubble react fade"; rb.style.marginTop="10px";
+      rb.innerHTML=`<div class="avatar">${reactor.avatar?`<img src="${esc(reactor.avatar)}" onerror="this.remove()"/>`:""}${initial(reactor.name)}</div>
+        <div class="body"><div class="nm">${esc(reactor.name)}</div>
+        <div class="loading"><span class="dots"><i></i><i></i><i></i></span></div></div>`;
+      area.appendChild(rb);
+      $("turnActions").innerHTML="";
+      reaction = await charReact(reactor, {name:S.player.name}, type, prompt, answer);
+      rb.querySelector(".body").innerHTML=`<div class="nm">${esc(reactor.name)}</div><div class="txt">${esc(reaction)}</div>`;
+    }
+    $("turnActions").innerHTML = `<button class="btn primary" id="nextTurn">下一轮</button>
+      <button class="btn ghost" id="endNow">结束今晚</button>`;
+    $("nextTurn").addEventListener("click", ()=> commit(target,type,prompt,answer,reactorName,reaction));
+    $("endNow").addEventListener("click", ()=>{ commitSilently(target,type,prompt,answer,reactorName,reaction); endGame(); });
+  }
+
+  function commit(target,type,prompt,answer,reactorName,reaction){
+    commitSilently(target,type,prompt,answer,reactorName,reaction);
+    renderIdle();
+  }
+  function commitSilently(target,type,prompt,answer,reactorName,reaction){
+    S.log.push({
+      targetName: target.type==="me"? S.player.name : target.name,
+      isPlayer: target.type==="me",
+      type, prompt, answer,
+      reactorName, reaction
+    });
+    persist();
+  }
+
+  /* ============ 历史 ============ */
+  function renderHistory(){
+    if(!S.log.length){ $("historyWrap").classList.add("hidden"); return; }
+    $("historyWrap").classList.remove("hidden");
+    const list=$("historyList");
+    list.innerHTML = S.log.slice(-4).map(e=>{
+      const tl = e.type==="truth"?"真心话":"大冒险";
+      return `<div class="h-item"><b>${esc(e.targetName)}</b> · ${tl}：${esc(trim(e.prompt,18))}</div>`;
+    }).join("");
+  }
+  function trim(s,n){ s=String(s||""); return s.length>n? s.slice(0,n)+"…" : s; }
+
+  /* ============ 存档 ============ */
+  function persist(){
+    API.save({
+      chosen:S.chosen, player:S.player, seats:S.seats,
+      round:S.round, log:S.log, recorded:S.recorded, v:1
+    });
+  }
+
+  /* ============ 结束：写回记忆 ============ */
+  async function endGame(){
+    if(S.busy) return;
+    show("screen-end");
+    renderRecap();
+    if(!S.recorded){
+      S.recorded=true;
+      await writeMemory();
+    }
+  }
+
+  function renderRecap(){
+    const recap=$("recap");
+    if(!S.log.length){
+      recap.innerHTML=`<div class="line">这一晚，瓶子还没来得及转起来呢。</div>`;
+      $("memoNote").textContent="";
+      return;
+    }
+    recap.innerHTML = S.log.map(e=>{
+      const tl=e.type==="truth"?"真心话":"大冒险";
+      return `<div class="line"><b>${esc(e.targetName)}</b> 的${tl}：${esc(trim(e.prompt,40))}<br>
+        <span style="color:var(--faint)">「${esc(trim(e.answer,46))}」</span>
+        ${e.reactorName?`<br><span style="color:var(--violet);font-size:13px">${esc(e.reactorName)}：${esc(trim(e.reaction,30))}</span>`:""}</div>`;
+    }).join("");
+  }
+
+  async function writeMemory(){
+    const ids = S.chosen.map(c=>c.id);
+    if(!ids.length){ $("memoNote").textContent=""; return; }
+    const summary = buildSummary();
+    $("memoNote").textContent = "正在把今晚写进记忆…";
+    await API.record({ characterIds: ids, summary });
+    $("memoNote").textContent = `已把今晚写进 ${S.chosen.map(c=>c.name).join("、")} 的记忆`;
+    persist();
+  }
+
+  // 用真实名字构造本局总结（不使用"玩家/用户/角色"等泛称）
+  function buildSummary(){
+    const names = [S.player.name, ...S.chosen.map(c=>c.name)].join("、");
+    if(!S.log.length){
+      return `${names}围坐在一起，原本要玩真心话大冒险，但还没正式开始这一晚就散了。`;
+    }
+    // 取最多 3 个亮点：优先玩家参与的、以及真心话坦白
+    const sorted = [...S.log].sort((a,b)=>{
+      const sa=(a.isPlayer?2:0)+(a.type==="truth"?1:0);
+      const sb=(b.isPlayer?2:0)+(b.type==="truth"?1:0);
+      return sb-sa;
+    });
+    const picks = sorted.slice(0,3);
+    const highlights = picks.map(e=>{
+      const a = trim(e.answer, 30);
+      if(e.type==="truth") return `${e.targetName}在真心话里说「${a}」`;
+      return `${e.targetName}做了一个大冒险，${a}`;
+    }).join("；");
+    let s = `今晚${names}一起玩了真心话大冒险，一共 ${S.log.length} 个回合。${highlights}。`;
+    // 收一句温度
+    const me = S.log.find(e=>e.isPlayer);
+    if(me) s += `这一晚，${S.player.name}也露出了平时不太说的那一面。`;
+    if(s.length>200) s=s.slice(0,198)+"。";
+    return s;
+  }
+
+  /* ============ 再来一局 ============ */
+  function resetForReplay(){
+    S.round=0; S.log=[]; S.recorded=false; S.lastTargetIdx=-1; curRotation=0;
+    $("bottleWrap").style.transition="none";
+    $("bottleWrap").style.transform="translate(-50%,-50%) rotate(0deg)";
+    requestAnimationFrame(()=>{ $("bottleWrap").style.transition=""; });
+    show("screen-table");
+    renderSeats();
+    renderIdle();
+    persist();
+  }
+
+  /* ============ 屏幕切换 ============ */
+  function show(id){
+    ["screen-select","screen-table","screen-end"].forEach(s=>{
+      $(s).classList.toggle("hidden", s!==id);
+    });
+  }
+
+  window.addEventListener("resize", ()=>{ if(!$("screen-table").classList.contains("hidden")) renderSeats(); });
+
+  init();
+})();
+</script>
+</body>
+</html>

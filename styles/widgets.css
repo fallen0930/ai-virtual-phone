@@ -1,0 +1,3588 @@
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/字体/MISANS-REGULAR.woff2') format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/字体/MISANS-MEDIUM.woff2') format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/字体/MISANS-SEMIBOLD.woff2') format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ══════════════════════════════════════════
+   Widget Glass Container
+   ══════════════════════════════════════════ */
+
+.widget-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.icon-grid .widget-wrap {
+  justify-self: start;
+  align-self: start;
+}
+
+.widget-label {
+  font-size: calc(11.7px*var(--app-text-scale,1));
+  font-weight: 500;
+  color: var(--c-home-label);
+  text-align: center;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 5px;
+}
+
+.widget-glass {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-home-text);
+  font-size: calc(12px*var(--app-text-scale,1));
+  z-index: 1;
+}
+
+.widget-full-bleed {
+  padding: 0 !important;
+}
+
+/* 移除了强行缩小宽高的错误代码 */
+.widget-glass::before,
+.widget-glass::after {
+  display: none;
+}
+
+/* 下放材质引擎：让内部具体的组件卡片本体决定自身的光学着色面积，而非强迫被外部网格撑满 */
+.widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill) {
+  background: var(--c-home-card);
+  border-radius: 20px;
+}
+
+/* Base Effects overrides for widgets (应用到内部卡片实体) */
+.phone-shell[data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill) {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.26),
+      color-mix(in srgb, var(--c-home-pink, #f8bbd0) 5%, transparent),
+      rgba(255, 255, 255, 0.1)),
+    color-mix(in srgb, var(--c-home-card, rgba(255, 255, 255, 0.85)) 44%, transparent);
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.38),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 8px 32px rgb(0 0 0 / calc(0.14 * var(--desktop-shadow-strength, 0))),
+    0 0 22px color-mix(in srgb, var(--c-home-pink, #f8bbd0) 8%, transparent);
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.phone-shell[data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      transparent 8%,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 92%) top 0 left 5% / 90% 3px no-repeat,
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.25) 0%,
+      rgba(255, 255, 255, 0.08) 42%,
+      transparent 74%);
+  mix-blend-mode: screen;
+}
+
+.phone-shell[data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.65),
+      rgba(255, 255, 255, 0.12) 40%,
+      rgba(255, 255, 255, 0.08) 62%,
+      rgba(255, 255, 255, 0.15));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.phone-shell[data-glass-pass="1"][data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill) {
+  backdrop-filter: blur(22.01px) saturate(140%);
+  -webkit-backdrop-filter: blur(22.01px) saturate(140%);
+}
+
+/* Interaction-time downgrade: while the desktop is busy adding/dragging widgets,
+   drop the live backdrop-filter blur (the dominant GPU cost during reflow) and
+   the blend-mode highlight layer. The translucent panel background stays, so it
+   still reads as frosted; the real blur snaps back ~360ms after the last change.
+   data-glass-busy is toggled directly on the shell (no React re-render). */
+.phone-shell[data-glass-busy="1"][data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  will-change: auto !important;
+  /* 替代磨砂底：实时 blur 关闭期间用静态白雾渐变顶住观感（纯 background，
+     无滤镜无混合，GPU 成本≈0），不再"光秃秃"；松手约 360ms 后真玻璃回归。 */
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.42),
+    rgba(255, 255, 255, 0.24) 55%,
+    rgba(255, 255, 255, 0.32)) !important;
+}
+
+.phone-shell[data-glass-busy="1"][data-widget-effect="glass"] .widget-glass:not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill)::before {
+  display: none !important;
+}
+
+.phone-shell[data-widget-effect="transparent"] .widget-glass > div:not(.wg-ios-menu) {
+  /* background: transparent !important; */
+  box-shadow: none !important;
+  border: none !important;
+}
+
+
+
+/* Preview mode: scaled-down widget inside manager.
+   Renders the widget at full size then scales it down with CSS transform
+   so all text, SVGs, and controls look exactly like the real home screen. */
+.widget-preview-mode {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: scale(var(--wm-widget-scale, 0.56));
+  transform-origin: top left;
+  pointer-events: none;
+  border-radius: 18px;
+}
+
+/* Full-size dimensions before scaling. Heights use the ACTUAL
+   runtime --slot-row-step (~98px) not the CSS default (65px),
+   because grid rows are minmax(0,1fr) and expand to fill the screen.
+   Real row height ≈ 95px, row-step ≈ 98px.
+   2-row widget: 62 + 98 = 160px. */
+.widget-preview-mode.widget-1x1 { width: 70px; height: 62px; }
+.widget-preview-mode.widget-1x2 { width: 148px; height: 62px; }
+.widget-preview-mode.widget-2x1 { width: 70px; height: 160px; }
+.widget-preview-mode.widget-2x2 { width: 148px; height: 160px; }
+.widget-preview-mode.widget-1x4 { width: 320px; height: 58px; }
+.widget-preview-mode.widget-2x3 { width: 234px; height: 160px; }
+.widget-preview-mode.widget-3x2 { width: 148px; height: 258px; }
+.widget-preview-mode.widget-3x3 { width: 234px; height: 258px; }
+.widget-preview-mode.widget-2x4 { width: 320px; height: 160px; }
+.widget-preview-mode.widget-3x4 { width: 320px; height: 258px; }
+.widget-preview-mode.widget-4x2 { width: 148px; height: 356px; }
+.widget-preview-mode.widget-4x3 { width: 234px; height: 356px; }
+.widget-preview-mode.widget-4x4 { width: 320px; height: 356px; }
+.widget-preview-mode.widget-5x4 { width: 320px; height: 454px; }
+.widget-preview-mode.widget-6x4 { width: 320px; height: 552px; }
+
+/* ── Widget internal styles ── */
+
+/* Animations */
+@keyframes wg-blink {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes wg-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+  letter-spacing: 0.1em;
+}
+
+/* Music (2x4) */
+.wg-music {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.wg-music-disc {
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.wg-music-disc-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  animation: wg-spin 4s linear infinite;
+  animation-play-state: paused;
+}
+
+.wg-music-disc[data-spinning] .wg-music-disc-inner {
+  animation-play-state: running;
+}
+
+.wg-music-disc-svg {
+  width: 96px;
+  height: 96px;
+}
+
+.wg-music-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wg-music-title {
+  font-size: calc(13px*var(--app-text-scale,1));
+  font-weight: 500;
+  color: var(--c-home-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-music-artist {
+  font-size: calc(10px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  opacity: 0.5;
+}
+
+.wg-music-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0;
+}
+
+.wg-music-bar {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--c-home-border);
+  overflow: hidden;
+}
+
+.wg-music-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--c-home-text);
+  opacity: 0.4;
+  transition: width 0.3s linear;
+}
+
+.wg-music-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: calc(8px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  opacity: 0.4;
+}
+
+.wg-music-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--c-home-text);
+  opacity: 0.7;
+}
+
+.wg-music-play-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--c-home-border);
+  display: grid;
+  place-items: center;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Calendar (2x2) */
+.wg-calendar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.wg-calendar-header {
+  margin-bottom: 2px;
+}
+
+.wg-calendar-header-glass {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: var(--c-home-border);
+}
+
+.wg-calendar-ym {
+  font-size: calc(11px*var(--app-text-scale,1));
+  font-weight: 600;
+  color: var(--c-home-text);
+}
+
+.wg-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 0;
+  width: 100%;
+  text-align: center;
+  flex: 1;
+  min-height: 0;
+}
+
+.wg-cal-head,
+.wg-cal-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(9px*var(--app-text-scale,1));
+  min-height: 0;
+}
+
+.wg-cal-head {
+  color: var(--c-home-sub);
+}
+
+.wg-cal-day {
+  color: var(--c-home-text);
+}
+
+.wg-cal-today {
+  background: var(--c-home-pink);
+  border-radius: 50%;
+  font-weight: 700;
+  color: var(--c-home-text);
+}
+
+.wg-calendar-eng {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.05em;
+  text-align: right;
+}
+
+/* Clock (2x2) */
+.wg-clock {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 18px;
+}
+
+.wg-clock-top {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.wg-clock-date {
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+}
+
+.wg-clock-weekday {
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+}
+
+.wg-clock-time-row {
+  display: flex;
+  align-items: center;
+}
+
+.wg-clock-h,
+.wg-clock-m {
+  font-size: calc(48px*var(--app-text-scale,1));
+  font-weight: 300;
+  color: var(--c-home-text);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.wg-clock-colon {
+  font-size: calc(40px*var(--app-text-scale,1));
+  font-weight: 300;
+  color: var(--c-home-text);
+  line-height: 1;
+  margin: 0 2px;
+  animation: wg-blink 1s step-end infinite;
+}
+
+.wg-clock-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.wg-clock-line {
+  flex: 1;
+  height: 1px;
+  background: var(--c-home-border);
+}
+
+.wg-clock-eng {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+/* Photo (2x2) */
+.wg-photo {
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  position: relative;
+  z-index: 2;
+}
+
+.wg-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--c-home-border);
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+}
+
+.wg-photo-placeholder-hint,
+.wg-upload-hint {
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  opacity: 0.7;
+}
+
+.wg-ms-avatar-mock,
+.wg-sp-avatar-mock,
+.wg-sp-post-mock {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-photo-deco {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  z-index: 3;
+  opacity: 0.8;
+  color: var(--c-home-pink);
+}
+
+.wg-photo-corner {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-color: rgba(255, 255, 255, 0.25);
+  border-style: solid;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.wg-photo-corner-tl {
+  top: 4px;
+  left: 4px;
+  border-width: 1px 0 0 1px;
+  border-radius: 3px 0 0 0;
+}
+
+.wg-photo-corner-br {
+  bottom: 4px;
+  right: 4px;
+  border-width: 0 1px 1px 0;
+  border-radius: 0 0 3px 0;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+/* Love Note (2x2) */
+.wg-lovenote {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.wg-lovenote-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.wg-lovenote-eng {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.1em;
+}
+
+.wg-lovenote-date {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+}
+
+.wg-lovenote-body {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wg-lovenote-quote {
+  font-size: calc(24px*var(--app-text-scale,1));
+  color: var(--c-home-pink);
+  line-height: 1;
+  font-family: Georgia, serif;
+  flex-shrink: 0;
+}
+
+.wg-lovenote-text {
+  font-size: calc(13px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  line-height: 1.8;
+  text-align: center;
+  flex: 1;
+  overflow: hidden;
+  display: -webkit-box;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.wg-lovenote-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--c-home-pink);
+}
+
+.wg-lovenote-line {
+  flex: 1;
+  height: 1px;
+  background: var(--c-home-border);
+  pointer-events: none;
+}
+
+/* Interview magazine (2x4) — photo + issue flip card */
+.wg-interview-magazine {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  gap: 0;
+  overflow: hidden;
+}
+
+.wg-interview-magazine-photo {
+  width: 50%;
+  flex-shrink: 0;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  background: var(--c-home-border);
+}
+
+.wg-interview-magazine-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wg-interview-magazine-photo-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  pointer-events: none;
+}
+
+.wg-interview-magazine-right {
+  flex: 1;
+  min-width: 0;
+  perspective: 600px;
+  cursor: pointer;
+}
+
+.wg-interview-magazine-card {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wg-interview-magazine-flipped {
+  transform: rotateY(180deg);
+}
+
+.wg-interview-magazine-front,
+.wg-interview-magazine-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.wg-interview-magazine-front-date {
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.05em;
+}
+
+.wg-interview-magazine-front-title {
+  font-size: calc(22px*var(--app-text-scale,1));
+  font-weight: 300;
+  color: var(--c-home-text);
+  letter-spacing: 0.15em;
+}
+
+.wg-interview-magazine-front-eng {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+}
+
+.wg-interview-magazine-front-hint {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  margin-top: 6px;
+  letter-spacing: 0.05em;
+}
+
+.wg-interview-magazine-back {
+  transform: rotateY(180deg);
+  gap: 6px;
+  padding: 12px 16px;
+}
+
+.wg-interview-magazine-level {
+  font-size: calc(30px*var(--app-text-scale,1));
+  font-weight: 300;
+  letter-spacing: 0.15em;
+}
+
+.wg-interview-magazine-divider {
+  width: 32px;
+  height: 1px;
+  background: var(--c-home-border);
+}
+
+.wg-interview-magazine-details {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  letter-spacing: 0.12em;
+}
+
+.wg-interview-magazine-detail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.wg-interview-magazine-detail-label {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+}
+
+.wg-interview-magazine-detail-value {
+  font-size: calc(12px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wg-interview-magazine-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.wg-interview-magazine-saying {
+  font-size: calc(10px*var(--app-text-scale,1));
+  color: var(--c-home-sub);
+  text-align: center;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+/* ══════════════════════════════════════════
+   Widget Manager (Appearance → 桌面组件)
+   ══════════════════════════════════════════ */
+
+/* Page tabs */
+/* Real miniature desktop preview */
+.wm-preview {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 6px;
+}
+
+/* Outer metal mid-frame (matches .phone-case styling)
+   Scale: 0.512 of real phone (410×864 → 210×442) */
+.wm-phone-wrap {
+  width: 210px;
+  border-radius: 30px;
+  padding: 3px;
+  border: 0.5px solid rgba(0, 0, 0, 0.3);
+  background:
+    linear-gradient(175deg,
+      #a8adb2 0%,
+      #8a9096 6%,
+      #6a7078 16%,
+      #565c64 30%,
+      #7a8088 42%,
+      #9aa0a6 48%,
+      #6e747c 56%,
+      #585e66 68%,
+      #788088 80%,
+      #969ca4 90%,
+      #a0a6ac 100%);
+  box-shadow:
+    0 12px 28px rgba(60, 60, 60, 0.32),
+    0 4px 10px rgba(80, 80, 80, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Inner black bezel (matches .phone-frame styling) */
+.wm-phone-case {
+  border-radius: 27px;
+  background: var(--c-home-card); padding: 2px;
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.03),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.02);
+}
+
+.wm-phone-frame {
+  border-radius: 25px;
+  overflow: hidden;
+}
+
+.wm-home-preview {
+  --wm-slot: 34px;
+  --wm-gap-x: 10px;
+  --wm-gap-y: 2px;
+  border-radius: 25px;
+  background: var(--c-home-card); display: flex;
+  flex-direction: column;
+  padding: 6px;
+  height: 432px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.wm-home-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% -8%, rgba(255, 255, 255, 0.36), transparent 42%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.11), transparent 46%),
+    radial-gradient(90% 70% at 18% 86%, rgba(245, 252, 248, 0.14), transparent 60%);
+  z-index: 1;
+  border-radius: inherit;
+}
+
+.wm-phone-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  border-radius: inherit;
+}
+
+.wm-home-preview>*:not(.wm-phone-wallpaper) {
+  position: relative;
+  z-index: 2;
+}
+
+.wm-home-statusbar {
+  height: 18px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 12px;
+  z-index: 4;
+  color: var(--c-home-text); font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+.wm-home-time {
+  font-size: calc(7.2px*var(--app-text-scale,1));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  justify-self: start;
+  line-height: 1;
+}
+
+.wm-home-island {
+  width: 64px;
+  height: 18px;
+  border-radius: 10px;
+  background: var(--c-home-card); justify-self: center;
+}
+
+.wm-home-status-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  justify-self: end;
+}
+
+.wm-home-signal {
+  height: 6px;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.7px;
+}
+
+.wm-home-signal i {
+  display: block;
+  width: 1.5px;
+  border-radius: 0.6px;
+  background: var(--c-home-card); }
+
+.wm-home-signal i:nth-child(1) {
+  height: 1.8px;
+}
+
+.wm-home-signal i:nth-child(2) {
+  height: 2.8px;
+}
+
+.wm-home-signal i:nth-child(3) {
+  height: 4px;
+}
+
+.wm-home-signal i:nth-child(4) {
+  height: 5.5px;
+}
+
+.wm-home-wifi {
+  width: 8px;
+  height: 6px;
+  color: var(--c-home-text); }
+
+.wm-home-battery {
+  width: 12px;
+  height: 5.5px;
+  border: 0.8px solid rgba(26, 26, 26, 0.85);
+  border-radius: 1.5px;
+  position: relative;
+  padding: 0.7px;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.wm-home-battery::after {
+  content: "";
+  position: absolute;
+  right: -1.8px;
+  top: 1.2px;
+  width: 1px;
+  height: 2.5px;
+  border-radius: 0 0.7px 0.7px 0;
+  background: rgba(26, 26, 26, 0.85);
+}
+
+.wm-home-battery-fill {
+  width: 70%;
+  border-radius: 0.7px;
+  background: var(--c-home-card); }
+
+.wm-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, var(--wm-slot));
+  grid-template-rows: repeat(6, minmax(0, 1fr));
+  column-gap: var(--wm-gap-x);
+  row-gap: var(--wm-gap-y);
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: fit-content;
+  margin: 0 auto;
+  margin-top: 26px;
+  padding: 0 0 4px;
+}
+
+.wm-home-dock {
+  margin: 4px auto 18px;
+  width: calc((4 * var(--wm-slot)) + (3 * var(--wm-gap-x)) + 12px);
+  border-radius: 14px;
+  border: 0.5px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0.003));
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow:
+    0 3px 9px rgba(0, 0, 0, 0.1),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+  display: grid;
+  grid-template-columns: repeat(4, var(--wm-slot));
+  column-gap: var(--wm-gap-x);
+  justify-content: center;
+  padding: 5px 6px 3px;
+  flex-shrink: 0;
+}
+
+.wm-home-dock-item {
+  width: var(--wm-slot);
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+
+/* Preview icon (miniature real icon) */
+.wm-preview-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.wm-preview-icon-box {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+  background: var(--c-desktop-icon-box, #ffffff);
+}
+
+.wm-preview-icon-skin {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  border-radius: inherit;
+}
+
+.wm-preview-icon-glyph {
+  width: 24px;
+  height: 24px;
+  color: var(--c-desktop-icon, #2f343b);
+  filter: none;
+}
+
+.wm-preview-icon-glyph-music {
+  transform: translateX(-2px);
+}
+
+.wm-preview-icon-label {
+  font-size: calc(5.4px*var(--app-text-scale,1));
+  color: var(--c-home-label);
+  text-shadow: 0 0.5px 1px rgba(20, 30, 26, 0.36);
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: var(--wm-slot);
+  text-align: center;
+}
+
+/* Preview widget wrapper — explicit size matching scaled widget */
+.wm-preview-widget {
+  --wm-widget-scale: 0.52;
+  position: relative;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: outline 120ms ease;
+  overflow: hidden;
+  align-self: start;
+}
+
+/* Explicit dimensions: full-size * scale factor (0.52) */
+.wm-pw-1x4 {
+  width: 166px;
+  height: 32px;
+}
+
+.wm-pw-2x2 {
+  width: 77px;
+  height: 83px;
+}
+
+.wm-pw-2x4 {
+  width: 166px;
+  height: 83px;
+}
+
+.wm-pw-3x4 {
+  width: 166px;
+  height: 134px;
+}
+
+.wm-preview-widget:hover {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 1px;
+}
+
+.wm-preview-widget-delete {
+  outline: 2px solid rgba(220, 80, 80, 0.6);
+  outline-offset: 1px;
+}
+
+.wm-preview-delete-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(220, 80, 80, 0.4);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(8.1px*var(--app-text-scale,1));
+  font-weight: 600;
+  color: #fff;
+  z-index: 5;
+}
+
+/* Ghost outline shown when hovering during placement */
+.wm-preview-ghost {
+  border: 2px solid rgba(120, 200, 160, 0.7);
+  border-radius: 8px;
+  background: rgba(120, 200, 160, 0.12);
+  pointer-events: none;
+  align-self: start;
+  z-index: 3;
+}
+
+/* ══════════════════════════════════════════
+   11. Kaomoji Status Bar (1x4)
+   ══════════════════════════════════════════ */
+.widget-glass:has(.wg-kaomoji) {
+  border-radius: 9999px;
+}
+
+.wg-kaomoji {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.wg-kaomoji-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.wg-kaomoji-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.wg-kaomoji-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wg-kaomoji-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wg-kaomoji-face {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  opacity: 0.5;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+
+.wg-kaomoji-greeting {
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+.wg-kaomoji-date {
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-text);
+  opacity: 0.7;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+.wg-kaomoji-heart {
+  color: var(--c-home-pink);
+  flex-shrink: 0;
+  margin-right: 20px;
+}
+
+.wg-kaomoji-time {
+  display: flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  margin-left: -12px;
+}
+
+.wg-kaomoji-h,
+.wg-kaomoji-m {
+  font-size: calc(22px*var(--app-text-scale,1));
+  font-weight: 400;
+  color: var(--c-home-text);
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.wg-kaomoji-colon {
+  font-size: calc(20px*var(--app-text-scale,1));
+  font-weight: 400;
+  color: var(--c-home-text);
+  opacity: 0.6;
+  margin: 0 1px;
+  line-height: 1;
+}
+
+/* Empty cell for placement */
+.wm-preview-empty {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.wm-preview-empty:disabled {
+  opacity: 0.3;
+}
+
+.wm-preview-empty:not(:disabled) {
+  cursor: pointer;
+}
+
+.wm-no-space {
+  margin: 0;
+  text-align: center;
+  font-size: calc(10.8px*var(--app-text-scale,1));
+  color: var(--c-danger);
+}
+
+/* Widget catalog */
+.wm-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wm-catalog-title {
+  margin: 0;
+  font-size: calc(12.6px*var(--app-text-scale,1));
+  font-weight: 600;
+  color: var(--c-text-title);
+}
+
+.wm-catalog-list {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 20px;
+  column-gap: 24px;
+  justify-content: center;
+}
+
+.wm-cat-size-2x4,
+.wm-cat-size-2x3,
+.wm-cat-size-1x4,
+.wm-cat-size-3x3,
+.wm-cat-size-3x4,
+.wm-cat-size-4x4 {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wm-cat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 22px;
+  padding: 0;
+  transition: border-color 150ms ease;
+}
+
+.wm-cat-item .widget-glass {
+  pointer-events: none;
+}
+
+.wm-cat-active {
+  border-color: var(--c-icon-active);
+}
+
+.wm-cat-name {
+  font-size: calc(9.9px*var(--app-text-scale,1));
+  color: #4b5563; /* Removed variable dependency as requested */
+}
+
+.wm-cat-active .wm-cat-name {
+  color: var(--c-icon-active);
+}
+
+/* Real-size previews */
+.wm-cat-item .widget-preview-mode {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+}
+
+.wm-cat-size-2x2 .widget-preview-mode {
+  width: 148px;
+  height: 160px;
+}
+
+.wm-cat-size-2x4 .widget-preview-mode {
+  width: 320px;
+  height: 160px;
+}
+
+.wm-cat-size-2x3 .widget-preview-mode {
+  width: 234px;
+  height: 160px;
+}
+
+.wm-cat-size-1x4 .widget-preview-mode {
+  width: 320px;
+  height: 58px;
+}
+
+.wm-cat-size-3x3 .widget-preview-mode {
+  width: 234px;
+  height: 258px;
+}
+
+.wm-cat-size-3x4 .widget-preview-mode {
+  width: 320px;
+  height: 258px;
+}
+
+.wm-cat-size-4x2 .widget-preview-mode {
+  width: 148px;
+  height: 356px;
+}
+
+.wm-cat-size-4x3 .widget-preview-mode {
+  width: 234px;
+  height: 356px;
+}
+
+.wm-cat-size-4x4 .widget-preview-mode {
+  width: 320px;
+  height: 356px;
+}
+
+/* ══════════════════════════════════════════
+   Theme Section Page (外观子页面通用容器)
+   ══════════════════════════════════════════ */
+
+.theme-section-page {
+  flex: 1 1 auto;
+  /* iOS WebKit 在嵌套 flex 列里不给带 overflow 的子项隐式 min-height:0，
+     容器被内容撑到超出视口、自身滚动永远不触发——表现为下面有内容却拖不动。
+     记忆库（memory-detail-scroll）、查手机（cp-browser-*）、音乐三处都是这么修的。 */
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-section-page::-webkit-scrollbar {
+  display: none;
+}
+
+/* 底部预留：iOS 不把滚动容器自身的 padding-bottom 计入可滚动区域，超出量少时
+   末尾整段被安全区吞掉。改用 memory-detail-scroll::after 同款尾部占位块。
+   只给内容会超过一屏的子页开（data 属性 opt-in）——本类还被小卷/聊天设置里的
+   CSS、人格编辑页复用，那些是 flex-1 textarea 撑满、不靠滚动，无条件加占位块
+   会平白压掉一截输入框，也会和自带 padding 叠成双份（见音乐页那次善后）。 */
+.theme-section-page[data-bottom-reserve] {
+  padding-bottom: 0;
+}
+
+.theme-section-page[data-bottom-reserve]::after {
+  content: "";
+  flex: 0 0 calc(28px + env(safe-area-inset-bottom, 0px));
+  width: 1px;
+  min-height: 0;
+  pointer-events: none;
+}
+
+/* 内容超出一屏时，flex 会先把子项压扁再让容器滚动。带 overflow:hidden 或
+   aspect-ratio 的块（DOCK 预览槽正是）自动最小高度算作 0，会被一路压成
+   一条线——看着就是「上传槽位不见了」。长内容子页里的东西一律不参与压缩，
+   超出多少就滚多少。同 e33adb6 给设置子页包裹层加 shrink-0 的思路。 */
+.theme-section-page[data-bottom-reserve] > * {
+  flex-shrink: 0;
+}
+
+.wp-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wp-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wp-slider-row label {
+  font-size: calc(11.7px*var(--app-text-scale,1));
+  font-weight: 500;
+  color: var(--c-text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Slider inherits from .ui-slider in components.css — add class="ui-slider" to <input type="range"> */
+.wp-slider-row input[type="range"] { flex: 1; }
+
+.wp-slider-row .wp-slider-value {
+  font-size: calc(10.8px*var(--app-text-scale,1));
+  color: var(--c-text);
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.wp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.wp-card {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 120ms ease;
+  background: var(--c-input);
+}
+
+.wp-card:hover {
+  border-color: var(--c-panel-border);
+}
+
+.wp-card-active {
+  border-color: var(--c-text-title);
+}
+
+.wp-card-img {
+  width: 100%;
+  aspect-ratio: 390 / 844;
+  object-fit: cover;
+  display: block;
+}
+
+.wp-card-active {
+  border-color: var(--c-text-title);
+  box-shadow: 0 0 0 1px var(--c-icon-active);
+}
+
+.wp-card-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: calc(9px*var(--app-text-scale,1));
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* wp-card-delete → replaced by global .ui-card-delete */
+
+.wp-toast {
+  position: sticky;
+  bottom: 12px;
+  align-self: center;
+  padding: 8px 20px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: calc(11.7px*var(--app-text-scale,1));
+  font-weight: 500;
+  pointer-events: none;
+  animation: wp-toast-in 200ms ease;
+  z-index: 10;
+}
+
+@keyframes wp-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wp-empty {
+  text-align: center;
+  font-size: calc(11.7px*var(--app-text-scale,1));
+  color: var(--c-icon);
+  padding: 20px 0;
+}
+
+/* ── Icon Skin Grid ── */
+.is-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.is-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.is-frame {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--c-input);
+  border: 1.5px dashed var(--c-panel-border);
+  display: grid;
+  place-items: center;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.is-frame:hover {
+  border-color: var(--c-icon-active);
+}
+
+.is-frame[data-skinned] {
+  border: none;
+}
+
+.is-frame-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.is-frame-glyph {
+  width: 28px;
+  height: 28px;
+  color: var(--c-icon);
+  opacity: 0.5;
+}
+
+.is-label {
+  font-size: calc(9.9px*var(--app-text-scale,1));
+  color: var(--c-text);
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* is-delete → replaced by global .ui-card-delete */
+
+.is-empty-hint {
+  text-align: center;
+  font-size: calc(10.8px*var(--app-text-scale,1));
+  color: var(--c-text);
+  padding: 8px 0 0;
+}
+
+.is-dock-preview {
+  width: 100%;
+  aspect-ratio: 328 / 78;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--c-input);
+  border: 1.5px dashed var(--c-panel-border);
+  display: grid;
+  place-items: center;
+  position: relative;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.is-dock-preview:hover { border-color: var(--c-icon-active); }
+.is-dock-preview[data-skinned] { border: none; }
+.is-dock-preview:hover .ui-card-delete { opacity: 1; }
+
+.is-dock-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+
+/* ══════════════════════════════════════════
+   🌸 KAWAII AESTHETIC SERIES
+   ══════════════════════════════════════════ */
+
+/* Transparent Override for all Kawaii Widgets (attached to .widget-glass) */
+.widget-glass.widget-kawaii {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border: none;
+  overflow: visible;
+}
+
+.widget-glass.widget-kawaii.widget-preview-mode {
+  pointer-events: none;
+  background: transparent;
+  overflow: visible;
+}
+
+/* 1. Kawaii Music Player (2x4) */
+.wg-kw-music-player {
+  width: 100%; height: 100%;
+   
+  
+  
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px 28px;
+  
+  font-family: "MiSans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--c-home-text); box-sizing: border-box;
+}
+.kwmp-header {
+  display: flex; align-items: flex-start; gap: 16px;
+}
+.kwmp-album-art {
+  width: 44px; height: 44px;
+  border-radius: 8px;
+  background: var(--c-home-border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+}
+.kwmp-info {
+  flex: 1; display: flex; flex-direction: column; justify-content: center;
+  margin-top: 4px;
+  min-width: 0;
+}
+.kwmp-title {
+  font-size: calc(13px*var(--app-text-scale,1)); font-weight: 500;
+  color: var(--c-home-text); letter-spacing: -0.1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kwmp-sub {
+  font-size: calc(9px*var(--app-text-scale,1)); color: var(--c-home-sub); margin-top: 3px;
+  letter-spacing: 0.2px; opacity: 0.9;
+}
+.kwmp-eq {
+  width: 16px; height: 11px;
+  color: var(--c-home-text); margin-top: 8px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.kwmp-progress {
+  display: flex; align-items: center; gap: 12px;
+}
+.kwmp-time-left, .kwmp-time-right {
+  font-size: calc(11px*var(--app-text-scale,1)); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-home-text); letter-spacing: 0;
+}
+.kwmp-bar {
+  flex: 1; height: 5px; border-radius: 2.5px;
+  background: #999999;
+  position: relative; overflow: hidden;
+}
+.kwmp-bar-fill {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 26%; background: #cccccc;
+}
+
+.kwmp-controls {
+  display: flex; justify-content: center; align-items: center; gap: 32px;
+  padding: 0 4px;
+}
+.kwmp-btn {
+  color: var(--c-home-text); display: grid; place-items: center;
+  cursor: pointer;
+}
+.kwmp-btn svg { transition: transform 0.15s ease; }
+.kwmp-btn:active svg { transform: scale(0.9); }
+
+.kwmp-btn-star { margin-right: auto; }
+.kwmp-btn-headphones { margin-left: auto; }
+
+.kwmp-btn-star svg { width: 18px; height: 18px; stroke-width: 2px; }
+.kwmp-btn-prev svg { width: 20px; height: 20px; }
+.kwmp-btn-pause svg { width: 21px; height: 21px; }
+.kwmp-btn-next svg { width: 20px; height: 20px; }
+.kwmp-btn-headphones svg { width: 18px; height: 18px; }
+
+
+/* ══════════════════════════════════════════
+   System Menu Popup
+   ══════════════════════════════════════════ */
+
+.wg-ios-menu {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 关联全局开关：只有当用户开了组件阴影，才让这个异形菜单呈现正确的 drop-shadow */
+.phone-shell[data-shadows="on"] .wg-ios-menu {
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.06));
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  width: fit-content;
+  height: fit-content;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.26),
+      color-mix(in srgb, var(--c-home-pink, #f8bbd0) 5%, transparent),
+      rgba(255, 255, 255, 0.1)),
+    color-mix(in srgb, var(--c-home-card, rgba(255, 255, 255, 0.85)) 44%, transparent);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.38),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 8px 32px rgb(0 0 0 / calc(0.14 * var(--desktop-shadow-strength, 0))),
+    0 0 22px color-mix(in srgb, var(--c-home-pink, #f8bbd0) 8%, transparent);
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    linear-gradient(90deg,
+      transparent 8%,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 92%) top 0 left 5% / 90% 3px no-repeat,
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.25) 0%,
+      rgba(255, 255, 255, 0.08) 42%,
+      transparent 74%);
+  mix-blend-mode: screen;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  z-index: 3;
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.65),
+      rgba(255, 255, 255, 0.12) 40%,
+      rgba(255, 255, 255, 0.08) 62%,
+      rgba(255, 255, 255, 0.15));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu svg {
+  position: relative;
+  z-index: 2;
+  height: auto;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu svg path[style*="--c-home-border"] {
+  fill: transparent !important;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-ios-menu svg rect[style*="--c-home-card"] {
+  fill: color-mix(in srgb, var(--c-home-card, rgba(255, 255, 255, 0.85)) 38%, transparent) !important;
+}
+
+.phone-shell[data-glass-pass="1"][data-widget-effect="glass"] .wg-ios-menu {
+  backdrop-filter: blur(22.01px) saturate(140%);
+  -webkit-backdrop-filter: blur(22.01px) saturate(140%);
+}
+
+
+
+/* SVG 强行缩放补丁由于新画布的完美裁切，已经正式退役 */
+
+/* 使用纯粹的内建矢量路径解决异形菜单描边需求（已舍弃倒三角尾巴以换取完美外轮廓） */
+.wg-ios-menu-stroke-layer {
+  display: none;
+  color: var(--desktop-outline-color, var(--user-border-color, #000));
+  stroke-width: var(--desktop-outline-width, 1.5px) !important;
+}
+
+.phone-shell[data-borders="on"] .wg-ios-menu-stroke-layer {
+  display: block;
+}
+.wg-my-space {
+  width: 100%;
+  height: 100%;
+   
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  /* 原本的自带高级轮廓光 */
+  
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* 顶部导航区 */
+.wg-ms-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  position: relative;
+}
+.wg-ms-title {
+  font-weight: 600;
+  font-size: calc(13.5px*var(--app-text-scale,1));
+  color: var(--c-home-text); letter-spacing: 0.5px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.wg-ms-top-right {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.wg-ms-icon {
+  fill: var(--c-home-text);
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.wg-ms-icon:active {
+  opacity: 0.6;
+}
+
+/* 核心头像与名字区 */
+.wg-ms-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.wg-ms-avatar {
+  width: 85px;
+  height: 85px;
+  border-radius: 50%;
+  background: var(--c-home-border);
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1.2);
+}
+.wg-ms-avatar:active {
+  transform: scale(0.95);
+}
+.wg-ms-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.wg-ms-name {
+  margin-top: 6px;
+  margin-bottom: 8px;
+  font-weight: 800;
+  font-size: calc(15.5px*var(--app-text-scale,1));
+  color: var(--c-home-text); cursor: pointer;
+  border-radius: 6px;
+}
+
+/* 底部数据流区 */
+.wg-ms-bottom {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
+}
+.wg-ms-stat {
+  flex: 1;
+  background: var(--c-home-border);
+  border-radius: 10px;
+  padding: 10px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.wg-ms-stat-num {
+  font-weight: 700;
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: var(--c-home-text); margin-bottom: 0;
+  line-height: 1;
+}
+.wg-ms-stat-label {
+  font-weight: 600;
+  font-size: calc(9px*var(--app-text-scale,1));
+  color: var(--c-home-text); line-height: 1;
+}
+
+/* ══════════════════════════════════════════
+   14. Social Post 社交动态组件
+   ══════════════════════════════════════════ */
+.wg-sp-card {
+  width: 90%; /* 核心：制造左右透空 */
+  max-width: 290px;
+  height: calc(100% - 20px);
+  margin: 0 auto;
+   
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+   /* 恢复深邃悬浮阴影 */
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* 头部资料区 */
+.wg-sp-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.wg-sp-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--c-home-border);
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.wg-sp-avatar img, .wg-sp-post-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.wg-sp-user-info {
+  flex: 1;
+  margin-left: 10px;
+  cursor: pointer;
+}
+.wg-sp-username {
+  font-weight: 800;
+  font-size: calc(14px*var(--app-text-scale,1));
+  color: var(--c-home-text); line-height: 1.2;
+}
+.wg-sp-subtitle {
+  font-weight: 500;
+  font-size: calc(10px*var(--app-text-scale,1));
+  color: var(--c-home-sub); text-transform: uppercase;
+}
+.wg-sp-more {
+  cursor: pointer;
+}
+
+/* 主图区 */
+.wg-sp-post-image {
+  flex: 1;
+  width: 100%;
+  border-radius: 14px;
+  background: var(--c-home-border);
+  overflow: hidden;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+/* 点赞数字区 */
+.wg-sp-likes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--c-home-pink); font-weight: 600;
+  font-size: calc(14px*var(--app-text-scale,1));
+}
+
+/* 底部操作胶囊 */
+.wg-sp-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wg-sp-btn {
+  flex: 1;
+  background: var(--c-home-border);
+  border-radius: 16px;
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--c-home-sub); font-size: calc(11px*var(--app-text-scale,1));
+  font-weight: 600;
+  cursor: pointer;
+}
+.wg-sp-btn svg {
+  color: var(--c-home-sub); }
+
+/* ══════════════════════════════════════════
+   15. Retro Menu 复古侧边栏组件 (3x4)
+   ══════════════════════════════════════════ */
+/* ══════════════════════════════════════════
+   Global Overrides for Widgets (Shadows & Borders)
+   ══════════════════════════════════════════ */
+
+
+/* ══════════════════════════════════════════
+   Couple Chat Widget (2x4)
+   ══════════════════════════════════════════ */
+.wg-couple-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  justify-content: center;
+}
+
+.wg-chat-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.wg-chat-row.right {
+  justify-content: flex-end;
+}
+
+.wg-chat-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: var(--c-home-border);
+  background-size: cover;
+  background-position: center;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+
+.wg-chat-avatar-ph {
+  font-size: calc(10px*var(--app-text-scale,1));
+  font-weight: 700;
+  color: var(--c-home-text);
+}
+
+.wg-chat-bubble {
+  padding: 8px 12px;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  max-width: calc(100% - 60px);
+  position: relative;
+  font-size: calc(13px*var(--app-text-scale,1));
+  line-height: 1.4;
+}
+
+.wg-chat-row.left .wg-chat-bubble {
+  background-color: var(--c-home-border);
+  color: var(--c-home-sub);
+  border-bottom-left-radius: 4px;
+}
+
+.wg-chat-row.right .wg-chat-bubble {
+  background-color: var(--c-home-card); color: var(--c-home-text); border-bottom-right-radius: 4px;
+}
+
+.wg-chat-row.right .wg-bubble-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--c-home-pink);
+  color: var(--c-home-text);
+  padding: 8px 14px;
+}
+
+.wg-hw-time {
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+/* Pure CSS Heart Waveform Engine */
+.wg-heart-wave {
+  display: flex;
+  align-items: center;
+  gap: 1.5px;
+}
+
+.wg-hw-svg-path {
+  transform-origin: center;
+  animation: heartSweep 1.7s ease-in-out infinite;
+}
+
+@keyframes heartSweep {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; filter: drop-shadow(0 0 2px rgba(255,255,255,0.8)); }
+}
+
+/* Global Aesthetics compatibility */
+.phone-shell[data-shadows="off"] .wg-chat-bubble {
+  box-shadow: none !important;
+}
+.phone-shell[data-borders="on"] .wg-chat-bubble {
+  /* 移除气泡描边，仅保留无描边状态下的原生阴影移除 */
+}
+
+.wg-ios-menu li:last-child { color: var(--c-home-sub); }
+.wg-ios-menu li:last-child svg { stroke: var(--c-home-sub) !important; }
+
+/* ══════════════════════════════════════════
+   Global Overrides for Widgets (Shadows & Borders)
+   ══════════════════════════════════════════ */
+/* 剥离已作废的全局 filter: none */
+
+/* 扁平态组件阴影：强度由变量控制 */
+.phone-shell:not([data-widget-effect="glass"]) .widget-glass:not(.widget-kawaii):not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-chat-bubble):not(.wg-large-time):not(.wg-mood-pill) {
+  box-shadow: 0 4px 12px rgb(0 0 0 / calc(0.08 * var(--desktop-shadow-strength, 0)));
+}
+
+.phone-shell:not([data-widget-effect="glass"]) .wg-mood-bubble {
+  box-shadow: 0 4px 12px rgb(0 0 0 / calc(0.08 * var(--desktop-shadow-strength, 0)));
+}
+
+/* 让描边真正勾勒在具备圆角和物理背板的内层卡片本体上 */
+.phone-shell[data-borders="on"] .widget-glass:not(.widget-kawaii):not(.widget-freestyle) > div:not(.wg-ios-menu):not(.wg-large-time):not(.wg-mood-pill) {
+  border: var(--desktop-outline-width, 1.5px) solid var(--desktop-outline-color, var(--user-border-color, #000)) !important;
+}
+
+/* 气泡本体跟随描边 */
+.phone-shell[data-borders="on"] .wg-mood-bubble {
+  border: var(--desktop-outline-width, 1.5px) solid var(--desktop-outline-color, var(--user-border-color, #000)) !important;
+}
+
+/*气泡跟随系统描边后，由于主体有 1.5px 粗细的边框，使用 ::before 做额外的尖角边框*/
+.phone-shell[data-borders="on"] .wg-mood-bubble::before {
+  opacity: 1;
+}
+.phone-shell[data-borders="on"] .wg-mood-bubble::after {
+  margin-top: calc(-1 * var(--desktop-outline-width, 1.5px)); /* 让内层白色三角贴齐当前描边宽度 */
+}
+
+/* ══════════════════════════════════════════
+   📝 Quick Note (Widget)
+   ══════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════
+   📷 Photo Viewer (3x4)
+   ══════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════
+   ⌚ Large Time (极简长跨度文本大时钟 4x2)
+   ══════════════════════════════════════════ */
+.wg-large-time {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  /* 强制无背景、无边框、无阴影 */
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.wg-lt-date {
+  font-size: calc(16px*var(--app-text-scale,1));
+  font-weight: 600;
+  color: var(--c-home-text);
+  letter-spacing: 2px;
+}
+
+.wg-lt-time {
+  font-size: calc(96px*var(--app-text-scale,1));
+  font-weight: 600;
+  line-height: 1;
+  color: var(--c-home-text);
+  letter-spacing: 2px;
+}
+
+/* ══════════════════════════════════════════
+   ☁️ Mood Pill (悬浮气泡 4x1)
+   ══════════════════════════════════════════ */
+.wg-mood-pill {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 强制隐身剥离物理轮廓 */
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none; /* 让气泡本体不阻挡下方操作，仅文字带点击 */
+}
+
+.wg-mood-bubble {
+  position: relative;
+  background: var(--c-home-card);
+  padding: 8px 16px;
+  border-radius: 9999px;
+  color: var(--c-home-text);
+  font-size: calc(13px*var(--app-text-scale,1));
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+  cursor: pointer;
+  /* 基础无阴影状态，等待全局 class 赋予 */
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-mood-bubble {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.26),
+      color-mix(in srgb, var(--c-home-pink, #f8bbd0) 5%, transparent),
+      rgba(255, 255, 255, 0.1)),
+    color-mix(in srgb, var(--c-home-card, rgba(255, 255, 255, 0.85)) 44%, transparent);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.38),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.12),
+    0 8px 32px rgb(0 0 0 / calc(0.14 * var(--desktop-shadow-strength, 0))),
+    0 0 18px color-mix(in srgb, var(--c-home-pink, #f8bbd0) 8%, transparent);
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.phone-shell[data-glass-pass="1"][data-widget-effect="glass"] .wg-mood-bubble {
+  backdrop-filter: blur(22.01px) saturate(140%);
+  -webkit-backdrop-filter: blur(22.01px) saturate(140%);
+}
+
+/* 用作边框描边的底下大一圈的三角 */
+.wg-mood-bubble::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: calc(17.1px + var(--desktop-outline-width, 1.5px));
+  width: 0;
+  height: 0;
+  border-left: calc(5.9px + var(--desktop-outline-width, 1.5px)) solid transparent;
+  border-right: calc(5.9px + var(--desktop-outline-width, 1.5px)) solid transparent;
+  border-top: calc(7.9px + var(--desktop-outline-width, 1.5px)) solid var(--desktop-outline-color, var(--user-border-color, #000));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+/* 用作填充颜色的内部三角 */
+.wg-mood-bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 20px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid var(--c-home-card);
+  transition: margin-top 0.2s;
+}
+
+.phone-shell[data-widget-effect="glass"] .wg-mood-bubble::after {
+  border-top-color: color-mix(in srgb, var(--c-home-card, rgba(255, 255, 255, 0.85)) 48%, transparent);
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.2));
+}
+
+.wg-mood-bubble:hover {
+  transform: scale(1.02);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ══════════════════════════════════════════
+   💿 Vinyl Record (极简黑胶 2x2)
+   ══════════════════════════════════════════ */
+.wg-vinyl-record {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  /* subtle inner shadow to simulate player casing */
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.02);
+}
+
+.wg-vinyl-disc {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  /* Record grooves using alternating borders */
+  background: repeating-radial-gradient(
+    circle at center,
+    var(--c-home-border),
+    var(--c-home-border) 2px,
+    transparent 3px,
+    transparent 5px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  animation: wg-spin 8s linear infinite;
+}
+
+.wg-vinyl-label {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--c-home-card);
+  border: 1px solid var(--c-home-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.wg-vinyl-hole {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-home-text);
+}
+
+.wg-vinyl-decor {
+  position: absolute;
+  color: var(--c-home-pink);
+  font-size: calc(14px*var(--app-text-scale,1));
+  transform: translate(-10px, -10px);
+}
+
+.wg-vinyl-arm {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  width: 30px;
+  height: 70px;
+  transform-origin: top right;
+  transform: rotate(20deg);
+}
+
+.wg-vinyl-arm-base {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--c-home-text);
+  border: 4px solid var(--c-home-card);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.wg-vinyl-arm-stick {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  width: 4px;
+  height: 50px;
+  background: var(--c-home-sub);
+  border-radius: 2px;
+}
+
+.wg-vinyl-arm-head {
+  position: absolute;
+  bottom: 5px;
+  right: 3px;
+  width: 10px;
+  height: 16px;
+  background: var(--c-home-text);
+  border-radius: 2px;
+  transform: rotate(15deg);
+}
+
+/* ══════════════════════════════════════════
+   🚀 FREESTYLE CANVAS
+   ══════════════════════════════════════════ */
+.widget-glass.widget-freestyle {
+  /* give it the shadow here so it applies to the whole shape */
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.08));
+}
+
+
+
+.widget-glass.widget-freestyle::after, 
+.widget-glass.widget-freestyle::before {
+  display: none !important;
+}
+
+/* ══════════════════════════════════════════
+   🧾 Receipt (自由·购物小票 2x4)
+   ══════════════════════════════════════════ */
+.wg-receipt-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
+.wg-receipt-paper {
+  width: 100%;
+  height: 100%;
+  background: #fdfdfc; /* Real Receipt White */
+  display: flex;
+  flex-direction: column;
+  padding: 16px 14px;
+  color: #444; /* Faded Thermal Ink */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size: calc(10px*var(--app-text-scale,1));
+  /* 撕纸孔效果 */
+  -webkit-mask-image: 
+    radial-gradient(circle at 50% -2px, transparent 4px, black 4.5px),
+    radial-gradient(circle at 50% calc(100% + 2px), transparent 4px, black 4.5px);
+  -webkit-mask-size: 12px 51%;
+  -webkit-mask-position: top, bottom;
+  -webkit-mask-repeat: repeat-x;
+}
+
+.wg-receipt-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: calc(8px*var(--app-text-scale,1));
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.wg-receipt-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px dashed rgba(0,0,0,0.3);
+  margin: 0 auto 6px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888888;
+  font-size: calc(8px*var(--app-text-scale,1));
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.wg-receipt-header {
+  text-align: center;
+  font-weight: 800;
+  font-size: calc(14px*var(--app-text-scale,1));
+  margin-bottom: 4px;
+  letter-spacing: 0.1em;
+}
+
+.wg-receipt-divider {
+  width: 100%;
+  border-bottom: 1px dashed rgba(0,0,0,0.25);
+  margin: 4px 0;
+}
+
+.wg-receipt-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  margin: 4px 0;
+}
+
+.wg-receipt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.wg-receipt-item-title {
+  width: 100%;
+}
+
+.wg-receipt-item-row {
+  display: flex;
+  justify-content: space-between;
+  color: #555;
+  font-size: calc(9px*var(--app-text-scale,1));
+  padding-left: 8px; 
+}
+
+.wg-receipt-total {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 800;
+  font-size: calc(12px*var(--app-text-scale,1));
+  margin-top: 4px;
+}
+
+.wg-receipt-barcode {
+  margin-top: auto;
+  height: 20px;
+  width: 100%;
+  background-image: repeating-linear-gradient(
+    to right,
+    #444 0,
+    #444 2px,
+    transparent 2px,
+    transparent 4px,
+    #444 4px,
+    #444 6px,
+    transparent 6px,
+    transparent 8px
+  );
+  opacity: 0.8;
+}
+
+/* ══════════════════════════════════════════
+   🎟️ Ticket Stub (自由·电影票根 4x2)
+   ══════════════════════════════════════════ */
+.wg-ticket-paper {
+  width: 100%;
+  height: 100%;
+  background: #f4ebd8; /* Vintage Ticket Paper */
+  display: flex;
+  color: #2c2825; /* Vintage Dark Ink */
+  /* 左右打孔遮罩 */
+  -webkit-mask-image: 
+    radial-gradient(circle at -4px 50%, transparent 10px, black 10.5px),
+    radial-gradient(circle at calc(100% + 4px) 50%, transparent 10px, black 10.5px);
+  -webkit-mask-size: 51% 100%;
+  -webkit-mask-position: left, right;
+  -webkit-mask-repeat: no-repeat;
+}
+
+.wg-ticket-main {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+}
+
+/* Subtle background texture/watermark */
+.wg-ticket-main::after {
+  content: "CINEMA";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-15deg);
+  font-size: calc(64px*var(--app-text-scale,1));
+  font-weight: 900;
+  color: rgba(44,40,37,0.03);
+  pointer-events: none;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.2em;
+}
+
+.wg-ticket-content-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.wg-ticket-text-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.wg-ticket-poster {
+  width: 60px;
+  height: 84px;
+  border: 1px solid rgba(44,40,37,0.6); /* Crisp thin frame */
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-size: cover;
+  background-position: center;
+  background-clip: content-box;
+  color: #a09383;
+  font-size: calc(8px*var(--app-text-scale,1));
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  margin-left: 12px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.wg-ticket-stub {
+  width: 60px;
+}
+
+.wg-ticket-title {
+  font-family: "Didot", "Playfair Display", ui-serif, Georgia, serif;
+  font-size: calc(20px*var(--app-text-scale,1));
+  line-height: 1.1;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.wg-ticket-sub {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: calc(10px*var(--app-text-scale,1));
+  color: #ab3e3b; /* Vintage Red Ink */
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  margin-bottom: 2px;
+}
+
+.wg-ticket-info-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(44,40,37,0.15);
+  padding-top: 6px;
+}
+.wg-ticket-info-box {
+  display: flex;
+  flex-direction: column;
+}
+.wg-ticket-info-label {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: calc(8px*var(--app-text-scale,1));
+  color: rgba(44,40,37,0.6);
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+.wg-ticket-info-val {
+  font-size: calc(14px*var(--app-text-scale,1));
+  font-weight: bold;
+  font-family: "Didot", "Playfair Display", ui-serif, Georgia, serif;
+}
+.wg-ticket-dots {
+  margin-top: 6px;
+  font-size: calc(8px*var(--app-text-scale,1));
+  color: rgba(44,40,37,0.3);
+  letter-spacing: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ══════════════════════════════════════════
+   🏷️ Airmail Postcard (自由·明信片 4x4)
+   ══════════════════════════════════════════ */
+.wg-postcard-paper {
+  width: 100%;
+  height: 100%;
+  background: #2a2a2a;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.wg-pc-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.wg-pc-top-text {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.wg-pc-micro-text {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: calc(7px*var(--app-text-scale,1));
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+.wg-pc-sec-text {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: calc(14px*var(--app-text-scale,1));
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+
+.wg-pc-center-group {
+  margin-top: -4px;
+  margin-bottom: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wg-pc-main-text {
+  font-family: "Didot", "Playfair Display", ui-serif, serif;
+  font-size: calc(22px*var(--app-text-scale,1));
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-sub-paragraph {
+  font-family: ui-serif, Georgia, serif;
+  font-size: calc(7.5px*var(--app-text-scale,1));
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  opacity: 0.75;
+  text-transform: uppercase;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+.wg-pc-bottom-layout {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  width: 100%;
+}
+
+.wg-pc-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: calc(7px*var(--app-text-scale,1));
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  opacity: 0.8;
+  gap: 1.5px;
+}
+
+.wg-pc-micro-divider {
+  width: 12px;
+  height: 1px;
+  background: white;
+  margin: 2px 0;
+  opacity: 0.5;
+}
+
+.wg-pc-micro-jp {
+  font-family: "Noto Sans JP", sans-serif;
+  font-weight: 400;
+  font-size: calc(6.5px*var(--app-text-scale,1));
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.wg-pc-japanese {
+  font-family: "Noto Sans JP", sans-serif;
+  font-size: calc(10px*var(--app-text-scale,1));
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  opacity: 0.9;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* ----------------------------------------------------
+   Camera Frame Widget
+---------------------------------------------------- */
+.wg-camera-frame {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: transparent;
+}
+
+.wg-cf-bg {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-size: cover;
+  background-position: center;
+  background-color: transparent;
+  z-index: 1;
+}
+
+.wg-cf-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-size: 100% 100%; /* Stretch precisely so UI edges are never cropped */
+  background-repeat: no-repeat;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------
+   Color Picker Frame Widget
+---------------------------------------------------- */
+.wg-color-picker-frame {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  background-color: transparent;
+}
+
+.wg-cp-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 3778 / 4329;
+}
+
+.wg-cp-overlay-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.wg-cp-bg {
+  position: absolute;
+  top: 8.5%;
+  left: 8.4%;
+  right: 9.1%;
+  bottom: 36.9%;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; /* Under the png overlay */
+}
+
+/* ----------------------------------------------------
+   Frame 18 Widget
+---------------------------------------------------- */
+.wg-frame18 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+}
+
+.wg-f18-wrapper {
+  position: relative;
+  width: 80%;
+  height: 80%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f18-overlay-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------
+   Frame 4 Widget
+---------------------------------------------------- */
+.wg-frame4 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f4-wrapper {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f4-overlay-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f4-bg {
+  position: absolute;
+  /* Reduced the inset aggressively so the image spills outward behind the frame, closing the gaps! */
+  top: 2%; left: 1.5%; right: 1.5%; bottom: 2%;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; /* under the png frame */
+  border-radius: 4px; /* Optional subtle corner clipping to avoid bleeding out of outer drop shadow */
+}
+
+/* ----------------------------------------------------
+   Frame 31 Widget
+---------------------------------------------------- */
+.wg-frame31 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f31-wrapper {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f31-overlay-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f31-bg {
+  position: absolute;
+  top: 2%; left: 1.5%; right: 1.5%; bottom: 2%;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; 
+  border-radius: 4px;
+}
+
+/* ----------------------------------------------------
+   Frame 33 Widget
+---------------------------------------------------- */
+.wg-frame33 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f33-wrapper {
+  position: relative;
+  height: 100%; /* Forces the wrapper to match the exact container layout height */
+  max-width: 100%; /* Cap max width so it doesn't break lateral bounds */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f33-overlay-img {
+  height: 100%; /* Explicitly tell the image to scale primarily by height constraint */
+  width: auto; /* Auto width keeps ratio native and scales down dynamically */
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f33-bg {
+  position: absolute;
+  top: 2%; left: 1.5%; right: 1.5%; bottom: 40%;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; 
+  border-radius: 4px;
+}
+
+/* ----------------------------------------------------
+   Frame 36 Widget (No Interaction)
+---------------------------------------------------- */
+.wg-frame36 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f36-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f36-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------
+   Frame 49 Widget
+---------------------------------------------------- */
+.wg-frame49 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wg-f49-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f49-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f49-bg {
+  position: absolute;
+  top: 3.5%; left: 0.5%; right: 0.5%; bottom: 3.5%;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; 
+  border-radius: 4px;
+}
+
+/* ----------------------------------------------------
+   Frame 54 Widget
+---------------------------------------------------- */
+.wg-frame54 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wg-f54-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f54-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f54-bg {
+  position: absolute;
+  /* Estimated coordinates for a right-aligned square/circular avatar hole */
+  right: 5%;
+  top: 10%;
+  height: 80%;
+  aspect-ratio: 1/1; /* Forces the background into a perfect circle/square automatically based on height */
+  background-size: cover;
+  background-position: center;
+  z-index: 1; 
+  border-radius: 50%; /* Assuming avatar is circular */
+}
+
+/* ----------------------------------------------------
+   Frame 68 Widget
+---------------------------------------------------- */
+.wg-frame68 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wg-f68-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0 4%; /* Added lateral breathing room */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f68-overlay-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------
+   Frame 72 Widget
+---------------------------------------------------- */
+.wg-frame72 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f72-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f72-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f72-slot {
+  position: absolute;
+  background-color: transparent;
+  background-size: cover;
+  background-position: center;
+  z-index: 1;
+  cursor: pointer;
+  border-radius: 9px;
+}
+
+/* Coordinates based on visual estimation of 72老橙子素材.png */
+.wg-f72-s1 { top: 3.1%; left: 3.5%; width: 44.5%; height: 37.5%; }
+.wg-f72-s2 { top: 3.1%; right: 3.5%; width: 44.5%; height: 37.5%; }
+.wg-f72-s3 { top: 40.5%; left: 3.5%; width: 44.5%; height: 39.5%; }
+.wg-f72-s4 { top: 40.5%; right: 3.5%; width: 44.5%; height: 39.5%; }
+
+/* ----------------------------------------------------
+   Frame 88 Widget
+---------------------------------------------------- */
+.wg-frame88 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wg-f88-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f88-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f88-bg {
+  position: absolute;
+  top: 19.5%; 
+  right: 13.5%; 
+  width: 28%; 
+  height: 58.5%;
+  background-color: transparent;
+  background-size: cover;
+  background-size: cover;
+  background-position: center;
+  z-index: 1; 
+  border-radius: 4px;
+}
+
+/* ----------------------------------------------------
+   Frame 90 Widget (Freestyle 2x4 profile)
+---------------------------------------------------- */
+.wg-frame90 {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background-color: transparent;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.wg-f90-wrapper {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wg-f90-overlay-img {
+  height: 100%; 
+  width: auto; 
+  max-width: 100%;
+  object-fit: contain; 
+  display: block;
+  z-index: 2;
+  position: relative;
+  pointer-events: none;
+}
+
+.wg-f90-slot {
+  position: absolute;
+  background-color: transparent;
+  background-size: cover;
+  background-position: center;
+  z-index: 1;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+/* Left main spot */
+.wg-f90-s1 { top: 11.5%; left: 3%; width: 30%; height: 55%; }
+/* Right smaller spot */
+.wg-f90-s2 { top: 14%; right: 2.5%; width: 65%; height: 49%; }
+
+/* Extra spots 3 and 4 */
+.wg-f90-s3 { top: 62.5%; right: 23.2%; width: 45%; height: 30%; }
+.wg-f90-s4 { top: 63.8%; right: 2.5%; width: 20%; height: 30%; }
+
+/* ----------------------------------------------------
+   Profile Card Widget (Freestyle 4x4 主页名片)
+   上层背景图与下层白卡各占一半、通宽平齐，头像圆环骑缝悬浮；
+   阴影跟随 --desktop-shadow-strength 主题开关，字号跟随 --app-text-scale。
+---------------------------------------------------- */
+/* 占位仍按 4x4 整行，但卡片本体压到约 3.5 行高（整四行太高），
+   第四行剩余半行留白；比 4x4 公式多一个类名权重以覆盖通用高度 */
+.icon-grid .widget-glass[data-widget-type="profileCard"] {
+  height: calc(var(--slot-icon-height) + (2.5 * var(--slot-row-step)));
+}
+
+.widget-preview-mode[data-widget-type="profileCard"] {
+  height: 307px;
+}
+.wg-profile-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 24px;
+  overflow: hidden;
+  background-color: #eceae8;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.45),
+    0 8px 24px rgb(0 0 0 / calc(0.12 * var(--desktop-shadow-strength, 0)));
+}
+
+.wg-pc-cover {
+  position: absolute;
+  inset: 0;
+  background-color: #eceae8;
+  background-image: linear-gradient(160deg, #f4f2f0 0%, #e3e1e2 55%, #d8d7da 100%);
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+}
+
+.wg-pc-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 50%;
+  /* 通宽铺到组件底边，与上层背景同宽；底部两角由容器 24px 圆角裁剪 */
+  border-radius: 18px 18px 0 0;
+  /* 半透明毛玻璃：透出上层背景图并模糊，白度保底文字可读性 */
+  background-color: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 -4px 14px rgb(0 0 0 / calc(0.08 * var(--desktop-shadow-strength, 0)));
+  cursor: pointer;
+}
+
+.wg-pc-texts {
+  width: 100%;
+  height: 100%;
+  padding: 44px 16px 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  cursor: pointer;
+  /* 日系圆体（复用游戏大厅字体资产），中文缺字时回退全局字体 */
+  font-family: "Game Hall Zen Maru Gothic", var(--app-font-family);
+}
+
+.wg-pc-name {
+  font-size: calc(15.5px*var(--app-text-scale,1));
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #2f2f31;
+  line-height: 1.2;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-handle {
+  margin-top: 5px;
+  font-size: calc(9.5px*var(--app-text-scale,1));
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #a9a9ae;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-motto {
+  margin-top: 8px;
+  font-size: calc(11px*var(--app-text-scale,1));
+  line-height: 1.5;
+  color: #55555a;
+  max-width: 100%;
+  /* 空间不足时先收缩签名（最多两行），位置行永远钉在卡底不被挤出 */
+  flex: 0 1 auto;
+  min-height: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wg-pc-location {
+  margin-top: auto;
+  padding-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: calc(10.5px*var(--app-text-scale,1));
+  color: #8e8e93;
+  max-width: 100%;
+}
+
+.wg-pc-location span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-pin {
+  flex: 0 0 auto;
+}
+
+.wg-pc-avatar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 3px solid #ffffff;
+  background-color: #f2f1f3;
+  box-shadow: 0 4px 12px rgb(0 0 0 / calc(0.12 * var(--desktop-shadow-strength, 0)));
+  cursor: pointer;
+  z-index: 2;
+}
+
+.wg-pc-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.wg-pc-avatar-mock {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

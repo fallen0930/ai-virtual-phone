@@ -569,6 +569,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                     sessionId={playing}
                     onBack={() => { setPlaying(null); refresh(); }}
                     onToast={showToast}
+                    onSwitchSession={(id) => { setPlaying(id); refresh(); }}
                 />
                 {confirm ? (
                 <MixConfirm

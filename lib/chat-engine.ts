@@ -115,6 +115,21 @@ export function isStreamingEnabled(
     return isSessionStreamingEnabled(session, online);
 }
 
+/**
+ * 判断聊天消息落库后是否应该「立即放出」（跳过 800ms 模拟打字动画）。
+ * 两种情况立即放出：
+ * 1. API 配置全局关闭流式时 —— 用户期望「非流式 = 整段出现」，与特调行为一致
+ * 2. 会话级流式开启时 —— 用户已经看着内容边生成边显示了，落库后再播一遍打字动画像「重播」
+ */
+export function shouldChatInstantReveal(
+    config: Pick<ApiConfig, "enableStreaming">,
+    session: Parameters<typeof isSessionStreamingEnabled>[0],
+    online: boolean,
+): boolean {
+    if (config.enableStreaming === false) return true;
+    return isSessionStreamingEnabled(session, online);
+}
+
 const LLM_IMAGE_MAX_SIDE = 512;
 const LLM_IMAGE_JPEG_QUALITY = 0.72;
 

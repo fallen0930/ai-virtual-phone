@@ -44,6 +44,7 @@ import {
     nativeToolProtocolForConfig,
     parseProviderResponse,
     parseProviderStreamDelta,
+    providerKindForConfig,
     stripHallucinatedTimestamps,
     toLlmRequestMessages,
     type LlmProviderKind,
@@ -830,6 +831,23 @@ export async function sendLLMStreamRequest(
     },
     callbacks?: ChatCompletionStreamCallbacks,
 ): Promise<ChatCompletionStreamResult> {
+    // 防御性兜底：API 配置全局关闭流式时，直接降级为非流式请求，
+    // 避免上层判断疏漏导致仍发 SSE 请求。
+    if (config.enableStreaming === false) {
+        const content = await sendLLMRequest(config, preset, messages, regexes, meta, {
+            skipOutputRegex: options?.skipOutputRegex,
+            includeReasoning: options?.includeReasoning,
+            appId: options?.appId,
+            appTags: options?.appTags,
+            followUpCount: options?.followUpCount,
+            debugSessionId: options?.debugSessionId,
+            signal: options?.signal,
+            onReasoning: (text) => callbacks?.onReasoningDelta?.(text),
+        });
+        // 非流式结果一次性吐出，保持流式回调契约一致
+        callbacks?.onDelta?.(content);
+        return { content, rawResponse: content, providerKind: providerKindForConfig(config) };
+    }
     const pluginPurpose = options?.appId ?? "chat";
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId);
     const effectivePreset = afterPlugins.preset;
@@ -1127,6 +1145,19 @@ export async function sendLLMToolStreamRequest(
     },
     callbacks?: ChatCompletionStreamCallbacks,
 ): Promise<LLMToolRequestResult> {
+    // 防御性兜底：API 配置关闭流式时，直接降级为非流式工具请求
+    if (config.enableStreaming === false) {
+        const result = await sendLLMToolRequest(config, preset, messages, tools, regexes, meta, {
+            appId: options?.appId,
+            appTags: options?.appTags,
+            followUpCount: options?.followUpCount,
+            debugSessionId: options?.debugSessionId,
+            signal: options?.signal,
+        });
+        callbacks?.onDelta?.(result.content);
+        if (result.reasoning) callbacks?.onReasoningDelta?.(result.reasoning);
+        return result;
+    }
     void regexes;
     const pluginPurpose = options?.appId ?? "chat";
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId);

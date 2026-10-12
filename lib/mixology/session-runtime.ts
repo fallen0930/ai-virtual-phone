@@ -6,6 +6,7 @@
 // 2. 最大并发数限制（默认 3），超出自动排队
 // 3. 组件卸载不打断生成 —— 生成由本 store 持有，UI 只是订阅者
 // 4. 提供 useSyncExternalStore 兼容的订阅接口
+// 5. 流式文本按帧批量更新，避免高频 token 回调引发的渲染风暴
 
 export type MixGenStatus = "generating" | "queued" | "done" | "error";
 
@@ -46,13 +47,66 @@ const _queue: QueuedTask[] = [];
 /** 运行中任务的 AbortController 映射 */
 const _controllers = new Map<string, AbortController>();
 
+/**
+ * 每对局待刷新的文本缓冲：流式回调高频涌入时，
+ * 先往缓冲里累加，下一帧统一 flush 进 state，
+ * 避免一个 token 触发一次 notify + React 重渲染的风暴。
+ */
+const _pendingDeltas = new Map<string, string>();
+let _flushRaf = 0;
+
 function notifyListeners() {
     _listeners.forEach((fn) => fn());
+}
+
+/** 把所有待刷新的文本一次性写入 state 并通知 UI（每帧最多一次） */
+function flushPendingDeltas() {
+    _flushRaf = 0;
+    if (_pendingDeltas.size === 0) return;
+
+    // 批量合并：只 notify 一次
+    let changed = false;
+    const nextRunning = { ..._state.running };
+    for (const [sessionId, delta] of _pendingDeltas) {
+        const existing = nextRunning[sessionId];
+        if (!existing) continue;
+        if (!delta) continue;
+        nextRunning[sessionId] = { ...existing, liveText: existing.liveText + delta };
+        changed = true;
+    }
+    _pendingDeltas.clear();
+
+    if (changed) {
+        _state = { ..._state, running: nextRunning };
+        notifyListeners();
+    }
+}
+
+/** 调度一次帧末批量刷新 */
+function scheduleFlush() {
+    if (_flushRaf) return;
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+        // 非浏览器环境（SSR）直接同步 flush
+        flushPendingDeltas();
+        return;
+    }
+    _flushRaf = window.requestAnimationFrame(flushPendingDeltas);
+}
+
+/** 向某对局的文本缓冲追加增量 */
+function appendLiveDelta(sessionId: string, chunk: string) {
+    if (!chunk) return;
+    _pendingDeltas.set(sessionId, (_pendingDeltas.get(sessionId) || "") + chunk);
+    scheduleFlush();
 }
 
 // ── 订阅 API ──────────────────────────────────────────────
 
 export function getMixSessionRuntimeState(): MixSessionRuntimeState {
+    // 如果有未刷新的增量，先同步刷新一次，确保订阅者拿到最新值
+    if (_pendingDeltas.size > 0) {
+        flushPendingDeltas();
+    }
     return _state;
 }
 
@@ -71,7 +125,10 @@ export function isMixSessionGenerating(sessionId: string): boolean {
 }
 
 export function getMixSessionLiveText(sessionId: string): string {
-    return _state.running[sessionId]?.liveText || "";
+    const base = _state.running[sessionId]?.liveText || "";
+    // 加上还没 flush 的缓冲，确保读取方拿到最新值
+    const pending = _pendingDeltas.get(sessionId);
+    return pending ? base + pending : base;
 }
 
 export function getMixSessionGenStatus(sessionId: string): MixGenStatus | null {
@@ -88,11 +145,18 @@ export function getActiveMixGenerationCount(): number {
 function updateEntry(sessionId: string, patch: Partial<MixRunningSession>) {
     const existing = _state.running[sessionId];
     if (!existing) return;
+    // 状态变更前先把缓冲里的文本刷进去，避免丢字
+    const pending = _pendingDeltas.get(sessionId);
+    const mergedLive = pending && patch.liveText === undefined
+        ? existing.liveText + pending
+        : patch.liveText ?? existing.liveText;
+    if (pending) _pendingDeltas.delete(sessionId);
+
     _state = {
         ..._state,
         running: {
             ..._state.running,
-            [sessionId]: { ...existing, ...patch },
+            [sessionId]: { ...existing, ...patch, liveText: mergedLive },
         },
     };
     notifyListeners();
@@ -100,14 +164,66 @@ function updateEntry(sessionId: string, patch: Partial<MixRunningSession>) {
 
 function removeEntry(sessionId: string) {
     if (!_state.running[sessionId]) return;
+    _pendingDeltas.delete(sessionId);
     const next = { ..._state.running };
     delete next[sessionId];
     _state = { ..._state, running: next };
     notifyListeners();
 }
 
+/**
+ * 真正启动一个生成任务（立即开始分支与 pumpQueue 共用这一套）。
+ * 调用前必须确保并发槽有空位、session 已在 running 里、controller 已创建。
+ */
+function startGeneration(
+    sessionId: string,
+    controller: AbortController,
+    generator: (signal: AbortSignal, onDelta: (text: string) => void) => Promise<void>,
+) {
+    const onDelta = (chunk: string) => {
+        // 入缓冲，按帧批量刷新 —— 多对局并行时互不阻塞
+        appendLiveDelta(sessionId, chunk);
+    };
+
+    generator(controller.signal, onDelta)
+        .then(() => {
+            // 生成结束：先把剩下的缓冲刷干净
+            flushPendingDeltas();
+            updateEntry(sessionId, { status: "done" });
+            // 立刻尝试启动下一个排队任务（不要等 UI 的 1.5 秒延迟）
+            pumpQueue();
+            // 短暂保留 done 状态供 UI 展示，延迟清理
+            setTimeout(() => {
+                removeEntry(sessionId);
+                _controllers.delete(sessionId);
+            }, 1500);
+        })
+        .catch((err) => {
+            flushPendingDeltas();
+            if (controller.signal.aborted) {
+                // 主动取消，直接移除
+                removeEntry(sessionId);
+                _controllers.delete(sessionId);
+            } else {
+                updateEntry(sessionId, {
+                    status: "error",
+                    error: err instanceof Error ? err.message : String(err),
+                });
+                // 错误状态保留久一点，让用户看到
+                setTimeout(() => {
+                    removeEntry(sessionId);
+                    _controllers.delete(sessionId);
+                }, 4000);
+            }
+            pumpQueue();
+        });
+}
+
 /** 尝试从队列取下一个任务运行 */
 function pumpQueue() {
+    // 先把所有缓冲刷新掉，确保计数基于最新状态
+    if (_pendingDeltas.size > 0) flushPendingDeltas();
+
     const activeCount = getActiveMixGenerationCount();
     if (activeCount >= _state.maxConcurrent) return;
     if (_queue.length === 0) return;
@@ -115,7 +231,6 @@ function pumpQueue() {
     const next = _queue.shift();
     if (!next) return;
 
-    // 从 queued 升级为 generating
     const entry = _state.running[next.sessionId];
     if (!entry) {
         // 条目可能已被取消，跳过
@@ -128,41 +243,10 @@ function pumpQueue() {
 
     updateEntry(next.sessionId, { status: "generating", liveText: "" });
 
-    const onDelta = (chunk: string) => {
-        const current = _state.running[next.sessionId];
-        if (!current) return;
-        updateEntry(next.sessionId, { liveText: current.liveText + chunk });
-    };
+    startGeneration(next.sessionId, controller, next.generator);
 
-    next
-        .generator(controller.signal, onDelta)
-        .then(() => {
-            updateEntry(next.sessionId, { status: "done" });
-            // 短暂保留 done 状态供 UI 展示，延迟清理
-            setTimeout(() => {
-                removeEntry(next.sessionId);
-                _controllers.delete(next.sessionId);
-                pumpQueue();
-            }, 1500);
-        })
-        .catch((err) => {
-            if (controller.signal.aborted) {
-                // 主动取消，直接移除
-                removeEntry(next.sessionId);
-                _controllers.delete(next.sessionId);
-            } else {
-                updateEntry(next.sessionId, {
-                    status: "error",
-                    error: err instanceof Error ? err.message : String(err),
-                });
-                // 错误状态保留久一点，让用户看到
-                setTimeout(() => {
-                    removeEntry(next.sessionId);
-                    _controllers.delete(next.sessionId);
-                }, 4000);
-            }
-            pumpQueue();
-        });
+    // 可能还有空位，继续填（比如并发上限从 1 调到 3 时一次性起 3 个）
+    pumpQueue();
 }
 
 // ── 操作 API ──────────────────────────────────────────────
@@ -203,37 +287,7 @@ export function enqueueMixGeneration(
         };
         notifyListeners();
 
-        const onDelta = (chunk: string) => {
-            const current = _state.running[sessionId];
-            if (!current) return;
-            updateEntry(sessionId, { liveText: current.liveText + chunk });
-        };
-
-        generator(controller.signal, onDelta)
-            .then(() => {
-                updateEntry(sessionId, { status: "done" });
-                setTimeout(() => {
-                    removeEntry(sessionId);
-                    _controllers.delete(sessionId);
-                    pumpQueue();
-                }, 1500);
-            })
-            .catch((err) => {
-                if (controller.signal.aborted) {
-                    removeEntry(sessionId);
-                    _controllers.delete(sessionId);
-                } else {
-                    updateEntry(sessionId, {
-                        status: "error",
-                        error: err instanceof Error ? err.message : String(err),
-                    });
-                    setTimeout(() => {
-                        removeEntry(sessionId);
-                        _controllers.delete(sessionId);
-                    }, 4000);
-                }
-                pumpQueue();
-            });
+        startGeneration(sessionId, controller, generator);
     } else {
         // 进入排队
         _queue.push({ sessionId, generator });
@@ -310,8 +364,6 @@ export function setMaxMixConcurrent(max: number): void {
     if (max < 1) max = 1;
     _state = { ..._state, maxConcurrent: max };
     notifyListeners();
-    // 如果并发上限提高了，尝试填充
-    for (let i = 0; i < max; i++) {
-        pumpQueue();
-    }
+    // 如果并发上限提高了，尝试填充（pumpQueue 内部会递归直到填满或队列空）
+    pumpQueue();
 }

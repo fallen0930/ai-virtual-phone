@@ -17,9 +17,9 @@ import {
     getMixSessionGenStatus,
     type MixGenStatus,
 } from "@/lib/mixology/session-runtime";
-import { loadMixSessions, getMixMaterial, type MixSession } from "@/lib/mixology/storage";
+import { loadMixSessions, getMixMaterial } from "@/lib/mixology/storage";
 import { mixRoundCount } from "@/lib/mixology/engine";
-import { mixSlotFirstId, type MixCharacterCard } from "@/lib/mixology/types";
+import { mixSlotFirstId, type MixCharacterCard, type MixSession } from "@/lib/mixology/types";
 
 type FloatingPosition = { left: number; top: number };
 type PopoverPosition = { left: number; top: number };

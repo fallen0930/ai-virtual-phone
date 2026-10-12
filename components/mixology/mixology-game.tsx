@@ -157,6 +157,29 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
     const busy = isMixSessionGenerating(sessionId);
     const live = getMixSessionLiveText(sessionId);
     const genStatus = getMixSessionGenStatus(sessionId);
+    /**
+     * 当前正在显示的对局 id（ref 版）：生成是异步的，期间用户可能切去别的对局，
+     * 旧闭包里的 commit 靠它判断自己是否已经过期，避免把旧对局数据刷进新界面。
+     */
+    const sessionIdRef = useRef(sessionId);
+    sessionIdRef.current = sessionId;
+    // 本组件无 key 复用，useState 初始化只在首次挂载跑——切对局时手动回读
+    useEffect(() => {
+        setSession(getMixSession(sessionId));
+    }, [sessionId]);
+    /**
+     * 生成结束（生成/排队 → 完成/失败/条目清理）时回读存储刷新界面：
+     * 引擎把新回合写进 localStorage 后不会主动喊组件，session state 不自重读；
+     * 非流式下没有 live 文本兜底，不在这里刷的话界面会一直停在旧内容上。
+     */
+    const prevGenStatus = useRef(genStatus);
+    useEffect(() => {
+        const prev = prevGenStatus.current;
+        prevGenStatus.current = genStatus;
+        const wasActive = prev === "generating" || prev === "queued";
+        const isActive = genStatus === "generating" || genStatus === "queued";
+        if (wasActive && !isActive) setSession(getMixSession(sessionId));
+    }, [genStatus, sessionId]);
     const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
     /**
      * 编辑弹层的键盘适配（iOS）：弹层高、输入框更高，键盘一出 WebKit 会滚动整页
@@ -746,7 +769,12 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
 
     const run = (action: (signal: AbortSignal, commit: () => void, onDelta: (chunk: string) => void) => Promise<unknown>) => {
         if (busy) return;
-        const commit = () => setSession(getMixSession(sessionId));
+        // 生成是异步的：期间用户可能已切去别的对局（组件复用、sessionId 变了），
+        // 过期的 commit 必须沉默，否则会把旧对局数据刷进正在显示的新对局
+        const commit = () => {
+            if (sessionIdRef.current !== sessionId) return;
+            setSession(getMixSession(sessionId));
+        };
         enqueueMixGeneration(sessionId, async (signal, onDelta) => {
             try {
                 await action(signal, commit, onDelta);

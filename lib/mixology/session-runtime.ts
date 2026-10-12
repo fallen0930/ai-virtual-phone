@@ -103,10 +103,9 @@ function appendLiveDelta(sessionId: string, chunk: string) {
 // ── 订阅 API ──────────────────────────────────────────────
 
 export function getMixSessionRuntimeState(): MixSessionRuntimeState {
-    // 如果有未刷新的增量，先同步刷新一次，确保订阅者拿到最新值
-    if (_pendingDeltas.size > 0) {
-        flushPendingDeltas();
-    }
+    // ⚠️ 此函数必须是纯函数（useSyncExternalStore 的 getSnapshot 契约）：
+    // 不能修改 state、不能触发 notify、连续调用必须返回相同引用。
+    // pending 缓冲的刷新统一由 rAF 调度，flush 后通过 notifyListeners 通知订阅者。
     return _state;
 }
 
@@ -125,10 +124,7 @@ export function isMixSessionGenerating(sessionId: string): boolean {
 }
 
 export function getMixSessionLiveText(sessionId: string): string {
-    const base = _state.running[sessionId]?.liveText || "";
-    // 加上还没 flush 的缓冲，确保读取方拿到最新值
-    const pending = _pendingDeltas.get(sessionId);
-    return pending ? base + pending : base;
+    return _state.running[sessionId]?.liveText || "";
 }
 
 export function getMixSessionGenStatus(sessionId: string): MixGenStatus | null {

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, DEFAULT_SESSION_CONTEXT_TOKEN_BUDGET, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled } from "@/lib/chat-storage";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/chat-document-import";
 import { StickerSearchSuggest } from "./sticker-search-suggest";
 import { StateValuesPanel } from "./state-values-panel";
-import { generateChatCompletion, generateOfflineChatCompletion, flattenCompletionResult, ChatEngineError } from "@/lib/chat-engine";
+import { generateChatCompletion, generateOfflineChatCompletion, flattenCompletionResult, ChatEngineError, shouldChatInstantReveal } from "@/lib/chat-engine";
 import { formatOfflineTurnXml as formatOfflineTurnXmlShared, buildOfflinePromptHistory as buildOfflinePromptHistoryShared } from "@/lib/offline-prompt-builder";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
@@ -51,7 +51,7 @@ import { TransferTargetModal } from "./transfer-target-modal";
 import { GiftPickerModal } from "./gift-picker-modal";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { deleteWeixinCloudMessagesFromCloud, emitWeixinSyncToast, syncAllWeixinBotRuntimesToCloud } from "@/lib/weixin-cloud-sync";
-import { loadBindingConfig, loadPresets, loadRegexes, resolveBinding, resolveUserIdentity } from "@/lib/settings-storage";
+import { loadApiConfigs, loadBindingConfig, loadPresets, loadRegexes, resolveBinding, resolveUserIdentity } from "@/lib/settings-storage";
 import { generateGroupChatCompletion, generateGroupOfflineChatCompletion, parseGroupChatResponse, buildEditableGroupRoundText } from "@/lib/group-chat-engine";
 import { appendChatOfflineTurn, deleteChatOfflineTurn, deleteChatOfflineTurnsFrom, extractThinkingTag, loadChatOfflineTurns, parseOfflineResponse, saveChatOfflineTurns, updateChatOfflineTurn, type ChatOfflineTurn } from "@/lib/chat-offline-storage";
 import { applyDisplayRegex, applyEditRegex } from "@/lib/llm-prompt-assembler";
@@ -1663,6 +1663,25 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
             stripTexts: (preset?.strip_texts || []).filter(Boolean),
         };
     }, [regexRevision, session.contactId, session.isGroup]);
+
+    // 是否立即放出消息（跳过模拟打字动画）：全局关流式或会话开流式时都立即放出
+    const instantRevealOnline = useMemo(() => {
+        const bindings = loadBindingConfig();
+        const slot = resolveBinding(bindings, session.isGroup ? undefined : session.contactId, session.isGroup ? "group_chat" : "chat");
+        const apiConfigs = loadApiConfigs();
+        const config = apiConfigs.find(c => c.id === slot.apiConfigId);
+        if (!config) return isSessionStreamingEnabled(session, true);
+        return shouldChatInstantReveal(config, session, true);
+    }, [session.contactId, session.isGroup, session.streamOnline]);
+
+    const instantRevealOffline = useMemo(() => {
+        const bindings = loadBindingConfig();
+        const slot = resolveBinding(bindings, session.isGroup ? undefined : session.contactId, session.isGroup ? "group_chat" : "chat");
+        const apiConfigs = loadApiConfigs();
+        const config = apiConfigs.find(c => c.id === slot.apiConfigId);
+        if (!config) return isSessionStreamingEnabled(session, false);
+        return shouldChatInstantReveal(config, session, false);
+    }, [session.contactId, session.isGroup, session.streamOffline]);
 
     const displayRegexMacroEngine = useMemo(() => {
         const charName = session.isGroup
@@ -3323,7 +3342,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                     },
                 );
                 if (!isCurrentGeneration()) return;
-                await processGroupParts(results, setMessages, generationGuard, roundReasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                await processGroupParts(results, setMessages, generationGuard, roundReasoning, { instantReveal: instantRevealOnline });
             } else {
                 let capturedReasoning: string | undefined;
                 const cr = await generateChatCompletion(
@@ -3357,7 +3376,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                     },
                 );
                 if (!isCurrentGeneration()) return;
-                const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: instantRevealOnline });
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
                 handleCallTrigger(result.triggerCall);
@@ -3758,7 +3777,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                         const visibleResults = parseGroupChatResponse(content, nameToId)
                             .filter(item => item.responseText.trim());
                         if (visibleResults.length > 0) {
-                            await processGroupParts(visibleResults, setMessages, generationGuard, reasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                            await processGroupParts(visibleResults, setMessages, generationGuard, reasoning, { instantReveal: instantRevealOnline });
                         }
 
                         throwIfGenerationStopped(generationGuard);
@@ -3800,7 +3819,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                     await Promise.allSettled(streamedImageReplacementTasks);
                     throwIfGenerationStopped(generationGuard);
                 }
-                await processGroupParts(results, setMessages, generationGuard, pendingGroupReasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                await processGroupParts(results, setMessages, generationGuard, pendingGroupReasoning, { instantReveal: instantRevealOnline });
             } else {
                 let lastSendResult: Awaited<ReturnType<typeof splitAndSaveAIMessages>> | undefined;
                 // 每轮 LLM 调用的思维链，onReasoning 先于该轮 onTextPart 触发
@@ -3835,7 +3854,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                         if (text.trim()) {
                             const reasoningText = pendingReasoning;
                             pendingReasoning = undefined;
-                            lastSendResult = await splitAndSaveAIMessages(text, { ...options, ...generationGuard, reasoningText, instantReveal: isSessionStreamingEnabled(session, true) });
+                            lastSendResult = await splitAndSaveAIMessages(text, { ...options, ...generationGuard, reasoningText, instantReveal: instantRevealOnline });
                         }
                     },
                     onToolNotice: (notice) => {
@@ -3859,7 +3878,7 @@ export function ChatRoom({ session, onBack, onDeleted, onSwitchSession }: ChatRo
                         // bubbles. The native tool-call metadata then rides on a separate
                         // empty carrier message — mirroring the group-chat path above.
                         if (content.trim()) {
-                            await splitAndSaveAIMessages(content, { ...generationGuard, reasoningText: reasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                            await splitAndSaveAIMessages(content, { ...generationGuard, reasoningText: reasoning, instantReveal: instantRevealOnline });
                         }
                         if (!isCurrentGeneration()) return;
                         const carrier = pushChatMessage({

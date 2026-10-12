@@ -32,10 +32,7 @@ import {
     subscribeMixSessionRuntime,
     getMixSessionRuntimeState,
     enqueueMixGeneration,
-    isMixSessionGenerating,
     cancelMixGeneration,
-    getMixSessionLiveText,
-    getMixSessionGenStatus,
 } from "@/lib/mixology/session-runtime";
 
 /** 当前真正挂着的对局：严格模式的重复挂载靠它区分「真退出」与「假卸载」 */
@@ -154,9 +151,13 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
         getMixSessionRuntimeState,
         getMixSessionRuntimeState
     );
-    const busy = isMixSessionGenerating(sessionId);
-    const live = getMixSessionLiveText(sessionId);
-    const genStatus = getMixSessionGenStatus(sessionId);
+    // 从订阅到的 runtimeState 派生当前对局的生成状态，
+    // 而不是直接调全局 getters——确保渲染时取到的值与触发重渲染的那份快照一致，
+    // 避免「notify 触发了重渲染，但派生值读到了更晚的状态」的时间差问题。
+    const runningEntry = runtimeState.running[sessionId];
+    const busy = runningEntry ? (runningEntry.status === "generating" || runningEntry.status === "queued") : false;
+    const live = runningEntry?.liveText ?? "";
+    const genStatus = runningEntry?.status ?? null;
     /**
      * 当前正在显示的对局 id（ref 版）：生成是异步的，期间用户可能切去别的对局，
      * 旧闭包里的 commit 靠它判断自己是否已经过期，避免把旧对局数据刷进新界面。
@@ -778,6 +779,10 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
         enqueueMixGeneration(sessionId, async (signal, onDelta) => {
             try {
                 await action(signal, commit, onDelta);
+                // 生成成功后主动刷新一次：确保新回合立刻上屏，
+                // 不依赖 useEffect 检测 genStatus 变化（流式收尾与状态切换之间可能有延迟，
+                // 且极端情况下 useSyncExternalStore 的派生值读取可能落后一拍）。
+                commit();
             } catch (error) {
                 commit();
                 const message = error instanceof Error ? error.message : "生成失败，请重试。";

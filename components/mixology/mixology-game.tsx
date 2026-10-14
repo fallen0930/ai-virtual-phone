@@ -4,7 +4,7 @@
 // 玩家右侧气泡、小票全宽卡；全程无任何标签徽章，保沉浸。
 // 装饰材料的 CSS 以 <style> 注入本画面容器（认 .mix-* 官方语义类）。
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
 import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMixPickables, MIX_CABINET_UPDATED_EVENT, resolveMixRecipeMaterials, saveMixMaterial, saveMixSession } from "@/lib/mixology/storage";
@@ -1068,14 +1068,182 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
         "--mix-bg-blur": `${bgTune.blur}px`,
     };
 
+    // —— 字数浮标（特调对局内显示 AI 已生成字数）——
+    // 渲染在 .mix-garnish-scope 作用域之外（.mix-game 的兄弟节点），外观装饰 CSS 作用域够不到，
+    // 不会被隐藏/改色/遮挡。位置/大小/模式都存 localStorage，拖拽缩放后下次还在。
+    const WC_KEY = "mix-wc-ui";
+    const [wcMode, setWcMode] = useState<"total" | "perRound">(() => {
+        try {
+            const raw = localStorage.getItem(WC_KEY);
+            const m = raw ? JSON.parse(raw).mode : null;
+            return m === "perRound" ? "perRound" : "total";
+        } catch {
+            return "total";
+        }
+    });
+    const [wcPos, setWcPos] = useState<{ x: number; y: number } | null>(() => {
+        try {
+            const raw = localStorage.getItem(WC_KEY);
+            const p = raw ? JSON.parse(raw).pos : null;
+            return p && typeof p.x === "number" ? p : null;
+        } catch {
+            return null;
+        }
+    });
+    // 整体缩放系数（含字体）：0.5 ~ 2.5。所有尺寸在 CSS 里用 calc(*var(--wc-scale)) 呈现，
+    // 因此拖动缩放手柄时整个浮标（含字号、内边距、圆角、列表高度）会等比放大缩小。
+    const [wcScale, setWcScale] = useState<number>(() => {
+        try {
+            const raw = localStorage.getItem(WC_KEY);
+            const s = raw ? JSON.parse(raw).scale : null;
+            return typeof s === "number" && s >= 0.5 && s <= 2.5 ? s : 1;
+        } catch {
+            return 1;
+        }
+    });
+    const [wcPop, setWcPop] = useState(false);
+    const wcRef = useRef<HTMLDivElement>(null);
+
+    const persistWc = (next: Record<string, unknown>) => {
+        try {
+            const cur = JSON.parse(localStorage.getItem(WC_KEY) || "{}");
+            localStorage.setItem(WC_KEY, JSON.stringify({ ...cur, ...next }));
+        } catch {
+            /* localStorage 不可用时静默忽略 */
+        }
+    };
+
+    const wcAssistant = session.turns.filter((t) => t.role === "assistant");
+    const wcTotal = wcAssistant.reduce((sum, t) => sum + (t.text?.length || 0), 0);
+    const wcRounds = wcAssistant.map((t, i) => ({ round: i + 1, chars: t.text?.length || 0 }));
+    const wcCurrent = wcRounds.length ? wcRounds[wcRounds.length - 1].chars : 0;
+
+    const onWcDragStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+        const el = wcRef.current;
+        if (!el) return;
+        e.preventDefault();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startLeft = el.offsetLeft;
+        const startTop = el.offsetTop;
+        const move = (ev: PointerEvent) => {
+            setWcPos({ x: Math.max(0, startLeft + (ev.clientX - startX)), y: Math.max(0, startTop + (ev.clientY - startY)) });
+        };
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            if (el) persistWc({ pos: { x: el.offsetLeft, y: el.offsetTop } });
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+
+    const onWcResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startScale = wcScale;
+        // 向右拖动放大，向左缩小；每拖动 160px 改变 1.0 倍，限制在 0.5~2.5
+        const toScale = (clientX: number) =>
+            Math.min(2.5, Math.max(0.5, startScale + (clientX - startX) / 160));
+        const move = (ev: PointerEvent) => {
+            setWcScale(toScale(ev.clientX));
+        };
+        const up = (ev: PointerEvent) => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            persistWc({ scale: toScale(ev.clientX) });
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+
+    const onWcMode = (m: "total" | "perRound") => {
+        setWcMode(m);
+        persistWc({ mode: m });
+        setWcPop(false);
+    };
+
     return (
-        <div className="mix-game mix-garnish-scope" style={stateCssVars}>
+        <>
+            <div
+                className="mix-word-count-badge"
+                id="mix-word-count-badge"
+                ref={wcRef}
+                style={{
+                    ...(wcPos ? { left: wcPos.x, top: wcPos.y, right: "auto", bottom: "auto" } : {}),
+                    "--wc-scale": wcScale,
+                } as CSSProperties}
+            >
+                <div className="mix-wc-head" onPointerDown={onWcDragStart}>
+                    <span className="mix-wc-title">字数统计</span>
+                    <button
+                        type="button"
+                        className="mix-wc-gear"
+                        aria-label="显示设置"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => setWcPop((v) => !v)}
+                    >
+                        ⚙
+                    </button>
+                </div>
+                <div className="mix-wc-body">
+                    {wcMode === "total" ? (
+                        <>
+                            <div className="mix-wc-line mix-wc-total">
+                                <span>已生成</span>
+                                <span>{wcTotal.toLocaleString()} 字</span>
+                            </div>
+                            <div className="mix-wc-line">
+                                <span>本轮</span>
+                                <span>{wcCurrent.toLocaleString()} 字</span>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="mix-wc-line mix-wc-total">
+                                <span>总计</span>
+                                <span>{wcTotal.toLocaleString()} 字</span>
+                            </div>
+                            <ul className="mix-wc-list">
+                                {wcRounds.length === 0 ? (
+                                    <li>
+                                        <span>暂无生成</span>
+                                        <span>0 字</span>
+                                    </li>
+                                ) : (
+                                    wcRounds.map((r) => (
+                                        <li key={r.round}>
+                                            <span>第{r.round}轮</span>
+                                            <span>{r.chars.toLocaleString()} 字</span>
+                                        </li>
+                                    ))
+                                )}
+                            </ul>
+                        </>
+                    )}
+                </div>
+                {wcPop ? (
+                    <div className="mix-wc-pop">
+                        <label>
+                            <input type="radio" name="wcmode" checked={wcMode === "total"} onChange={() => onWcMode("total")} />
+                            总生成字数
+                        </label>
+                        <label>
+                            <input type="radio" name="wcmode" checked={wcMode === "perRound"} onChange={() => onWcMode("perRound")} />
+                            每轮对话生成
+                        </label>
+                    </div>
+                ) : null}
+                <div className="mix-wc-resize" onPointerDown={onWcResizeStart} />
+            </div>
+            <div className="mix-game mix-garnish-scope" style={stateCssVars}>
             {/* 装饰是可分享材料里唯一直接进主文档的代码，注入前先收口到本画面 */}
             {assets.garnishCss ? <style>{scopeMixCss(assets.garnishCss)}</style> : null}
             <div className="mix-game-bg" style={bgStyle} />
             <div className="mix-game-header">
                 <button type="button" className="mix-icon-btn" onClick={onBack} aria-label="返回"><ChevronLeft size={20} /></button>
-                <div className="mix-game-title">{session.charName}</div>
+                <div className="mix-game-title">{session.name?.trim() || session.charName}</div>
                 {slotGroups.header.map(({ material, layout }) => (
                     <button
                         key={material.id}
@@ -1725,5 +1893,6 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
             ) : null}
 
         </div>
+        </>
     );
 }

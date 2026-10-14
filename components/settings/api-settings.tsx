@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useContext } from "react";
-import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check } from "lucide-react";
+import { useState, useEffect, useCallback, useContext, useRef } from "react";
+import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check, Download, Upload, Loader2 } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import type { ApiConfig } from "@/lib/settings-types";
 import { loadApiConfigs, removeApiConfigReferences, saveApiConfigs } from "@/lib/settings-storage";
@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import { determineBaseUrl, simpleLLMCall } from "@/lib/api-helpers";
+import { downloadFile, isIOSBrowser, isAndroidBrowser } from "@/lib/download-utils";
 
 const DEFAULT_CONFIGS: ApiConfig[] = [
     {
@@ -45,6 +46,14 @@ export function ApiSettings() {
     const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
     const [isTesting, setIsTesting] = useState<Record<string, boolean>>({});
     const [testResult, setTestResult] = useState<Record<string, { success: boolean; message: string }>>({});
+
+    // Import / Export states
+    const [importPending, setImportPending] = useState<{ file: File; presets: ApiConfig[]; presetCount: number } | null>(null);
+    const [importMode, setImportMode] = useState<"overwrite" | "append">("append");
+    const [isExporting, setIsExporting] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const [importResult, setImportResult] = useState<{ success: boolean; message: string } | null>(null);
 
     // Load from localStorage on mount
     useEffect(() => {
@@ -109,6 +118,143 @@ export function ApiSettings() {
         delete newTestResults[id];
         setTestResult(newTestResults);
     };
+
+    // --- Export / Import API Presets ---
+
+    const handleExport = useCallback(async () => {
+        if (configs.length === 0) {
+            setImportResult({ success: false, message: "没有可导出的 API 配置" });
+            return;
+        }
+        setIsExporting(true);
+        setImportResult(null);
+        try {
+            const exportData = {
+                _exportTime: new Date().toISOString(),
+                _type: "apiPresets",
+                _version: "1.0",
+                presets: configs.map(config => ({
+                    name: config.name || config.provider,
+                    baseUrl: config.baseUrl || "",
+                    apiKey: config.apiKey,
+                    modelName: config.defaultModel,
+                    provider: config.provider,
+                    enableNativeTools: config.enableNativeTools,
+                    enableImageRecognition: config.enableImageRecognition,
+                    enableImageGeneration: config.enableImageGeneration,
+                    preventEmptyGenerateRambling: config.preventEmptyGenerateRambling,
+                    enableStreaming: config.enableStreaming,
+                    createdAt: new Date().toISOString(),
+                })),
+            };
+
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const filename = `api-presets-${dateStr}.json`;
+
+            if (isIOSBrowser() || isAndroidBrowser()) {
+                await downloadFile(blob, filename, { disableNativeShare: true });
+            } else {
+                await downloadFile(blob, filename, { disableNativeShare: true });
+            }
+
+            setImportResult({ success: true, message: `已导出 ${configs.length} 个 API 配置` });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            setImportResult({ success: false, message: `导出失败: ${msg}` });
+        } finally {
+            setIsExporting(false);
+        }
+    }, [configs]);
+
+    const parseImportFile = useCallback(async (file: File): Promise<ApiConfig[]> => {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        if (!data || !Array.isArray(data.presets)) {
+            throw new Error("文件格式不正确：缺少 presets 数组");
+        }
+
+        const presets: ApiConfig[] = data.presets.map((preset: any, index: number) => {
+            const provider = preset.provider || "Custom";
+            return {
+                id: `imported-${Date.now()}-${index}`,
+                name: preset.name || `导入配置 ${index + 1}`,
+                provider: provider,
+                apiKey: preset.apiKey || "",
+                baseUrl: preset.baseUrl || undefined,
+                defaultModel: preset.modelName || "",
+                enableNativeTools: preset.enableNativeTools !== undefined ? preset.enableNativeTools : true,
+                enableImageRecognition: preset.enableImageRecognition || false,
+                enableImageGeneration: preset.enableImageGeneration || false,
+                preventEmptyGenerateRambling: preset.preventEmptyGenerateRambling !== undefined ? preset.preventEmptyGenerateRambling : true,
+                enableStreaming: preset.enableStreaming !== undefined ? preset.enableStreaming : true,
+            };
+        });
+
+        return presets;
+    }, []);
+
+    const handleFileSelected = useCallback(async (file: File | undefined) => {
+        if (!file) return;
+        setImportResult(null);
+        try {
+            const presets = await parseImportFile(file);
+            setImportPending({ file, presets, presetCount: presets.length });
+            setImportMode("append");
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            setImportResult({ success: false, message: `文件解析失败: ${msg}` });
+        }
+        if (fileInputRef.current) fileInputRef.current.value = "";
+    }, [parseImportFile]);
+
+    const executeImport = useCallback(async () => {
+        if (!importPending) return;
+        setIsImporting(true);
+        setImportResult(null);
+        try {
+            let newConfigs: ApiConfig[];
+            let addedCount = 0;
+            let skippedCount = 0;
+
+            if (importMode === "overwrite") {
+                // 覆盖模式：清空现有配置，用导入的替换
+                newConfigs = importPending.presets;
+                addedCount = importPending.presets.length;
+                // 移除旧配置的引用
+                configs.forEach(c => removeApiConfigReferences(c.id));
+            } else {
+                // 追加模式：按 name + baseUrl 去重
+                const existingKeys = new Set(
+                    configs.map(c => `${(c.name || c.provider).toLowerCase()}|${(c.baseUrl || "").toLowerCase()}`)
+                );
+                const newPresets = importPending.presets.filter(preset => {
+                    const key = `${(preset.name || preset.provider).toLowerCase()}|${(preset.baseUrl || "").toLowerCase()}`;
+                    if (existingKeys.has(key)) {
+                        skippedCount++;
+                        return false;
+                    }
+                    existingKeys.add(key);
+                    return true;
+                });
+                newConfigs = [...configs, ...newPresets];
+                addedCount = newPresets.length;
+            }
+
+            persist(newConfigs);
+            setImportPending(null);
+
+            const modeLabel = importMode === "overwrite" ? "覆盖" : "追加";
+            const skipNote = skippedCount > 0 ? `，跳过 ${skippedCount} 个重复项` : "";
+            setImportResult({ success: true, message: `${modeLabel}导入成功：新增 ${addedCount} 个配置${skipNote}` });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            setImportResult({ success: false, message: `导入失败: ${msg}` });
+        } finally {
+            setIsImporting(false);
+        }
+    }, [importPending, importMode, configs, persist]);
 
     // Use unified determineBaseUrl from api-helpers
 
@@ -218,6 +364,42 @@ export function ApiSettings() {
             <div className="flex items-center">
                 <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">API Settings</h2>
             </div>
+
+            {/* Import / Export Actions */}
+            <div className="flex gap-2 mx-2 flex-wrap">
+                <button
+                    type="button"
+                    onClick={handleExport}
+                    disabled={isExporting || configs.length === 0}
+                    className="ui-btn ui-btn-outline"
+                >
+                    {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    导出API配置
+                </button>
+                <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="ui-btn ui-btn-outline"
+                >
+                    {isImporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                    导入API配置
+                </button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(event) => void handleFileSelected(event.target.files?.[0])}
+                />
+            </div>
+
+            {importResult && (
+                <Alert variant={importResult.success ? "success" : "danger"} className="mx-2">
+                    <AlertCircle size={16} className="mt-[2px] shrink-0" />
+                    <span className="break-all leading-[1.5]">{importResult.message}</span>
+                </Alert>
+            )}
 
             {configs.length === 0 ? (
                 <div className="ui-empty">
@@ -480,6 +662,70 @@ export function ApiSettings() {
                     }}
                     onCancel={() => setConfirmDeleteId(null)}
                 />
+            )}
+
+            {/* Import Confirmation Modal */}
+            {importPending && (
+                <div className="modal-overlay" data-ui="modal" onClick={() => { if (!isImporting) setImportPending(null); }}>
+                    <div className="modal-dialog" data-ui="modal-dialog" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header" data-ui="modal-header">
+                            <h3 className="modal-title">导入API配置</h3>
+                        </div>
+                        <div className="modal-body" data-ui="modal-body" style={{ textAlign: "left", width: "100%" }}>
+                            <p className="menu-desc" style={{ marginBottom: 12 }}>
+                                文件：{importPending.file.name}
+                            </p>
+                            <p className="menu-desc" style={{ marginBottom: 16 }}>
+                                共 {importPending.presetCount} 个API配置待导入
+                            </p>
+                            <p className="menu-label font-medium" style={{ marginBottom: 10 }}>请选择导入方式：</p>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <button
+                                    type="button"
+                                    className={`ui-btn ${importMode === "append" ? "ui-btn-primary" : "ui-btn-outline"}`}
+                                    style={{ width: "100%", justifyContent: "space-between", whiteSpace: "nowrap", textAlign: "left" }}
+                                    onClick={() => setImportMode("append")}
+                                >
+                                    <span>追加导入</span>
+                                    <span className="ts-12" style={{ opacity: 0.7 }}>合并到现有配置，重复项自动跳过</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`ui-btn ${importMode === "overwrite" ? "ui-btn-danger" : "ui-btn-outline"}`}
+                                    style={{ width: "100%", justifyContent: "space-between", whiteSpace: "nowrap", textAlign: "left" }}
+                                    onClick={() => setImportMode("overwrite")}
+                                >
+                                    <span>全部覆盖</span>
+                                    <span className="ts-12" style={{ opacity: 0.7 }}>删除现有所有配置后导入</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-footer" data-ui="modal-footer" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            <button
+                                type="button"
+                                className={`ui-btn ${importMode === "overwrite" ? "ui-btn-danger" : "ui-btn-primary"}`}
+                                style={{ width: "100%", whiteSpace: "nowrap" }}
+                                onClick={() => void executeImport()}
+                                disabled={isImporting}
+                            >
+                                {isImporting
+                                    ? <><Loader2 size={16} className="animate-spin" /> 导入中…</>
+                                    : importMode === "overwrite"
+                                        ? "确认全部覆盖"
+                                        : "确认追加导入"}
+                            </button>
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-outline"
+                                style={{ width: "100%", whiteSpace: "nowrap" }}
+                                onClick={() => setImportPending(null)}
+                                disabled={isImporting}
+                            >
+                                取消
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

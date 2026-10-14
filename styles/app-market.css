@@ -1372,6 +1372,10 @@
   grid-template-columns: 1fr 1fr 1fr;
 }
 
+.app-market-sheet-actions.four {
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+
 .app-market-sheet-actions.stacked {
   grid-template-columns: 1fr;
 }
@@ -1394,7 +1398,8 @@
 /* ========================= */
 
 @media (max-width: 380px) {
-  .app-market-sheet-actions.three {
+  .app-market-sheet-actions.three,
+  .app-market-sheet-actions.four {
     grid-template-columns: 1fr;
   }
 }

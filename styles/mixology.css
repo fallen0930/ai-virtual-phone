@@ -1324,6 +1324,116 @@
     color: var(--mix-violet);
 }
 
+/* 字数浮标：特调对局内显示已生成字数。
+   该元素渲染在 .mix-garnish-scope 作用域之外（与 .mix-game 平级），
+   故任何“外观”装饰 CSS 都作用域不到它，不会被隐藏/改色/遮挡。
+   这里的 !important 仅作双保险，挡住可能的全局规则。 */
+.mix-word-count-badge {
+    position: absolute;
+    right: 12px;
+    bottom: 68px;
+    z-index: 60;
+    /* 整体等比缩放：宽度随 --wc-scale 变化，所有内部尺寸同样按该系数缩放，字体也随之变化 */
+    width: calc(220px * var(--wc-scale, 1));
+    color: #ffffff !important;
+    background: rgba(0, 0, 0, 0.62) !important;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: calc(10px * var(--wc-scale, 1));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    font-size: calc(12px * var(--wc-scale, 1));
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    pointer-events: auto;
+    user-select: none;
+    overflow: hidden;
+}
+.mix-wc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(6px * var(--wc-scale, 1));
+    padding: calc(5px * var(--wc-scale, 1)) calc(8px * var(--wc-scale, 1));
+    cursor: grab;
+    background: rgba(255, 255, 255, 0.1);
+}
+.mix-wc-head:active {
+    cursor: grabbing;
+}
+.mix-wc-title {
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+.mix-wc-gear {
+    border: 0;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+    font-size: calc(13px * var(--wc-scale, 1));
+    line-height: 1;
+    padding: calc(2px * var(--wc-scale, 1)) calc(4px * var(--wc-scale, 1));
+    border-radius: calc(4px * var(--wc-scale, 1));
+}
+.mix-wc-gear:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+.mix-wc-body {
+    padding: calc(6px * var(--wc-scale, 1)) calc(8px * var(--wc-scale, 1)) calc(8px * var(--wc-scale, 1));
+    max-height: calc(200px * var(--wc-scale, 1));
+    overflow-y: auto;
+}
+.mix-wc-line {
+    display: flex;
+    justify-content: space-between;
+    gap: calc(10px * var(--wc-scale, 1));
+}
+.mix-wc-total {
+    font-weight: 600;
+    margin-bottom: calc(2px * var(--wc-scale, 1));
+}
+.mix-wc-list {
+    list-style: none;
+    margin: calc(4px * var(--wc-scale, 1)) 0 0;
+    padding: 0;
+}
+.mix-wc-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: calc(10px * var(--wc-scale, 1));
+    opacity: 0.92;
+}
+.mix-wc-pop {
+    position: absolute;
+    top: calc(30px * var(--wc-scale, 1));
+    right: calc(6px * var(--wc-scale, 1));
+    z-index: 1;
+    background: #1c1c1e;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: calc(8px * var(--wc-scale, 1));
+    padding: calc(6px * var(--wc-scale, 1));
+    min-width: calc(142px * var(--wc-scale, 1));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.mix-wc-pop label {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--wc-scale, 1));
+    padding: calc(3px * var(--wc-scale, 1)) calc(2px * var(--wc-scale, 1));
+    cursor: pointer;
+    font-size: calc(12px * var(--wc-scale, 1));
+}
+.mix-wc-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: calc(14px * var(--wc-scale, 1));
+    height: calc(14px * var(--wc-scale, 1));
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.5) 50%);
+}
+
 /* AI 正文：无气泡全宽，左右对称 */
 .mix-prose {
     margin: 14px 0;
@@ -3628,4 +3738,203 @@
 
 .mix-trusted-float > * {
     pointer-events: auto;
+}
+
+/* ═══════════════════════════════════════════
+   喜好配方 · 配方收纳 · 重命名 新增样式
+   ═══════════════════════════════════════════ */
+
+/* ── 吧台快捷操作栏 ── */
+.mix-bar-quick-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 12px;
+}
+
+.mix-bar-quick-actions .mix-pill-btn {
+    padding: 8px 14px;
+    font-size: 13px;
+    gap: 6px;
+}
+
+/* ── 喜好配方标签 ── */
+.mix-fav-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 16px;
+}
+
+.mix-fav-kind-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    font-size: 12px;
+    color: var(--mix-violet);
+    background: rgba(141, 123, 245, 0.12);
+    border: 1px solid rgba(141, 123, 245, 0.25);
+    border-radius: 10px;
+}
+
+/* ── 喜好配方列表项 ── */
+.mix-fav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--mix-panel-2);
+    margin-bottom: 8px;
+}
+
+.mix-fav-item-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.mix-fav-item-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--mix-text);
+    margin-bottom: 4px;
+}
+
+.mix-fav-item-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.mix-fav-item-kinds .mix-fav-kind-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+}
+
+.mix-fav-item-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* ── 配方文件夹栏 ── */
+.mix-folder-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 10px 12px 4px;
+}
+
+.mix-folder-bar .mix-pill-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    gap: 5px;
+}
+
+/* ── 文件夹分组 ── */
+.mix-folder-group {
+    margin-bottom: 8px;
+}
+
+.mix-folder-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--mix-panel);
+    border: none;
+    color: var(--mix-text);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s;
+}
+
+.mix-folder-header:active {
+    background: var(--mix-panel-2);
+}
+
+.mix-folder-header[data-uncategorized] {
+    cursor: default;
+}
+
+.mix-folder-header[data-uncategorized]:active {
+    background: var(--mix-panel);
+}
+
+.mix-folder-name {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mix-folder-count {
+    font-size: 12px;
+    color: var(--mix-faint);
+    flex-shrink: 0;
+}
+
+.mix-folder-chevron {
+    flex-shrink: 0;
+    color: var(--mix-faint);
+    transition: transform 0.25s;
+    transform: rotate(-90deg);
+}
+
+.mix-folder-chevron.is-down {
+    transform: rotate(90deg);
+}
+
+.mix-folder-edit-btn {
+    width: 26px;
+    height: 26px;
+    color: var(--mix-faint);
+    flex-shrink: 0;
+}
+
+.mix-folder-edit-btn:hover {
+    color: var(--mix-text);
+}
+
+.mix-folder-empty {
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--mix-faint);
+    text-align: center;
+    background: var(--mix-panel-2);
+}
+
+/* ── 操作行选中态 ── */
+.mix-action-row[data-active] {
+    background: rgba(141, 123, 245, 0.1);
+}
+
+.mix-action-row[data-active] > span {
+    color: var(--mix-violet);
+}
+
+/* ── 输入框统一样式 ── */
+.mix-input {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--mix-panel-2);
+    border: 1px solid var(--mix-line);
+    border-radius: 8px;
+    color: var(--mix-text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+    margin: 6px 0 12px;
+}
+
+.mix-input:focus {
+    border-color: var(--mix-violet);
+}
+
+.mix-input::placeholder {
+    color: var(--mix-faint);
 }

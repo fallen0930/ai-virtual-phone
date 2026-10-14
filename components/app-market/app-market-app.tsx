@@ -24,6 +24,7 @@ import {
   Store,
   Trash2,
   Upload,
+  Pin,
   X,
 } from "lucide-react";
 
@@ -1586,7 +1587,7 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
                 )}
               </div>
               {installedActionError ? <div className="app-market-error" role="alert">{installedActionError}</div> : null}
-              <div className="app-market-sheet-actions three">
+              <div className="app-market-sheet-actions four">
                 <button
                   type="button"
                   className="app-market-secondary"
@@ -1600,6 +1601,19 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
                 <button type="button" className="app-market-danger" onClick={() => setConfirmDelete(selectedInstalledApp)} disabled={selectedInstalledUpdating}>
                   <Trash2 size={18} />
                   <span>卸载</span>
+                </button>
+                <button
+                  type="button"
+                  className="app-market-secondary"
+                  onClick={() => {
+                    onInstallToDesktop(selectedInstalledApp);
+                    onNotice?.("已添加到桌面（若已在桌面则忽略）");
+                  }}
+                  disabled={selectedInstalledUpdating}
+                  title="把它钉到手机桌面，像其他 App 一样直接点开"
+                >
+                  <Pin size={18} />
+                  <span>添加到桌面</span>
                 </button>
                 <button type="button" className="app-market-primary" onClick={() => onOpenCustomApp(selectedInstalledApp.id)} disabled={selectedInstalledUpdating}>
                   <ExternalLink size={18} />

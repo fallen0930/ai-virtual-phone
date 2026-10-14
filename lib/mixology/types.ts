@@ -784,6 +784,11 @@ export type MixTurn = {
 /** 对局：一次「角色卡 + 特调」的运行 */
 export type MixSession = {
     id: string;
+    /**
+     * 玩家给这场对局起的名字（重命名后才有）。不填时列表/界面按
+     * 「角色名 · 配方名」兜底展示，填了就以它为准，方便区分同一角色的多场对局。
+     */
+    name?: string;
     /** 开局时的方案快照（防止事后改方案影响旧局回放语义） */
     recipe: MixRecipe;
     /** 角色名快照（列表展示用，酒柜里的卡被删也不受影响） */
@@ -879,3 +884,46 @@ export function mixCloudState(item: { publishedId?: string; publishedAt?: number
 export function createMixId(prefix: string): string {
     return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
+
+// ── 喜好配方（快捷搭配预设） ──
+/**
+ * 喜好配方：保存常用的部分槽位搭配（如固定的苦精+杯型组合），
+ * 在吧台创建配方时可以一键套用，省去重复选料的麻烦。
+ */
+export type MixFavoritePreset = {
+    id: string;
+    name: string;
+    /** 只存用户想快捷复用的那些槽位，不一定是完整配方 */
+    slots: Partial<Record<MixMaterialKind, MixSlotEntry[]>>;
+    createdAt: number;
+    updatedAt: number;
+};
+
+// ── 配方收纳文件夹 ──
+/**
+ * 配方文件夹：像收纳夹一样把配方分组整理，
+ * 玩家可自主命名，配方列表按文件夹分组展示。
+ */
+export type MixRecipeFolder = {
+    id: string;
+    name: string;
+    /** 文件夹内的配方 id 列表（有序） */
+    recipeIds: string[];
+    createdAt: number;
+    updatedAt: number;
+};
+
+// ── 对局收纳文件夹 ──
+/**
+ * 对局文件夹：与配方文件夹同思路，把一场场对局按自己的方式分组整理，
+ * 玩家可自主命名，对局列表按文件夹分组展示。对局本体不存进文件夹，
+ * 文件夹只记一个有序的 sessionId 列表（与配方文件夹记 recipeIds 一致）。
+ */
+export type MixSessionFolder = {
+    id: string;
+    name: string;
+    /** 文件夹内的对局 id 列表（有序） */
+    sessionIds: string[];
+    createdAt: number;
+    updatedAt: number;
+};

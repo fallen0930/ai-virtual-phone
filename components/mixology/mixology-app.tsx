@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-    Archive, Bookmark, ChevronLeft, Copy, Download, Edit3, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Pencil, Play, Plug, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
+    Archive, Bookmark, ChevronLeft, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
 import {
     clearMixMaterialPublished,
     clearMixRecipePublished,
@@ -48,7 +48,7 @@ import {
 } from "@/lib/mixology/storage";
 import { mixRoundCount, runMixSessionStart, startMixSession } from "@/lib/mixology/engine";
 import { disposeMixSandboxesForMaterial } from "@/lib/mixology/mechanism-runtime";
-import { mixKindRunsActiveCode } from "@/lib/mixology/types";
+import { mixKindRunsActiveCode, MIX_SLOT_STACK } from "@/lib/mixology/types";
 import {
     createMixId,
     MIX_KIND_LABELS,
@@ -78,6 +78,8 @@ import { CommentThread, MixologyHall } from "./mixology-hall";
 import { AuthorAvatar, KindGlyph, MatCard, MaterialDetail, MixConfirm, MixTagList, SealedNote, formatMixTime } from "./mixology-shared";
 import { MixConnectorSheet } from "./connector-sheet";
 import { MixSlotEditor } from "./slot-editor";
+import { MixFileVaultImport } from "./mix-file-vault";
+import { MixReadCostPanel } from "./read-cost-panel";
 import { describeMixCondition } from "@/lib/mixology/state";
 
 /** 头像统一压成 192px JPEG dataURL 的小圆图，随发布上云也不占地方 */
@@ -113,7 +115,9 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [tab, setTab] = useState<MixTab>("bar");
     const [cabinet, setCabinet] = useState<MixMaterial[]>(() => loadMixCabinet());
     const [recipes, setRecipes] = useState<MixRecipe[]>(() => loadMixRecipes());
-    const [sessions, setSessions] = useState<MixSession[]>(() => loadMixSessions());
+    // 酒局列表只列「根对局」：分叉出来的支线（有 parentId）不在这里出现，
+    // 只能进对局后从 🌳 世界树查看/切换，避免"开个支线就多出一场对局"的观感。
+    const [sessions, setSessions] = useState<MixSession[]>(() => loadMixSessions().filter((s) => !s.parentId));
     const [favorites, setFavorites] = useState<MixFavoritePreset[]>(() => loadMixFavorites());
     const [folders, setFolders] = useState<MixRecipeFolder[]>(() => loadMixFolders());
     const [sessionFolders, setSessionFolders] = useState<MixSessionFolder[]>(() => loadMixSessionFolders());
@@ -185,7 +189,16 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [barEditing, setBarEditing] = useState<MixRecipe | null>(null);
     const [slotPicker, setSlotPicker] = useState<MixMaterialKind | null>(null);
     const [slotEditor, setSlotEditor] = useState<MixMaterialKind | null>(null);
+    /** 从文件库加材料：选文档 → 选槽位 → 预填材料编辑器 */
+    const [fvImportOpen, setFvImportOpen] = useState(false);
+    /**
+     * 材料编辑器保存后要不要自动进吧台：存下目标槽位。从文件库来的一律要——
+     * 用户的心智是「我要快速配一杯」，不该再让他手动去那一格找刚建好的材料。
+     */
+    const fvAutoSlotRef = useRef<MixMaterialKind | null>(null);
     const [nameSheetOpen, setNameSheetOpen] = useState(false);
+    /** 读取清单 · token 成本 面板（吧台里弹出） */
+    const [readCostOpen, setReadCostOpen] = useState(false);
     const [recipeName, setRecipeName] = useState("");
     const [openingPicker, setOpeningPicker] = useState<MixRecipe | null>(null);
     const [playing, setPlaying] = useState<string | null>(null);
@@ -220,7 +233,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const refresh = useCallback(() => {
         setCabinet(loadMixCabinet());
         setRecipes(loadMixRecipes());
-        setSessions(loadMixSessions());
+        setSessions(loadMixSessions().filter((s) => !s.parentId));
         setFavorites(loadMixFavorites());
         setFolders(loadMixFolders());
         setSessionFolders(loadMixSessionFolders());
@@ -870,6 +883,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         </button>
                         <button type="button" className="mix-icon-btn" onClick={() => setConnectorsOpen(true)} aria-label="连接器" title="连接器：给机括用的外部接口"><Plug size={17} /></button>
                         <button type="button" className="mix-icon-btn" onClick={() => importFileRef.current?.click()} aria-label="导入材料" title="从文件导入"><Upload size={17} /></button>
+                        <button type="button" className="mix-icon-btn" onClick={() => setFvImportOpen(true)} aria-label="从文件库加材料" title="从文件库加材料：挑一篇文档一键变成材料"><FileText size={17} /></button>
                     </>
                 ) : null}
                 {tab === "menu" || tab === "hall" ? (
@@ -1033,6 +1047,22 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 onClick={() => setFavPickerOpen(true)}
                             >
                                 <SlidersHorizontal size={14} />喜好配方
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => setReadCostOpen(true)}
+                                disabled={Object.keys(barSlots).filter((k) => mixSlotEntries(barSlots, k as MixMaterialKind).length > 0).length === 0}
+                            >
+                                <Receipt size={14} />读取清单
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => setFvImportOpen(true)}
+                                title="从文件库挑一篇世界观 / 人设材料，一键变成材料并放进对应槽位"
+                            >
+                                <FileText size={14} />从文件库加材料
                             </button>
                         </div>
                     </div>
@@ -1586,6 +1616,25 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                     if (material.kind === "mechanism") disposeMixSandboxesForMaterial(material.id);
                                     setEditor(null);
                                     refresh();
+                                    // 从文件库来的：存完直接放进吧台对应槽位，一步到位
+                                    if (fvAutoSlotRef.current === material.kind) {
+                                        fvAutoSlotRef.current = null;
+                                        setBarSlots((prev) => {
+                                            const current = mixSlotEntries(prev, material.kind);
+                                            const next = MIX_SLOT_STACK[material.kind] === "first"
+                                                ? [{ materialId: material.id }]
+                                                // 已经在这一格里就不重复加
+                                                : (current.some((e) => e.materialId === material.id)
+                                                    ? current
+                                                    : [...current, { materialId: material.id }]);
+                                            return { ...prev, [material.kind]: next };
+                                        });
+                                        setTab("bar");
+                                        setBarTab("create");
+                                        showToast(`「${material.name}」已入柜，并放进吧台的${MIX_KIND_LABELS[material.kind]}槽。`);
+                                        return;
+                                    }
+                                    fvAutoSlotRef.current = null;
                                     showToast(`「${material.name}」已入柜。`);
                                 }}
                                 onCancel={() => setEditor(null)}
@@ -1594,6 +1643,17 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                     </div>
                 </div>
             ) : null}
+
+            {/* 从文件库加材料：选文档 → 选槽位 → 预填编辑器 */}
+            <MixFileVaultImport
+                open={fvImportOpen}
+                onClose={() => setFvImportOpen(false)}
+                onNotice={showToast}
+                onCreate={(material) => {
+                    fvAutoSlotRef.current = material.kind;
+                    setEditor({ kind: material.kind, initial: material });
+                }}
+            />
 
             {/* 吧台选材 */}
             {slotEditor ? (
@@ -1708,6 +1768,24 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 <button type="button" className="mix-ghost-btn" onClick={() => setNameSheetOpen(false)}>再想想</button>
                                 <button type="button" className="mix-brew-btn" onClick={handleSaveRecipe}>存入方案</button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 读取清单 · token 成本 */}
+            {readCostOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setReadCostOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "88%" }}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">读取清单 · token 成本</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setReadCostOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <MixReadCostPanel
+                                slots={barSlots}
+                                resolve={(id) => getMixBuiltin(id) ?? cabinet.find((m) => m.id === id) ?? null}
+                            />
                         </div>
                     </div>
                 </div>

@@ -13,6 +13,12 @@ import {
     clampFloatingDockAnchor,
 } from "@/lib/floating-dock-store";
 import {
+    isDockManaged,
+    CONTROL_DOCK_ACTIVATE_EVENT,
+    getControlDockState,
+    subscribeControlDockState,
+} from "@/lib/floating-controls-store";
+import {
     getCharacterBinding,
     loadApiConfigs,
     loadBindingConfig,
@@ -70,6 +76,10 @@ export function QuickActionFloat() {
     const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const dockState = useSyncExternalStore(subscribeFloatingDockState, getFloatingDockState, getFloatingDockState);
+    const controlDockState = useSyncExternalStore(subscribeControlDockState, getControlDockState, getControlDockState);
+    // 已被统一控制坞接管：自身悬浮球永久收起，改由坞按钮触发开合
+    // （取消勾选只会让它从坞里消失，绝不能退回自由悬浮状态）
+    const managedQuick = isDockManaged("quick-action");
     const layerRef = useRef<HTMLDivElement | null>(null);
     const floatingButtonRef = useRef<HTMLButtonElement | null>(null);
     const floatingDragRef = useRef<FloatingDragState | null>(null);
@@ -124,6 +134,19 @@ export function QuickActionFloat() {
         };
     }, [enabled, reloadData]);
 
+    // 受统一控制坞驱动：坞里点「快捷切换」时切换本面板开合
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ control?: string }>).detail;
+            if (detail?.control !== "quick-action") return;
+            setOpen(prev => !prev);
+            setActiveFloatingTool("quick-action");
+            reloadData();
+        };
+        window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+        return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+    }, [reloadData]);
+
     useEffect(() => {
         if (!open) return;
         const handlePointerDown = (event: PointerEvent) => {
@@ -169,20 +192,23 @@ export function QuickActionFloat() {
     useLayoutEffect(() => {
         const layer = layerRef.current;
         const button = floatingButtonRef.current;
-        if (!open || !layer || !button) {
+        if (!open || !layer) {
             setPopoverPosition(null);
             return;
         }
         const rect = layer.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
+        const buttonRect = button ? button.getBoundingClientRect() : null;
+        // 受管模式：面板贴着坞里被点的按钮，而不是（已被隐藏的）自身球
+        const dockAnchor = managedQuick ? controlDockState.anchorByControl["quick-action"] : undefined;
         const posAnchor = (draggingFloatingButton && floatingPosition)
             ? floatingPosition
-            : (dockState.anchorPosition)
-                ? dockState.anchorPosition
-                : (floatingPosition ?? {
-                    left: buttonRect.left - rect.left,
-                    top: buttonRect.top - rect.top,
-                });
+            : dockAnchor
+                ? dockAnchor
+                : (dockState.anchorPosition)
+                    ? dockState.anchorPosition
+                    : (floatingPosition ?? (buttonRect
+                        ? { left: buttonRect.left - rect.left, top: buttonRect.top - rect.top }
+                        : { left: rect.width - 70, top: 120 }));
         const width = Math.min(344, rect.width - 32);
         const statusSafeTop = getStatusSafeTop(layer);
         const estimatedHeight = Math.min(520, Math.max(240, rect.height - statusSafeTop - 12));
@@ -434,6 +460,7 @@ export function QuickActionFloat() {
 
     return (
         <div className="quick-action-layer" ref={layerRef}>
+            {!managedQuick && (
             <button
                 ref={floatingButtonRef}
                 type="button"
@@ -451,6 +478,7 @@ export function QuickActionFloat() {
             >
                 <SlidersHorizontal size={24} strokeWidth={1.9} />
             </button>
+            )}
 
             {open ? (
                 <div

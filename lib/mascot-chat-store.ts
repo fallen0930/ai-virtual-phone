@@ -17,14 +17,24 @@ import {
     type MascotToolContext,
 } from "./mascot-tools";
 import { isMascotPanelOpen } from "./mascot-state";
+import { buildMascotSessionSummary } from "./mascot-conversation-utils";
 
 const MASCOT_DB_NAME = "AiPhoneMascotDB";
 const MASCOT_DB_VERSION = 2;
 const MASCOT_CHAT_STORE = "chat";
 const MASCOT_MESSAGES_KEY = "messages"; // 旧版单会话键，仅用于迁移
 const MASCOT_STATE_KEY = "state";
-const MAX_STORED_MASCOT_MESSAGES = 50;
+// 单会话保留的消息条数。早期为 50，聊久了前面的内容就「看不见」——
+// 提到 400 让一个窗口能撑很久，同时靠上下文用量提示引导用户主动换窗口。
+const MAX_STORED_MASCOT_MESSAGES = 400;
 const MAX_MASCOT_SESSIONS = 30;
+
+// 上下文预算按字符估算（中文 ≈ 1 字符/token 量级），用于「上下文 NN%」提示。
+// 可用 localStorage 键覆盖（调参用）。
+const MASCOT_CONTEXT_BUDGET_KEY = "ai_phone_mascot_context_budget_chars";
+export const MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS = 32_000;
+export const MASCOT_CONTEXT_BUDGET_MIN = 2_000;
+export const MASCOT_CONTEXT_BUDGET_MAX = 2_000_000;
 
 export type MascotSession = {
     id: string;
@@ -32,6 +42,8 @@ export type MascotSession = {
     createdAt: number;
     updatedAt: number;
     messages: MascotMsg[];
+    /** 抽屉里置顶显示；只影响排序，不动 updatedAt */
+    isPinned?: boolean;
 };
 
 type PersistedMascotState = {
@@ -45,6 +57,8 @@ export type MascotChatSnapshot = {
     activeSessionId: string | null;
     hydrated: boolean;
     isThinking: boolean;
+    /** 当前会话上下文用量（0–1+，达到 1 附近即建议开新窗口） */
+    contextUsage: number;
 };
 
 const listeners = new Set<() => void>();
@@ -56,7 +70,7 @@ let hydratePromise: Promise<void> | null = null;
 let isThinking = false;
 let abortRequested = false;
 let abortController: AbortController | null = null;
-let snapshot: MascotChatSnapshot = { messages, sessions, activeSessionId, hydrated, isThinking };
+let snapshot: MascotChatSnapshot = { messages, sessions, activeSessionId, hydrated, isThinking, contextUsage: 0 };
 
 function openMascotDb(): IDBOpenDBRequest {
     const request = indexedDB.open(MASCOT_DB_NAME, MASCOT_DB_VERSION);
@@ -68,8 +82,62 @@ function openMascotDb(): IDBOpenDBRequest {
     return request;
 }
 
+function getContextBudget(): number {
+    try {
+        const raw = Number(localStorage.getItem(MASCOT_CONTEXT_BUDGET_KEY));
+        if (Number.isFinite(raw) && raw >= MASCOT_CONTEXT_BUDGET_MIN && raw <= MASCOT_CONTEXT_BUDGET_MAX) {
+            return Math.floor(raw);
+        }
+    } catch {
+        // ignore
+    }
+    return MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS;
+}
+
+export function getMascotContextBudgetChars(): number {
+    return getContextBudget();
+}
+
+/** 设置上下文预算（null = 恢复默认）；立即刷新用量提示 */
+export function setMascotContextBudgetChars(chars: number | null): void {
+    try {
+        if (chars == null) {
+            localStorage.removeItem(MASCOT_CONTEXT_BUDGET_KEY);
+        } else {
+            const clamped = Math.min(MASCOT_CONTEXT_BUDGET_MAX, Math.max(MASCOT_CONTEXT_BUDGET_MIN, Math.floor(chars)));
+            localStorage.setItem(MASCOT_CONTEXT_BUDGET_KEY, String(clamped));
+        }
+    } catch {
+        // ignore
+    }
+    emit();
+}
+
+function mascotMessageChars(msg: MascotMsg): number {
+    const text = (msg.text || "").length;
+    const display = (msg.displayText || "").length;
+    // 图片按固定权重近似计入（无法精确换算 token，但足以反映占用增长）
+    return Math.max(text, display) + (msg.images?.length ?? 0) * 96;
+}
+
+export function getMascotSessionChars(session: MascotSession | null): number {
+    if (!session) return 0;
+    return session.messages.reduce((sum, msg) => sum + mascotMessageChars(msg), 0);
+}
+
+/** 当前会话已用的上下文字符数 */
+export function getMascotActiveContextChars(): number {
+    return getMascotSessionChars(getActiveMascotSession());
+}
+
+function computeContextUsage(): number {
+    const session = getActiveMascotSession();
+    if (!session) return 0;
+    return getMascotSessionChars(session) / getContextBudget();
+}
+
 function emit() {
-    snapshot = { messages, sessions, activeSessionId, hydrated, isThinking };
+    snapshot = { messages, sessions, activeSessionId, hydrated, isThinking, contextUsage: computeContextUsage() };
     for (const listener of listeners) listener();
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("mascot-chat-updated", { detail: snapshot }));
@@ -311,17 +379,18 @@ export function setMascotMessages(updater: MascotMsg[] | ((prev: MascotMsg[]) =>
     publishMessages(next);
 }
 
-export function createMascotSession(): string | null {
+export function createMascotSession(options: { seedMessages?: MascotMsg[]; title?: string } = {}): string | null {
     if (!hydrated || isThinking) return null;
     clearExpandedPackages();
     const now = Date.now();
     const greeting = defaultGreetingMessage();
+    const seeded = options.seedMessages && options.seedMessages.length > 0;
     const session: MascotSession = {
         id: makeMascotSessionId(),
-        title: "新对话",
+        title: options.title || "新对话",
         createdAt: now,
         updatedAt: now,
-        messages: greeting ? [greeting] : [],
+        messages: seeded ? options.seedMessages! : (greeting ? [greeting] : []),
     };
     sessions = [session, ...sessions].slice(0, MAX_MASCOT_SESSIONS);
     activeSessionId = session.id;
@@ -329,6 +398,35 @@ export function createMascotSession(): string | null {
     persistState();
     emit();
     return session.id;
+}
+
+/**
+ * 「压缩总结后开新窗口」：把当前会话压成一段摘要，作为新会话的开场上下文，
+ * 再切到新会话。这样新窗口既干净，又不丢前文的主题与结论。
+ * @returns 新会话 id；当前会话没有可总结内容时返回 null（调用方应退回普通新建）
+ */
+export function createMascotSessionWithSummary(): string | null {
+    if (!hydrated || isThinking) return null;
+    const current = getActiveMascotSession();
+    const summary = current ? buildMascotSessionSummary(current.messages) : "";
+    if (!summary) return null;
+    const seed: MascotMsg = {
+        role: "mascot",
+        text: summary,
+        displayText: summary,
+        createdAt: new Date().toISOString(),
+    };
+    return createMascotSession({ seedMessages: [seed], title: "接续对话（已压缩）" });
+}
+
+export function toggleMascotSessionPin(sessionId: string): boolean {
+    if (!hydrated || !sessions.some((session) => session.id === sessionId)) return false;
+    sessions = sessions.map((session) => session.id === sessionId
+        ? { ...session, isPinned: !session.isPinned }
+        : session);
+    persistState();
+    emit();
+    return true;
 }
 
 export function switchMascotSession(sessionId: string): boolean {
@@ -480,22 +578,27 @@ export function stopMascotGeneration() {
 export async function appendMascotMessage({
     text,
     images = [],
+    displayText,
 }: {
     text: string;
     images?: string[];
+    /** 只影响 UI 显示，不影响发给模型的 text —— 给「文件卡」这类
+     *  「正文很长但气泡只该显示一行摘要」的场景用。 */
+    displayText?: string;
 }): Promise<boolean> {
     await hydrateMascotChat();
     const trimmed = text.trim();
     if ((!trimmed && images.length === 0) || isThinking) return false;
 
+    const shown = typeof displayText === "string" ? displayText.trim() : "";
     const userMsg: MascotMsg = images.length > 0
-        ? { role: "user", text: trimmed, images, createdAt: new Date().toISOString() }
-        : { role: "user", text: trimmed, createdAt: new Date().toISOString() };
+        ? { role: "user", text: trimmed, images, ...(shown ? { displayText: shown } : {}), createdAt: new Date().toISOString() }
+        : { role: "user", text: trimmed, ...(shown ? { displayText: shown } : {}), createdAt: new Date().toISOString() };
     const shouldAutoTitle = !messages.some((msg) => msg.role === "user");
     const workingMessages = normalizeMessages([...messages, userMsg]);
     if (shouldAutoTitle && activeSessionId) {
         sessions = sessions.map((session) => session.id === activeSessionId
-            ? { ...session, title: autoMascotSessionTitle(trimmed || "（图片）") }
+            ? { ...session, title: autoMascotSessionTitle(shown || trimmed || "（图片）") }
             : session);
     }
     publishMessages(workingMessages);
@@ -721,13 +824,16 @@ export async function generateMascotReply({
 export async function sendMascotMessage({
     text,
     images = [],
+    displayText,
     context = getMascotContext(),
 }: {
     text: string;
     images?: string[];
+    /** 只影响 UI 显示的摘要（见 appendMascotMessage） */
+    displayText?: string;
     context?: MascotPageContext;
 }): Promise<void> {
-    const accepted = await appendMascotMessage({ text, images });
+    const accepted = await appendMascotMessage({ text, images, displayText });
     if (accepted) await generateMascotReply({ context });
 }
 

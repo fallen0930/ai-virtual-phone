@@ -778,6 +778,12 @@ export type MixTurn = {
      * 手改是玩家亲手定的事实，永远压过重画算出来的结果。
      */
     mechanismStoreEdits?: Record<string, Record<string, string>>;
+    /**
+     * 这一轮的真实 token 用量（仅 assistant 轮）：来自大模型 API 返回的 usage。
+     * prompt_tokens=进（含整段历史上下文）、completion_tokens=出（本轮回覆）、total_tokens=合计。
+     * 用于对局内逐轮展示与后台「底层调用大模型日志」对账；部分中转不回传 usage 时为 undefined。
+     */
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     createdAt: number;
 };
 
@@ -848,9 +854,57 @@ export type MixSession = {
      * blur = 封面模糊 0~20px。按局保存——不同封面的明暗各不相同，各局各调。
      */
     bgTune?: { mask: number; blur: number };
+    /**
+     * ── 世界树 / 支线谱系 ──
+     * 一场对局既可以独立存在（下面四个字段全空 = 老对局 / 无谱系），
+     * 也可以是一棵"世界树"上的一个节点：靠 rootId / parentId / forkTurnIndex 串成树。
+     * 分叉时，子节点整段复制父级 turns[0..forkTurnIndex] 作为起点，
+     * 之后各自独立续写、互不影响。
+     */
+    /** 树根对局 id（自身为根时等于自身 id；老对局无此字段） */
+    rootId?: string;
+    /** 分叉来源对局 id（根节点为空） */
+    parentId?: string;
+    /**
+     * 在父级第几轮分叉（子节点 turns[0] 对齐父级 turns[forkTurnIndex]，含该轮）。
+     * 老对局无此字段；根节点也没有。
+     */
+    forkTurnIndex?: number;
+    /** 层级（根=0），由 root 起算，冗余存便于缩进与排序 */
+    depth?: number;
+    /** 支线名（玩家起的，便于一眼区分同一角色的多条支线） */
+    branchName?: string;
+    /** 支线备注（玩家随手记，方便回退/回忆每条支线在干嘛） */
+    branchNote?: string;
+    /** 世界树里的摆放 x（绝对坐标，px），拖动后落库；缺省时由自动布局给 */
+    treeX?: number;
+    /** 世界树里的摆放 y（绝对坐标，px） */
+    treeY?: number;
     createdAt: number;
     updatedAt: number;
 };
+
+/**
+ * 对局显示名：有支线名优先用支线名，否则回退「角色名 · 配方名」。
+ * 列表 / 世界树节点统一走它，避免各处各写一套兜底。
+ */
+export function mixSessionTitle(session: MixSession): string {
+    if (session.branchName?.trim()) return session.branchName.trim();
+    return `${session.charName} · ${session.recipe.name}`;
+}
+
+/**
+ * 取一条对局"最新进度摘要"：最后一条 assistant 正文，剥掉小票/小剧场块、
+ * 按显示规则洗一遍后截断。世界树节点用它做一眼概览，不打开也能知道这条线走到哪了。
+ * 没有任何 assistant 轮时返回空串。
+ */
+export function mixSessionLatestSummary(session: MixSession, maxLen = 48): string {
+    const last = [...session.turns].reverse().find((t) => t.role === "assistant");
+    if (!last) return "";
+    const text = (last.text ?? "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
 
 /**
  * 读一轮的状态栏块序列：新格式（ticketRaws）直接用；老数据把单块字段包装成一块，

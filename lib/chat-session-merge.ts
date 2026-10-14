@@ -54,6 +54,8 @@ function sessionActivityTime(session: ChatSession): number {
 }
 
 function duplicateKey(session: ChatSession): string | null {
+    // 用户主动拆出的独立对话线程（带标题 / 由压缩衍生）不算重复，绝不合并
+    if (session.title || session.parentSessionId) return null;
     if (!session.isGroup) return `direct:${session.contactId}`;
     const members = [...(session.participantIds || [])].sort();
     if (members.length === 0) return null;

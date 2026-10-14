@@ -9,7 +9,7 @@
 // - 点击展开/收起对局列表面板
 // - 列表项前的圆点标识生成状态（生成中/排队/完成/错误）
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { GlassWater, X } from "lucide-react";
 import {
     subscribeMixSessionRuntime,
@@ -19,7 +19,11 @@ import {
 } from "@/lib/mixology/session-runtime";
 import { loadMixSessions, getMixMaterial } from "@/lib/mixology/storage";
 import { mixRoundCount } from "@/lib/mixology/engine";
-import { mixSlotFirstId, type MixCharacterCard, type MixSession } from "@/lib/mixology/types";
+import { mixSlotFirstId, mixSessionTitle, type MixCharacterCard, type MixSession } from "@/lib/mixology/types";
+import {
+    isDockManaged,
+    CONTROL_DOCK_ACTIVATE_EVENT,
+} from "@/lib/floating-controls-store";
 
 type FloatingPosition = { left: number; top: number };
 type PopoverPosition = { left: number; top: number };
@@ -127,6 +131,19 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
         getMixSessionRuntimeState,
         getMixSessionRuntimeState
     );
+    // 已被统一控制坞接管：自身悬浮球永久收起，改由坞按钮触发开合
+    const managedSwitcher = isDockManaged("mix-session-switcher");
+
+    // 受统一控制坞驱动：坞里点「对局切换」时切换本面板开合
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ control?: string }>).detail;
+            if (detail?.control !== "mix-session-switcher") return;
+            setOpen(prev => !prev);
+        };
+        window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+        return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+    }, []);
 
     // 是否有对局正在生成（用于悬浮球上的呼吸提示）
     const anyGenerating = Object.values(runtimeState.running).some(
@@ -136,6 +153,20 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
     const refreshSessions = useCallback(() => {
         setSessions(loadMixSessions());
     }, []);
+
+    // 普通切换器只列「根对局」（独立游戏）。分叉出来的支线（有 parentId）不在列表里出现，
+    // 它们只能在 🌳 世界树里查看/切换，避免"分叉后复制出一个对局"的观感。
+    const visibleSessions = useMemo(() => sessions.filter((s) => !s.parentId), [sessions]);
+    // 每棵世界树（根对局）下的分支数量，用来给列表项加"分叉 N"角标
+    const branchCountOf = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const s of sessions) {
+            if (s.rootId && s.rootId !== s.id) {
+                map.set(s.rootId, (map.get(s.rootId) ?? 0) + 1);
+            }
+        }
+        return map;
+    }, [sessions]);
 
     // 点击外部关闭
     useEffect(() => {
@@ -319,11 +350,6 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
         setOpen(false);
     }
 
-    // 取对局显示名：角色名 · 配方名
-    function sessionDisplayName(session: MixSession): string {
-        return `${session.charName} · ${session.recipe.name}`;
-    }
-
     // 取对局封面图
     function sessionCover(session: MixSession): string | null {
         const charId = mixSlotFirstId(session.recipe.slots, "character");
@@ -345,6 +371,7 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
 
     return (
         <div className="mix-session-switcher-layer" ref={layerRef}>
+            {!managedSwitcher && (
             <button
                 ref={buttonRef}
                 type="button"
@@ -363,6 +390,7 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
                 <GlassWater size={22} strokeWidth={1.8} />
                 {anyGenerating ? <span className="mix-switcher-dot-pulse" /> : null}
             </button>
+            )}
 
             {open ? (
                 <div
@@ -388,15 +416,19 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
                     </div>
 
                     <div className="mix-switcher-list">
-                        {sessions.length === 0 ? (
+                        {visibleSessions.length === 0 ? (
                             <div className="mix-switcher-empty">还没有对局</div>
                         ) : (
-                            sessions
+                            visibleSessions
                                 .sort((a, b) => b.updatedAt - a.updatedAt)
                                 .map((s) => {
                                     const status = getMixSessionGenStatus(s.id);
-                                    const isActive = s.id === sessionId;
+                                    // 高亮跟随「当前对局所在树的根」：在支线上时，高亮它所属的
+                                    // 那场根对局，而不是高亮一个不在列表里的分支 id。
+                                    const currentRootId = sessions.find((x) => x.id === sessionId)?.rootId ?? sessionId;
+                                    const isActive = s.id === currentRootId;
                                     const cover = sessionCover(s);
+                                    const branchCount = branchCountOf.get(s.id) ?? 0;
                                     return (
                                         <button
                                             type="button"
@@ -425,10 +457,13 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
                                             )}
                                             <div className="mix-switcher-item-info">
                                                 <div className="mix-switcher-item-name">
-                                                    {sessionDisplayName(s)}
+                                                    {mixSessionTitle(s)}
                                                 </div>
                                                 <div className="mix-switcher-item-sub">
                                                     {mixRoundCount(s.turns)} 轮
+                                                    {branchCount > 0 ? (
+                                                        <span className="mix-switcher-branch-badge" title="该对局已分出支线，点 🌳 世界树查看">{branchCount} 条支线</span>
+                                                    ) : null}
                                                 </div>
                                             </div>
                                         </button>

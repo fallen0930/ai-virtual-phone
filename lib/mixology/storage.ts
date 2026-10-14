@@ -552,6 +552,110 @@ export function renameMixSession(id: string, newName: string): void {
     writeJson(SESSIONS_KEY, list);
 }
 
+// ---------- 世界树 / 支线谱系 ----------
+
+/** 支线元数据补丁：支线名、备注、树内摆放坐标、层级，按需局部更新 */
+export type MixSessionTreeMetaPatch = {
+    branchName?: string;
+    branchNote?: string;
+    treeX?: number;
+    treeY?: number;
+    depth?: number;
+};
+
+export function updateMixSessionTreeMeta(id: string, patch: MixSessionTreeMetaPatch): void {
+    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    const cur = list[idx];
+    const next: MixSession = { ...cur };
+    if (patch.branchName !== undefined) next.branchName = patch.branchName.trim() || undefined;
+    if (patch.branchNote !== undefined) next.branchNote = patch.branchNote || undefined;
+    if (patch.treeX !== undefined) next.treeX = patch.treeX;
+    if (patch.treeY !== undefined) next.treeY = patch.treeY;
+    if (patch.depth !== undefined) next.depth = patch.depth;
+    next.updatedAt = Date.now();
+    list[idx] = next;
+    writeJson(SESSIONS_KEY, list);
+}
+
+/**
+ * 删除一条支线：它的直接子支线"上提一级"挂到被删节点的父节点（根被删则子支线各自成根），
+ * 整棵子树层级随之下移一层，进度不丢、树不散。然后才真正删掉该节点。
+ */
+export function deleteMixSessionBranch(id: string): void {
+    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const node = list.find((s) => s.id === id);
+    if (!node) return;
+
+    const byId = new Map(list.map((s) => [s.id, s] as const));
+    const children = list.filter((s) => s.parentId === id);
+
+    // 递归把 subtree 重挂到 newParent（含根重置），并整体下移一层
+    const reparent = (childId: string, newParentId: string | undefined, newRootId: string, newDepth: number) => {
+        const child = byId.get(childId);
+        if (!child) return;
+        child.parentId = newParentId;
+        child.rootId = newRootId;
+        child.depth = newDepth;
+        for (const grand of list.filter((s) => s.parentId === childId)) {
+            reparent(grand.id, childId, newRootId, newDepth + 1);
+        }
+    };
+
+    const grandParentId = node.parentId;
+    const grandParent = grandParentId ? byId.get(grandParentId) : undefined;
+    for (const child of children) {
+        if (grandParent) {
+            reparent(child.id, grandParentId, child.rootId ?? child.id, (grandParent.depth ?? 0) + 1);
+        } else {
+            reparent(child.id, undefined, child.id, 0);
+        }
+    }
+
+    writeJson(SESSIONS_KEY, list);
+    deleteMixSession(id);
+}
+
+/** 树节点：环绕一场对局，挂着它的子支线 */
+export type MixSessionTreeNode = {
+    session: MixSession;
+    children: MixSessionTreeNode[];
+};
+
+/**
+ * 把扁平对局列表按 parentId 拼成森林（多棵世界树）。
+ * 根 = parentId 为空或指向了不存在的节点。返回前按 createdAt 稳定排序，
+ * 方便自动布局时同一层的兄弟顺序固定。
+ */
+export function buildMixSessionForest(sessions: MixSession[]): MixSessionTreeNode[] {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    const nodes = new Map<string, MixSessionTreeNode>();
+    for (const s of sessions) nodes.set(s.id, { session: s, children: [] });
+
+    const roots: MixSessionTreeNode[] = [];
+    for (const s of sessions) {
+        const node = nodes.get(s.id);
+        if (!node) continue;
+        if (s.parentId && byId.has(s.parentId) && nodes.has(s.parentId)) {
+            nodes.get(s.parentId)!.children.push(node);
+        } else {
+            roots.push(node);
+        }
+    }
+
+    const sortFn = (a: MixSessionTreeNode, b: MixSessionTreeNode) =>
+        (a.session.createdAt ?? 0) - (b.session.createdAt ?? 0);
+    const sortRec = (n: MixSessionTreeNode) => {
+        n.children.sort(sortFn);
+        n.children.forEach(sortRec);
+    };
+    roots.sort(sortFn);
+    roots.forEach(sortRec);
+    return roots;
+}
+
+
 // ---------- 重命名配方 ----------
 
 export function renameMixRecipe(id: string, newName: string): void {

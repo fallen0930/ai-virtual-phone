@@ -46,20 +46,39 @@ import {
 import { mergeHookState, type MixHook, type MixHookPayload } from "./mechanism-protocol";
 import { disposeMixSandboxes, runMixHook } from "./mechanism-runtime";
 import { disposeMixTrusted, runMixTrustedHook } from "./trusted-runtime";
+import { getApiLogs } from "../api-log-store";
 
 export const MIX_PROMPT_APP_ID = "mixology";
 const MIX_PROMPT_TAGS = ["mixology"];
 
-/** 对局用的 API 配置：全局默认接口 */
-export function resolveMixApiConfig(): ApiConfig | null {
+/** 对局用的接口来源：binding = 全局绑定里明确指定；fallback = 没指定或已失效，实际用列表第一个；none = 一个配置都没有 */
+export type MixApiSource = "binding" | "fallback" | "none";
+
+export type MixApiResolution = {
+    config: ApiConfig | null;
+    source: MixApiSource;
+};
+
+/**
+ * 对局用的 API 配置（带来源）。特调对局只读全局默认接口，角色级绑定不参与，
+ * 所以「当前模型」指示器必须显示这一份解析结果，而不是绑定面板里当前 tab 的那份。
+ */
+export function resolveMixApiResolution(): MixApiResolution {
     const binding = loadBindingConfig();
     const configs = loadApiConfigs();
     const id = binding.globalDefaults.apiConfigId;
     if (id) {
         const found = configs.find((c) => c.id === id);
-        if (found) return found;
+        if (found) return { config: found, source: "binding" };
     }
-    return configs[0] ?? null;
+    return configs[0]
+        ? { config: configs[0], source: "fallback" }
+        : { config: null, source: "none" };
+}
+
+/** 对局用的 API 配置：全局默认接口 */
+export function resolveMixApiConfig(): ApiConfig | null {
+    return resolveMixApiResolution().config;
 }
 
 /** 从方案快照装配提示词（材料从酒柜按 id 现取；角色卡被删则报错） */
@@ -529,6 +548,8 @@ async function runMixGeneration(
     // 那个剥离器在流式时会扣住尾部 64 字等括号闭合，机括的末尾标记行会整行压在里面不出来
     const llmOptions = { appId: MIX_PROMPT_APP_ID, appTags: MIX_PROMPT_TAGS, skipOutputRegex: true, skipTimestampStrip: true, signal };
     let raw: string;
+    // 真实用量：流式路径直接从返回值拿；非流式/兜底路径从「底层调用大模型日志」读最近一条（该调用刚落库）
+    let turnUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
     if (onDelta && apiConfig.enableStreaming !== false) {
         let got = false;
         try {
@@ -536,14 +557,17 @@ async function runMixGeneration(
                 onDelta: (chunk) => { got = true; onDelta(chunk); },
             });
             raw = streamed.content;
+            turnUsage = streamed.usage;
         } catch (error) {
             // 一个字都没来就报错：多半是这条接口不支持 SSE（或者中间有代理把它拆了），
             // 退回一次性请求重试一遍；已经吐过字再断的话就是真出错了，照常抛出去
             if (got || (error instanceof Error && signal?.aborted)) throw error;
             raw = await sendLLMRequest(apiConfig, null, messages, [], meta, llmOptions);
+            turnUsage = getApiLogs().at(-1)?.usage;
         }
     } else {
         raw = await sendLLMRequest(apiConfig, null, messages, [], meta, llmOptions);
+        turnUsage = getApiLogs().at(-1)?.usage;
     }
     // 块对号入座：有契约的小票/尾调才是块的候选归属（纯静态小品不收块）
     const contractTickets = tickets.filter((t) => t.contract.trim());
@@ -600,6 +624,8 @@ async function runMixGeneration(
         state: nextState,
         // 这一轮结束时的机括存储：回溯/重说/撤回回到这里，不必让机括自己复位
         mechanismStore: afterHook.store,
+        // 真实用量：来自大模型 API 返回的 usage（流式从 SSE 累计 / 非流式从日志读回），用于对局内展示与后台对账
+        usage: turnUsage,
         createdAt: Date.now(),
     };
     const updated: MixSession = {
@@ -712,6 +738,48 @@ function firstMixStoreSnapshot(turns: MixTurn[]): Record<string, Record<string, 
  * 不做这一步的话，回溯三轮重打，好感度还停在被丢掉的那个未来上，
  * 机括面板里也还留着那三轮记下的东西。
  */
+/**
+ * 公开版回滚：取对局前 turnIndex+1 轮（含第 turnIndex 轮），并把 state/mechanismStore
+ * 精确退回那一刻。**不落库**——只返回一份回滚后的副本，供"分叉支线"复制成新对局用，
+ * 不会改动原对局。内部复用私有的 withRolledBackState。
+ */
+export function mixSessionRolledBackToTurn(session: MixSession, turnIndex: number): MixSession {
+    const clamped = Math.max(0, Math.min(turnIndex, session.turns.length - 1));
+    return withRolledBackState(session, session.turns.slice(0, clamped + 1));
+}
+
+/**
+ * 从父级第 forkTurnIndex 轮分叉出一条新支线（新建一份对局）。
+ * 整段复制父级 turns[0..forkTurnIndex] 作为起点，state/mechanismStore 退回那一刻，
+ * 之后新对局独立续写、不改动父级。返回新建的对局。
+ *
+ * opts.branchName / branchNote 由调用方在分叉弹层里收集，写进新对局方便一眼区分与回退。
+ */
+export function forkMixSession(
+    parentId: string,
+    forkTurnIndex: number,
+    opts: { branchName?: string; branchNote?: string } = {},
+): MixSession {
+    const parent = getMixSession(parentId);
+    if (!parent) throw new ChatEngineError("父级对局不存在。");
+    const sliced = mixSessionRolledBackToTurn(parent, forkTurnIndex);
+    const child: MixSession = {
+        ...sliced,
+        id: createMixId("mixsess"),
+        name: undefined,
+        rootId: parent.rootId ?? parent.id,
+        parentId: parent.id,
+        forkTurnIndex,
+        depth: (parent.depth ?? 0) + 1,
+        branchName: opts.branchName?.trim() || undefined,
+        branchNote: opts.branchNote?.trim() || undefined,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    saveMixSession(child);
+    return child;
+}
+
 function withRolledBackState(session: MixSession, turns: MixTurn[]): MixSession {
     const initial = initialMixState(sessionTickets(session));
     // 记住的值全删光退回开局初值。机括存储：目标轮次之内有快照就精确退回；

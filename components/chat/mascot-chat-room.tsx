@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, ChevronLeft, Code, Image as ImageIcon, MessageSquare, MoreHorizontal, RotateCcw, Sparkles, Trash2, UserRound } from "lucide-react";
+import { AlertCircle, ChevronLeft, Code, FileText, Gauge, Image as ImageIcon, MessageSquare, MessagesSquare, MoreHorizontal, Sparkles, Trash2, UserRound } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
@@ -12,21 +12,37 @@ import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { CHAT_SESSION_CSS_EXAMPLE } from "@/lib/css-examples";
 import {
+    appendMascotMessage,
     clearMascotToolHistoryMessages,
     createMascotSession,
+    createMascotSessionWithSummary,
     deleteMascotMessageWithLinkedTools,
     deleteMascotSession,
     generateMascotReply,
     sendMascotMessage,
+    getMascotActiveContextChars,
     getMascotChatSnapshot,
+    getMascotContextBudgetChars,
     hasMascotToolHistoryMessages,
     hydrateMascotChat,
+    MASCOT_CONTEXT_BUDGET_MAX,
+    MASCOT_CONTEXT_BUDGET_MIN,
+    MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS,
     renameMascotSession,
+    setMascotContextBudgetChars,
     setMascotMessages,
     stopMascotGeneration,
     subscribeMascotChat,
     switchMascotSession,
+    toggleMascotSessionPin,
 } from "@/lib/mascot-chat-store";
+import { MascotSessionDrawer } from "./mascot-session-drawer";
+import { ChatDocAttachmentTray, ChatDocImportSheet } from "./chat-doc-import";
+import {
+    attachmentCardLabel,
+    resolveAttachmentText,
+    type ChatDocAttachment,
+} from "@/lib/chat-document-import";
 import type { MascotMsg } from "@/lib/mascot-engine";
 import { getMascotContext, subscribeMascotContext } from "@/lib/mascot-context";
 import {
@@ -130,10 +146,12 @@ function MascotInfoIcon({ children, color }: { children: ReactNode; color: strin
 function MascotInfoPanel({
     avatarUrl,
     onClose,
+    onOpenSessions,
     onDeleted,
 }: {
     avatarUrl: string;
     onClose: () => void;
+    onOpenSessions?: () => void;
     onDeleted?: () => void;
 }) {
     const settings = useSyncExternalStore(subscribeMascotSettings, getMascotSettingsSnapshot, getMascotSettingsSnapshot);
@@ -145,9 +163,12 @@ function MascotInfoPanel({
     const [cssDraft, setCssDraft] = useState(settings.chatCustomCSS || "");
     const [showConfirmClearTools, setShowConfirmClearTools] = useState(false);
     const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+    const [editingBudget, setEditingBudget] = useState(false);
+    const [budgetDraft, setBudgetDraft] = useState(String(MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS));
     const chat = useSyncExternalStore(subscribeMascotChat, getMascotChatSnapshot, getMascotChatSnapshot);
     const hasToolHistory = hasMascotToolHistoryMessages(chat.messages);
     const hasCustomAvatar = !!settings.avatarImage && settings.avatarImage !== DEFAULT_MASCOT_AVATAR;
+    const contextUsedPct = chat.contextUsage ? Math.round(chat.contextUsage * 100) : 0;
 
     useEffect(() => {
         setNameDraft(settings.nickname);
@@ -287,58 +308,33 @@ function MascotInfoPanel({
                         className="menu-item"
                         disabled={!chat.hydrated || chat.isThinking}
                         onClick={() => {
-                            const id = createMascotSession();
-                            if (id) onClose();
+                            if (chat.isThinking) return;
+                            onClose();
+                            onOpenSessions?.();
                         }}
                         style={!chat.hydrated || chat.isThinking ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
                     >
-                        <MascotInfoIcon color="var(--c-icon-active)"><RotateCcw size={22} strokeWidth={1.75} /></MascotInfoIcon>
+                        <MascotInfoIcon color="var(--c-icon-active)"><MessagesSquare size={22} strokeWidth={1.75} /></MascotInfoIcon>
                         <div className="menu-label-group">
-                            <span className="menu-label">开启新对话</span>
-                            <span className="menu-desc">保留当前记录，创建一段独立对话</span>
+                            <span className="menu-label">对话记录</span>
+                            <span className="menu-desc">切换 / 新建 / 压缩总结（共 {chat.sessions.length} 段）</span>
                         </div>
+                        <div className="menu-right"><span className="menu-desc mr-1">›</span></div>
                     </button>
-                    {chat.sessions.map((session) => {
-                        const active = session.id === chat.activeSessionId;
-                        return (
-                            <div className="menu-item" key={session.id} style={{ gap: 8 }}>
-                                <MascotInfoIcon color={active ? "var(--c-icon-active)" : "var(--c-text-secondary)"}>
-                                    <MessageSquare size={21} strokeWidth={1.75} />
-                                </MascotInfoIcon>
-                                <button
-                                    type="button"
-                                    className="menu-label-group min-w-0 flex-1 text-left"
-                                    disabled={chat.isThinking || active}
-                                    onClick={() => {
-                                        if (switchMascotSession(session.id)) onClose();
-                                    }}
-                                    style={{ opacity: chat.isThinking ? 0.55 : 1 }}
-                                >
-                                    <span className="menu-label truncate">{session.title}{active ? "（当前）" : ""}</span>
-                                    <span className="menu-desc">{new Date(session.updatedAt).toLocaleString()}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="menu-desc shrink-0"
-                                    disabled={chat.isThinking}
-                                    onClick={() => {
-                                        const title = window.prompt("重命名对话", session.title);
-                                        if (title !== null) renameMascotSession(session.id, title);
-                                    }}
-                                >改名</button>
-                                <button
-                                    type="button"
-                                    className="menu-desc shrink-0 text-[var(--c-danger)]"
-                                    disabled={chat.isThinking}
-                                    onClick={() => {
-                                        if (window.confirm(`确定删除对话“${session.title}”吗？此操作不会删除角色卡，但无法恢复这段聊天记录。`)) {
-                                            deleteMascotSession(session.id);
-                                        }
-                                    }}
-                                >删除</button>
-                            </div>
-                        );
-                    })}
+                    <button
+                        className="menu-item"
+                        onClick={() => {
+                            setBudgetDraft(String(getMascotContextBudgetChars()));
+                            setEditingBudget(true);
+                        }}
+                    >
+                        <MascotInfoIcon color="var(--c-action-blue,#246bfd)"><Gauge size={22} strokeWidth={1.75} /></MascotInfoIcon>
+                        <div className="menu-label-group">
+                            <span className="menu-label">上下文预算</span>
+                            <span className="menu-desc">用量接近预算时开新窗口；当前约 {contextUsedPct}%</span>
+                        </div>
+                        <div className="menu-right"><span className="menu-desc mr-1">{getMascotContextBudgetChars().toLocaleString()} 字</span></div>
+                    </button>
                     <button className="menu-item" onClick={() => setShowConfirmDelete(true)}>
                         <MascotInfoIcon color="var(--c-danger)"><Trash2 size={22} strokeWidth={1.75} /></MascotInfoIcon>
                         <div className="menu-label-group">
@@ -361,6 +357,54 @@ function MascotInfoPanel({
                                 onClick={() => {
                                     updateMascotSettings({ nickname: nameDraft.trim() || "AI助手" });
                                     setEditingName(false);
+                                }}
+                            >
+                                保存
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {editingBudget && (
+                <div className="modal-overlay">
+                    <div className="modal-dialog">
+                        <div className="ts-17 font-semibold text-center text-[var(--c-text)]">上下文预算</div>
+                        <Input
+                            value={budgetDraft}
+                            inputMode="numeric"
+                            onChange={(event) => setBudgetDraft(event.target.value)}
+                            placeholder={String(MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS)}
+                        />
+                        <div className="menu-desc text-left">
+                            用量接近这个字符数时，就建议开新窗口了（中文约 1 字 ≈ 1 token）。默认 {MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS.toLocaleString()}；
+                            可填 {MASCOT_CONTEXT_BUDGET_MIN.toLocaleString()}–{MASCOT_CONTEXT_BUDGET_MAX.toLocaleString()}。
+                        </div>
+                        <div className="flex gap-3 w-full">
+                            <button className="ui-btn ui-btn-ghost flex-1" onClick={() => setEditingBudget(false)}>取消</button>
+                            <button
+                                className="ui-btn ui-btn-ghost flex-1"
+                                onClick={() => {
+                                    setMascotContextBudgetChars(null);
+                                    setEditingBudget(false);
+                                    window.dispatchEvent(new CustomEvent("global-notice", { detail: "已恢复默认上下文预算。" }));
+                                }}
+                            >
+                                恢复默认
+                            </button>
+                            <button
+                                className="ui-btn ui-btn-success flex-1"
+                                onClick={() => {
+                                    const parsed = Number(budgetDraft);
+                                    if (!Number.isFinite(parsed) || parsed < MASCOT_CONTEXT_BUDGET_MIN || parsed > MASCOT_CONTEXT_BUDGET_MAX) {
+                                        window.dispatchEvent(new CustomEvent("global-notice", {
+                                            detail: `预算需为 ${MASCOT_CONTEXT_BUDGET_MIN.toLocaleString()}–${MASCOT_CONTEXT_BUDGET_MAX.toLocaleString()} 之间的数字。`,
+                                        }));
+                                        return;
+                                    }
+                                    setMascotContextBudgetChars(parsed);
+                                    setEditingBudget(false);
+                                    window.dispatchEvent(new CustomEvent("global-notice", { detail: "已更新上下文预算。" }));
                                 }}
                             >
                                 保存
@@ -462,9 +506,13 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const [backgroundUrl, setBackgroundUrl] = useState("");
     const [inputText, setInputText] = useState("");
     const [pendingImages, setPendingImages] = useState<string[]>([]);
+    // 文件导入：待发的长文档卡片（发送时全文进上下文，气泡只显示一行摘要）
+    const [docAttachments, setDocAttachments] = useState<ChatDocAttachment[]>([]);
+    const [docImportOpen, setDocImportOpen] = useState(false);
     const [imagePreviewCache, setImagePreviewCache] = useState<Record<string, string>>({});
     const [showEmojiPanel, setShowEmojiPanel] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
+    const [showSessions, setShowSessions] = useState(false);
     const [initialScrollReady, setInitialScrollReady] = useState(false);
     const [visibleMascotMessageCount, setVisibleMascotMessageCount] = useState(MASCOT_INITIAL_VISIBLE_MESSAGE_COUNT);
     const [activeMascotMessageIndex, setActiveMascotMessageIndex] = useState<number | null>(null);
@@ -493,6 +541,11 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const hasMoreMascotMessages = allVisibleMessageEntries.length > visibleMessageEntries.length;
     const latestVisibleChatMessage = [...chat.messages].reverse().find((msg) => !msg.hidden && msg.role !== "tool");
     const canGenerateReply = !chat.isThinking && latestVisibleChatMessage?.role === "user";
+    const mascotBudgetChars = getMascotContextBudgetChars();
+    const mascotUsedChars = getMascotActiveContextChars();
+    const mascotContextPct = mascotBudgetChars > 0
+        ? Math.min(999, Math.round((mascotUsedChars / mascotBudgetChars) * 100))
+        : 0;
     const scrollSignature = useMemo(() => {
         const last = visibleMessageEntries[visibleMessageEntries.length - 1]?.msg;
         const lastText = last ? getMascotMessageText(last) : "";
@@ -686,13 +739,26 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
             return;
         }
         const text = inputText.trim();
-        if (!text && pendingImages.length === 0) return;
+        const docs = docAttachments;
+        if (!text && pendingImages.length === 0 && docs.length === 0) return;
         setInputText("");
         textareaRef.current?.style.setProperty("height", "auto");
         const images = pendingImages;
         setPendingImages([]);
+        setDocAttachments([]);
         setShowEmojiPanel(false);
-        await sendMascotMessage({ text, images, context });
+        // 文件卡：text 放全文（进模型上下文），displayText 放一行摘要（气泡只显示卡片）
+        for (const attachment of docs) {
+            const body = resolveAttachmentText(attachment);
+            if (!body.trim()) continue;
+            await appendMascotMessage({ text: body, displayText: attachmentCardLabel(attachment) });
+        }
+        if (text || images.length > 0) {
+            await sendMascotMessage({ text, images, context });
+        } else if (docs.length > 0) {
+            // 只发文件没打字：材料进上下文后直接要一次回复
+            await generateMascotReply({ context });
+        }
     };
 
     const handleGenerateReply = async () => {
@@ -991,7 +1057,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
 
             <header className="page-header chat-room-main-pane" data-ui="header">
                 <div className="page-header-safe-area" />
-                <div className="page-header-content">
+                <div className="page-header-content" style={{ gridTemplateColumns: "40px 1fr auto" }}>
                     <button className="page-back-btn" type="button" onClick={onBack} aria-label="返回">
                         <ChevronLeft size={24} strokeWidth={1.5} />
                     </button>
@@ -1003,7 +1069,46 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                             </span>
                         )}
                     </span>
-                    <span className="page-header-right">
+                    <span className="page-header-right" style={{ gap: 4 }}>
+                        <button
+                            type="button"
+                            onClick={() => setShowSessions(true)}
+                            title={`当前会话上下文 ${mascotUsedChars.toLocaleString()}/${mascotBudgetChars.toLocaleString()} 字（${mascotContextPct}%）\n点此打开对话记录：切换 / 新建 / 压缩总结`}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 5,
+                                border: "1px solid color-mix(in srgb, var(--c-text) 16%, transparent)",
+                                background: "color-mix(in srgb, var(--c-text) 6%, transparent)",
+                                borderRadius: 999,
+                                padding: "3px 9px",
+                                cursor: "pointer",
+                                color: mascotContextPct >= 80 ? "#e5484d" : "var(--c-text-title, #111)",
+                                fontSize: 11.5,
+                                fontWeight: 600,
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                            <span
+                                style={{
+                                    width: 7,
+                                    height: 7,
+                                    borderRadius: "50%",
+                                    display: "inline-block",
+                                    background: mascotContextPct >= 80 ? "#e5484d" : mascotContextPct >= 60 ? "#f5a524" : "var(--c-action-blue, #246bfd)",
+                                }}
+                            />
+                            上下文 {mascotContextPct}%
+                        </button>
+                        <button
+                            className="page-back-btn"
+                            type="button"
+                            onClick={() => setShowSessions(true)}
+                            aria-label="对话记录"
+                            title="对话记录：切换 / 新建 / 压缩总结"
+                        >
+                            <MessagesSquare size={21} strokeWidth={1.5} />
+                        </button>
                         <button className="page-back-btn" type="button" onClick={() => setShowInfo(true)} aria-label="更多">
                             <MoreHorizontal size={22} strokeWidth={1.5} />
                         </button>
@@ -1121,6 +1226,13 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                         })}
                     </div>
                 )}
+                <ChatDocAttachmentTray
+                    attachments={docAttachments}
+                    onRemove={(docId) => setDocAttachments((prev) => prev.filter((item) => item.docId !== docId))}
+                    onInsert={(attachment) => appendEmoji(resolveAttachmentText(attachment))}
+                    onOpenImport={() => setDocImportOpen(true)}
+                    disabled={chat.isThinking}
+                />
                 <textarea
                     ref={textareaRef}
                     rows={1}
@@ -1185,8 +1297,17 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     </button>
                     <button
                         type="button"
+                        onClick={() => setDocImportOpen(true)}
+                        className="ui-bare-btn text-[var(--c-text)]"
+                        aria-label="导入文件"
+                        title="导入文件（docx / doc / txt / md / pdf）"
+                    >
+                        <FileText size={22} strokeWidth={1.5} />
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => void handleSend()}
-                        disabled={!chat.isThinking && !inputText.trim() && pendingImages.length === 0}
+                        disabled={!chat.isThinking && !inputText.trim() && pendingImages.length === 0 && docAttachments.length === 0}
                         className="ui-bare-btn text-[var(--c-text)]"
                         aria-label={chat.isThinking ? "停止生成" : "发送"}
                     >
@@ -1213,17 +1334,71 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                 {showEmojiPanel && <EmojiPanel onSelect={appendEmoji} />}
             </div>
 
+            <ChatDocImportSheet
+                open={docImportOpen}
+                onClose={() => setDocImportOpen(false)}
+                onInsertText={(text) => appendEmoji(text)}
+                onAttach={(attachment) => setDocAttachments((prev) => (
+                    prev.some((item) => item.docId === attachment.docId)
+                        ? prev.map((item) => (item.docId === attachment.docId ? attachment : item))
+                        : [...prev, attachment]
+                ))}
+            />
+
             {showInfo && wrapperRef.current?.parentElement && createPortal(
                 <div className="chat-settings-layer absolute inset-0 z-50">
                     <MascotInfoPanel
                         avatarUrl={avatarUrl}
                         onClose={() => setShowInfo(false)}
+                        onOpenSessions={() => setShowSessions(true)}
                         onDeleted={() => {
                             setShowInfo(false);
                             onDeleted?.();
                         }}
                     />
                 </div>,
+                wrapperRef.current.parentElement
+            )}
+
+            {showSessions && wrapperRef.current?.parentElement && createPortal(
+                <MascotSessionDrawer
+                    sessions={chat.sessions}
+                    activeId={chat.activeSessionId}
+                    busy={chat.isThinking}
+                    usedChars={mascotUsedChars}
+                    budgetChars={mascotBudgetChars}
+                    onSelect={(id) => {
+                        if (switchMascotSession(id)) setShowSessions(false);
+                    }}
+                    onDelete={(id) => {
+                        const target = chat.sessions.find((session) => session.id === id);
+                        if (window.confirm(`确定删除对话“${target?.title ?? ""}”吗？此操作不会删除角色卡，但无法恢复这段聊天记录。`)) {
+                            deleteMascotSession(id);
+                        }
+                    }}
+                    onRenameRequest={(id, title) => {
+                        const next = window.prompt("重命名对话", title);
+                        if (next !== null) renameMascotSession(id, next);
+                    }}
+                    onTogglePin={(id) => {
+                        toggleMascotSessionPin(id);
+                    }}
+                    onCreate={() => {
+                        createMascotSession();
+                        setShowSessions(false);
+                    }}
+                    onCompressAndCreate={() => {
+                        const id = createMascotSessionWithSummary();
+                        setShowSessions(false);
+                        if (!id) {
+                            window.dispatchEvent(new CustomEvent("global-notice", {
+                                detail: "当前会话还没有可总结的内容，已直接开启新对话。",
+                            }));
+                            createMascotSession();
+                        }
+                    }}
+                    onClose={() => setShowSessions(false)}
+                />,
                 wrapperRef.current.parentElement
             )}
 

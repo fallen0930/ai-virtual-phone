@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 
 import { updateStatusBarTone } from "@/lib/bg-tone";
 import { startDiaryEntryTimerService, stopDiaryEntryTimerService } from "@/lib/diary-entry-timer-service";
@@ -126,6 +126,12 @@ import { WidgetRenderer } from "@/components/widgets/widget-renderer";
 import type { DIYWidgetTemplate } from "@/lib/widget-types";
 import { DebugPromptPanel } from "@/components/debug-prompt-panel";
 import { QuickActionFloat } from "@/components/quick-action-float";
+import { FloatingControlDock } from "@/components/floating-control-dock";
+import {
+    CONTROL_DOCK_ACTIVATE_EVENT,
+    getControlDockState,
+    subscribeControlDockState,
+} from "@/lib/floating-controls-store";
 import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_REQUEST_REPLY_EVENT, hydrateChatStorage, loadChatSessions, loadChatMessages, pushChatMessage, type ChatMessage, type ChatSession } from "@/lib/chat-storage";
 import { ensureGlobalBindingDefaults, resolveUserIdentity } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -2438,6 +2444,28 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     return () => window.removeEventListener("open-mini-chat", handler);
   }, []);
 
+  // 聊天小窗归坞管理：勾选 = 坞按钮可开合，取消勾选 = 小窗彻底隐藏（已打开的也强制关掉）
+  const miniChatInDock = useSyncExternalStore(
+    subscribeControlDockState,
+    () => getControlDockState().pinned["mini-chat"] !== false,
+    () => true,
+  );
+  useEffect(() => {
+    if (!miniChatInDock) setShowMiniChat(false);
+  }, [miniChatInDock]);
+
+  // 受统一控制坞驱动：坞里点「聊天小窗」时切换迷你聊天窗开合
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ control?: string }>).detail;
+      if (detail?.control !== "mini-chat") return;
+      if (!miniChatInDock) return;
+      setShowMiniChat(prev => !prev);
+    };
+    window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+    return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+  }, [miniChatInDock]);
+
   const openChatSessionFromNotice = useCallback((sessionId: string) => {
     if (chatMessageNoticeTimerRef.current !== null) {
       window.clearTimeout(chatMessageNoticeTimerRef.current);
@@ -4439,7 +4467,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               {/* Mini chat window — persists across music pages */}
               <MiniAppWindow
                 title="聊天"
-                visible={showMiniChat}
+                visible={showMiniChat && miniChatInDock}
                 onClose={handleMiniChatClose}
                 onExpand={handleMiniChatExpand}
               >
@@ -4811,6 +4839,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               ) : null}
               <DebugPromptPanel />
               <QuickActionFloat />
+              <FloatingControlDock activeApp={activeApp} />
               <MascotFloat />
               {/* 预览弹窗宿主：独立于桌宠的展开/收起状态，否则桌宠收成小球时弹不出来 */}
               <MascotPreviewHost />

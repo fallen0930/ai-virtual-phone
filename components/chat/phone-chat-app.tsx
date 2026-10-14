@@ -304,6 +304,19 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                     <ChatRoom
                         session={sess}
                         onBack={() => setActiveSession(null)}
+                        onSwitchSession={(sessionId) => {
+                            // 多会话：切换到另一条对话线程（可能是刚新建的）
+                            const s = loadChatSessions().find(x => x.id === sessionId);
+                            if (!s) return;
+                            setActiveMascot(false);
+                            setVisitedSessions(prev => {
+                                const next = new Map(prev);
+                                next.set(s.id, s);
+                                return next;
+                            });
+                            setActiveSession(s);
+                            setActiveTab("messages");
+                        }}
                         onDeleted={() => {
                             // 会话已删除：把缓存的聊天室一并卸载，避免僵尸挂载
                             setVisitedSessions(prev => {

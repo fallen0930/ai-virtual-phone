@@ -54,7 +54,7 @@ import {
     type LlmToolDefinition,
 } from "./llm-provider-adapter";
 import { setDebugPromptSnapshot, type DebugPromptSnapshot } from "./debug-store";
-import { extractFinishReason } from "./api-helpers";
+import { extractFinishReason, extractUsage } from "./api-helpers";
 import { fetchLlmPayload } from "./llm-http";
 import { loadMemoryConfig, incrementEventCounter } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -675,6 +675,8 @@ export type ChatCompletionStreamResult = {
     content: string;
     rawResponse: string;
     providerKind: LlmProviderKind;
+    /** 流式用量：从 SSE 末尾（或 Anthropic 分块）的 usage 块累计得出，可能为空（部分中转不回传） */
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 };
 
 export type ChatCompletionStreamCallbacks = {
@@ -750,13 +752,16 @@ async function readSseStream(
     providerKind: ChatCompletionStreamResult["providerKind"],
     callbacks?: ChatCompletionStreamCallbacks,
     stripTimestamps = true,
-): Promise<{ content: string; rawResponse: string }> {
+): Promise<{ content: string; rawResponse: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }> {
     if (!response.body) throw new ChatEngineError("流式响应没有 body。");
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let content = "";
     let rawResponse = "";
+    // 真实用量：OpenAI 在末尾一块带 usage、Anthropic 把 input/output 拆在 message_start/message_delta、
+    // Gemini 在末尾带 usageMetadata。逐块抽取并合并（取最后一个非空字段），得到这一轮的真实进/出 token。
+    let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
     // 时间戳剥离器会一直扣住流尾巴的 64 个字符等括号闭合，流结束才吐出来。
     // 要求"所见即模型所写"的调用方（独家特调）把它整个关掉：增量来一个字出一个字，
     // 否则模型在末尾写机括标记行（〔记〕这类）时，整行都压在扣留窗里，看起来像卡死。
@@ -777,6 +782,15 @@ async function readSseStream(
                 content += cleanDelta;
                 await callbacks?.onDelta?.(cleanDelta);
             }
+        }
+        // 逐块采集用量：取最后一个非空字段，兼容各家把 usage 放不同位置/分块回传
+        const chunkUsage = extractUsage(parsed as Record<string, unknown>);
+        if (chunkUsage) {
+            usage = {
+                prompt_tokens: chunkUsage.prompt_tokens ?? usage?.prompt_tokens,
+                completion_tokens: chunkUsage.completion_tokens ?? usage?.completion_tokens,
+                total_tokens: chunkUsage.total_tokens ?? usage?.total_tokens,
+            };
         }
     };
     const handleEvent = async (eventText: string) => {
@@ -809,7 +823,7 @@ async function readSseStream(
         content += finalContent;
         await callbacks?.onDelta?.(finalContent);
     }
-    return { content, rawResponse };
+    return { content, rawResponse, usage };
 }
 
 export async function sendLLMStreamRequest(
@@ -883,7 +897,7 @@ export async function sendLLMStreamRequest(
                 await (pluginCallbacks ?? callbacks)?.onReasoningDelta?.(text);
             },
         };
-        const { content: streamedContent, rawResponse } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
+        const { content: streamedContent, rawResponse, usage: streamedUsage } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
         if (!streamedContent.trim()) {
             throw new ChatEngineError("流式响应没有解析到文本增量。");
         }
@@ -902,6 +916,7 @@ export async function sendLLMStreamRequest(
             model: config.defaultModel,
             messages: sanitizedMessages,
             rawResponse: rawOutput,
+            usage: streamedUsage,
             reasoning: streamedReasoning.trim() || undefined,
         });
 
@@ -913,7 +928,7 @@ export async function sendLLMStreamRequest(
             });
             rawOutput = applyOutputRegex(rawOutput, regexes, { macroEngine, activeTags });
         }
-        return { content: rawOutput, rawResponse, providerKind: request.providerKind };
+        return { content: rawOutput, rawResponse, providerKind: request.providerKind, usage: streamedUsage };
     } catch (error: unknown) {
         if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
             if (options?.signal?.aborted) throw error;

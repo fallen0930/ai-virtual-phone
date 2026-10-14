@@ -19,6 +19,21 @@ export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
 export const CHAT_INITIAL_VISIBLE_MESSAGE_COUNT = 50;
 export const CHAT_LOAD_MORE_MESSAGE_COUNT = 30;
 
+/**
+ * 单会话上下文 token 预算（默认上限）。真实上限取决于所用模型的上下文窗口，
+ * 这里给一个保守的默认「提醒阈值」，用户可在会话内调整。超过此值会在聊天室头部提示开新窗口。
+ */
+export const DEFAULT_SESSION_CONTEXT_TOKEN_BUDGET = 16000;
+/** 上下文预算可调范围（尽量小，避免把模型上下文彻底撑爆） */
+export const MIN_SESSION_CONTEXT_TOKEN_BUDGET = 2000;
+export const MAX_SESSION_CONTEXT_TOKEN_BUDGET = 200000;
+export function normalizeContextTokenBudget(value: unknown): number {
+    if (value === undefined || value === null || value === "") return DEFAULT_SESSION_CONTEXT_TOKEN_BUDGET;
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_CONTEXT_TOKEN_BUDGET;
+    return Math.max(MIN_SESSION_CONTEXT_TOKEN_BUDGET, Math.min(MAX_SESSION_CONTEXT_TOKEN_BUDGET, Math.floor(parsed)));
+}
+
 export function normalizeVisionImagePromptLimit(value: unknown): number {
     if (value === undefined || value === null || value === "") return DEFAULT_VISION_IMAGE_PROMPT_LIMIT;
     const parsed = typeof value === "number" ? value : Number(value);
@@ -77,7 +92,25 @@ export type ChatSession = {
     groupMutes?: Record<string, string>; // (characterId | "self") → mute expiry ISO
     allowAdminActionsOnUser?: boolean; // characters may kick/mute the user (default off)
     isSpectator?: boolean; // 围观群：用户不在群内，只能生成/线下
+    // ── 多会话（同联系人下多个对话线程）支持 ──
+    /** 会话标题（用户可见）。为空 = 传统「一个联系人一个会话」的旧会话，列表里显示角色名 */
+    title?: string;
+    /** 压缩总结后开的新窗口：指向被总结的父会话 */
+    parentSessionId?: string;
+    /** 同一对话链的根会话（第一条），用于「查看整条对话链」 */
+    rootSessionId?: string;
+    /** 单会话上下文 token 预算（提醒阈值），见 DEFAULT_SESSION_CONTEXT_TOKEN_BUDGET */
+    contextTokenBudget?: number;
+    /** 本会话是由哪个父会话压缩而来时，存下的压缩摘要原文（仅供参考，真正的上下文已作为 system 消息写入新会话） */
+    compressedSummary?: string;
+    /** 本会话创建时间（ISO）。旧会话可能缺失，回落到 updatedAt */
+    createdAt?: string;
 };
+
+/** 该会话是否属于「用户主动拆出的独立对话线程」（不应被重复会话合并逻辑吞掉） */
+export function isExplicitlySeparateSession(session: ChatSession | null | undefined): boolean {
+    return Boolean(session && (session.title || session.parentSessionId));
+}
 
 export type ChatMessageStatus = "sending" | "sent" | "read" | "failed";
 export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
@@ -664,6 +697,13 @@ function normalizeChatSessions(sessions: ChatSession[]): NormalizedSessionList {
             continue;
         }
 
+        // 用户主动拆出的独立对话线程（带标题 / 由压缩衍生）各自占一行，
+        // 不再按 contactId 合并，否则「一个联系人多个会话」的能力就废了。
+        if (isExplicitlySeparateSession(session)) {
+            normalized.push(session);
+            continue;
+        }
+
         const existingIndex = privateIndexByContact.get(session.contactId);
         if (existingIndex === undefined) {
             privateIndexByContact.set(session.contactId, normalized.length);
@@ -1075,6 +1115,84 @@ export function createOrGetSession(contactId: string): ChatSession {
     };
     saveChatSessions([newSession, ...sessions]); // Prepend new session
     return newSession;
+}
+
+export type CreateChatSessionOptions = {
+    /** 会话标题（用户可见）。带标题的会话会被视为独立对话线程，不与旧会话合并 */
+    title?: string;
+    /** 压缩总结后开的新窗口：指向被总结的父会话 */
+    parentSessionId?: string;
+    /** 对话链根会话；不传则默认等于新会话自身 id */
+    rootSessionId?: string;
+    /** 上下文 token 预算（提醒阈值）；不传用默认值 */
+    contextTokenBudget?: number;
+    /** 群聊参数（沿用 createGroupSession 语义） */
+    isGroup?: boolean;
+    groupName?: string;
+    participantIds?: string[];
+    isSpectator?: boolean;
+};
+
+/**
+ * 始终新建一个会话（不复用旧的）。用于在同一个联系人下拆出多条对话线程，
+ * 或「压缩总结后开新窗口」。返回的新会话已写入缓存与 IndexedDB。
+ */
+export function createChatSession(contactId: string, options?: CreateChatSessionOptions): ChatSession {
+    const sessions = loadChatSessions();
+    const now = new Date().toISOString();
+    const id = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const newSession: ChatSession = {
+        id,
+        contactId,
+        unreadCount: 0,
+        updatedAt: now,
+        createdAt: now,
+        isPinned: false,
+        bilingualTranslationEnabled: true,
+        collapseBilingualTranslation: true,
+        visionImagePromptLimit: DEFAULT_VISION_IMAGE_PROMPT_LIMIT,
+        ...(options?.title ? { title: options.title } : {}),
+        ...(options?.parentSessionId ? { parentSessionId: options.parentSessionId } : {}),
+        ...(options?.rootSessionId ? { rootSessionId: options.rootSessionId } : { rootSessionId: id }),
+        contextTokenBudget: normalizeContextTokenBudget(options?.contextTokenBudget),
+        ...(options?.isGroup
+            ? {
+                isGroup: true,
+                groupName: options.groupName,
+                participantIds: options.participantIds,
+                groupOwnerId: options.isSpectator ? options.participantIds?.[0] : "self",
+                ...(options.isSpectator ? { isSpectator: true } : {}),
+            }
+            : {}),
+    };
+    saveChatSessions([newSession, ...sessions]);
+    return newSession;
+}
+
+/** 列出某个联系人下的所有会话（含传统单会话与用户拆出的独立对话线程），按创建时间升序 */
+export function getSessionsForContact(contactId: string): ChatSession[] {
+    return loadChatSessions()
+        .filter(s => s.contactId === contactId)
+        .sort((a, b) => parseIsoTime(a.createdAt || a.updatedAt) - parseIsoTime(b.createdAt || b.updatedAt));
+}
+
+/** 通用：对指定会话打补丁并落库（重命名 / 改预算等都走这里） */
+export function updateChatSession(sessionId: string, patch: Partial<ChatSession>): ChatSession | null {
+    const sessions = loadChatSessions();
+    const idx = sessions.findIndex(s => s.id === sessionId);
+    if (idx === -1) return null;
+    const updated: ChatSession = { ...sessions[idx], ...patch, id: sessions[idx].id, contactId: sessions[idx].contactId };
+    sessions[idx] = updated;
+    saveChatSessions(sessions);
+    return updated;
+}
+
+export function renameChatSession(sessionId: string, title: string): ChatSession | null {
+    return updateChatSession(sessionId, { title: title.trim() || undefined });
+}
+
+export function setSessionContextTokenBudget(sessionId: string, budget: number): ChatSession | null {
+    return updateChatSession(sessionId, { contextTokenBudget: normalizeContextTokenBudget(budget) });
 }
 
 export function createGroupSession(groupName: string, participantIds: string[], options?: { isSpectator?: boolean }): ChatSession {

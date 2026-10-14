@@ -14,6 +14,11 @@ import {
 } from "@/lib/mascot-state";
 import { getMascotContext, subscribeMascotContext } from "@/lib/mascot-context";
 import { mascotNavigate, DIY_WIDGET_PREVIEW_EVENT, type DiyWidgetPreviewEventDetail, type DiyWidgetPreviewRequest } from "@/lib/mascot-events";
+import {
+    CONTROL_DOCK_ACTIVATE_EVENT,
+    getControlDockState,
+    subscribeControlDockState,
+} from "@/lib/floating-controls-store";
 import { DIY_WIDGET_GUARD_STYLE } from "@/components/widgets/diy-widget-renderer";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import {
@@ -493,6 +498,21 @@ export function MascotFloat() {
   const panelOpen = useSyncExternalStore(subscribeMascot, isMascotPanelOpen, () => false);
   const widgetRect = useSyncExternalStore(subscribeMascot, getMascotWidgetRect, () => null);
   const context = useSyncExternalStore(subscribeMascotContext, getMascotContext, () => getMascotContext());
+
+  // 归统一控制坞管理：勾选 = 桌宠球正常显示（坞按钮可临时收起），取消勾选 = 彻底隐藏
+  const controlDockState = useSyncExternalStore(subscribeControlDockState, getControlDockState, getControlDockState);
+  const mascotInDock = controlDockState.pinned["mascot"] !== false;
+  const [mascotUserHidden, setMascotUserHidden] = useState(false);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ control?: string }>).detail;
+      if (detail?.control !== "mascot") return;
+      setMascotUserHidden(prev => !prev);
+    };
+    window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+    return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+  }, []);
+  const mascotShown = mascotInDock && !mascotUserHidden;
 
   const [floatPos, setFloatPos] = useState<{ left: number; top: number } | null>(null);
   const floatPosRef = useRef<{ left: number; top: number } | null>(null);
@@ -1118,6 +1138,9 @@ export function MascotFloat() {
   }, [selectedModule]);
 
   if (state === "widget") return null;
+
+  // 被坞隐藏（取消勾选 / 坞按钮收起）时整个桌宠（悬浮球 + 面板 + 气泡）都不再出现
+  if (!mascotShown) return null;
 
   const isDesktop = context.page === "desktop";
 

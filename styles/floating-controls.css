@@ -1,0 +1,175 @@
+/* 统一控制坞：把界面上散落的悬浮控件收进右侧一个可收拢 / 可拖拽 / 可管理的竖排坞里。
+   仅承载坞自身的样式；各控件真正的面板样式仍由各组件自带。 */
+
+.fcd-dock {
+    position: absolute;
+    right: 12px;
+    top: 120px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    /* 拖动时不允许内部按钮抢走 pointer 事件 */
+    touch-action: none;
+}
+
+.fcd-btn,
+.fcd-handle {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(28, 30, 38, 0.72);
+    color: #f2f4f8;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+    padding: 0;
+    user-select: none;
+}
+
+.fcd-btn:hover,
+.fcd-handle:hover {
+    transform: translateY(-1px) scale(1.04);
+    background: rgba(40, 44, 56, 0.86);
+}
+
+.fcd-btn:active,
+.fcd-handle:active {
+    transform: scale(0.96);
+}
+
+.fcd-btn[data-active="true"] {
+    background: rgba(64, 120, 255, 0.9);
+    border-color: rgba(120, 170, 255, 0.9);
+    box-shadow: 0 6px 20px rgba(64, 120, 255, 0.45);
+}
+
+.fcd-btn.fcd-manage {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.28);
+    font-size: 18px;
+    line-height: 1;
+}
+
+.fcd-handle {
+    font-size: 18px;
+    line-height: 1;
+}
+
+/* 拖拽手柄：按住整列顶部的小抓手可上下拖动整条坞 */
+.fcd-drag-grip {
+    width: 46px;
+    height: 14px;
+    display: grid;
+    place-items: center;
+    cursor: grab;
+    color: rgba(255, 255, 255, 0.5);
+    touch-action: none;
+}
+.fcd-drag-grip:active {
+    cursor: grabbing;
+}
+.fcd-drag-grip::before {
+    content: "";
+    width: 22px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.4);
+    box-shadow: 0 5px 0 rgba(255, 255, 255, 0.4), 0 -5px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* 管理弹层 */
+.fcd-manage-panel {
+    position: absolute;
+    right: 60px;
+    top: 0;
+    width: 248px;
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(22, 24, 31, 0.94);
+    color: #eef1f6;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    z-index: 61;
+    font-size: 13px;
+}
+
+.fcd-manage-panel h4 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.fcd-manage-hint {
+    margin: 0 0 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.fcd-manage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 6px;
+    border-radius: 9px;
+}
+.fcd-manage-row + .fcd-manage-row {
+    margin-top: 2px;
+}
+.fcd-manage-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.fcd-manage-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.fcd-manage-label .fcd-ico {
+    display: grid;
+    place-items: center;
+    color: rgba(255, 255, 255, 0.8);
+}
+.fcd-manage-row .fcd-order {
+    display: flex;
+    flex-direction: column;
+}
+.fcd-manage-row .fcd-order button {
+    width: 20px;
+    height: 16px;
+    border: none;
+    background: rgba(255, 255, 255, 0.08);
+    color: #eef1f6;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+}
+.fcd-manage-row .fcd-order button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+.fcd-manage-row .fcd-order button:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+/* 受管后原控件的悬浮按钮隐藏，但保留可访问性：用 data 属性而非 display:none，
+   避免某些组件靠 ref 测量自身尺寸时拿到 0 */
+.fcd-hidden-fab {
+    display: none !important;
+}

@@ -14,6 +14,10 @@ import {
     setActiveFloatingTool,
 } from "@/lib/floating-dock-store";
 import {
+    isDockManaged,
+    CONTROL_DOCK_ACTIVATE_EVENT,
+} from "@/lib/floating-controls-store";
+import {
     previewMomentsPostPrompt,
     previewMomentsCommentPrompt,
     previewMomentsNPCPrompt,
@@ -113,6 +117,8 @@ export function DebugPromptPanel() {
     const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
     const dockState = useSyncExternalStore(subscribeFloatingDockState, getFloatingDockState, getFloatingDockState);
+    // 已被统一控制坞接管：自身悬浮球永久收起，改由坞按钮触发开合
+    const managedPrompt = isDockManaged("prompt-viewer");
     const floatingDragRef = useRef<FloatingDragState | null>(null);
     const suppressFloatingClickRef = useRef(false);
     const [selectedChatSessionId, setSelectedChatSessionId] = useState("");
@@ -278,6 +284,18 @@ export function DebugPromptPanel() {
         syncEnabled();
         window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnabled);
         return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnabled);
+    }, []);
+
+    // 受统一控制坞驱动：坞里点「提示词」时切换本面板开合
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ control?: string }>).detail;
+            if (detail?.control !== "prompt-viewer") return;
+            setCollapsed(prev => !prev);
+            setActiveFloatingTool("prompt-viewer");
+        };
+        window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+        return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
     }, []);
 
     useEffect(() => {
@@ -861,7 +879,7 @@ export function DebugPromptPanel() {
     if (!enabled) return null;
 
     const isPanelOpen = !collapsed;
-    const showFloatingButton = collapsed || floatingDockEnabled;
+    const showFloatingButton = (collapsed || floatingDockEnabled) && !managedPrompt;
     const isDual = floatingDockEnabled && quickActionEnabled && enabled;
     const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
 

@@ -6,10 +6,12 @@
 @import "../styles/phone-shell.css";
 @import "../styles/widgets.css";
 @import "../styles/chat.css";
+@import "../styles/chat-doc-import.css";
 @import "../styles/character.css";
 @import "../styles/animations.css";
 @import "../styles/music.css";
 @import "../styles/mixology.css";
+@import "../styles/mix-file-vault.css";
 @import "../styles/calendar.css";
 @import "../styles/diary.css";
 @import "../styles/story.css";

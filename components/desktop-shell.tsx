@@ -1,49 +1,57 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import dynamic from "next/dynamic";
+import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 
 import { updateStatusBarTone } from "@/lib/bg-tone";
 import { startDiaryEntryTimerService, stopDiaryEntryTimerService } from "@/lib/diary-entry-timer-service";
 import { startFollowUpService, stopFollowUpService } from "@/lib/follow-up-service";
 import { startMomentsService, stopMomentsService } from "@/lib/moments-engine";
 import { bgTimerCleanup } from "@/lib/bg-timer";
-import { PhoneThemeApp } from "@/components/phone-theme-app";
-import { PhoneCharacterApp } from "@/components/phone-character-app";
-import { PhoneSettingsApp } from "@/components/phone-settings-app";
-import { PhoneChatApp } from "@/components/chat/phone-chat-app";
 import { PhonePlaceholderApp } from "@/components/phone-placeholder-app";
-import MusicApp from "@/components/music/music-app";
 import MusicPlayer from "@/components/music/music-player";
 import MusicFloat from "@/components/music/music-float";
 import MiniAppWindow from "@/components/music/mini-app-window";
-import { PhoneCalendarApp } from "@/components/calendar-app";
-import { PhoneQaApp } from "@/components/phone-qa-app";
 import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
-import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
-import { RealityBridgeApp } from "@/components/reality-bridge-app";
 import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
-import { DiaryApp } from "@/components/diary/diary-app";
-import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
-import { StoryApp } from "@/components/story/story-app";
-import { VnApp } from "@/components/vn/vn-app";
-import ReadingApp from "@/components/reading/reading-app";
-import MapApp from "@/components/map/map-app";
-import { DwellingApp } from "@/components/dwelling/dwelling-app";
 import { MascotFloat } from "@/components/mascot/mascot-float";
 import { MascotPreviewHost } from "@/components/mascot/mascot-preview-host";
 import { useMusicControlsOptional } from "@/lib/music-context";
-import { PhoneResourcesApp, type ResourceSubPage } from "@/components/phone-resources-app";
-import { CheckPhoneApp } from "@/components/checkphone/checkphone-app";
-import { ShoppingApp } from "@/components/shopping/shopping-app";
-import { GameHubApp } from "@/components/game/game-hub-app";
-import { MixologyApp } from "@/components/mixology/mixology-app";
-import { StorageCleanerApp } from "@/components/storage-cleaner/storage-cleaner-app";
-import InterviewMagazineApp from "@/components/interview/interview-magazine-app";
-import { CoCreateApp } from "@/components/cocreate/cocreate-app";
-import { AppMarketApp } from "@/components/app-market/app-market-app";
-import { CustomAppRunner } from "@/components/app-market/custom-app-runner";
+import type { ResourceSubPage } from "@/components/phone-resources-app";
 import { CustomAppForegroundBoundary } from "@/components/app-market/custom-app-failure";
+
+// 以下 25 个 App 一律按需加载。
+// 它们原本是静态 import，意味着打开首页就要把游戏中心、地图、阅读器、调酒、
+// three.js 等上万个模块一起下载并执行，首屏又慢又卡。改成 dynamic 后，
+// 每个 App 单独打成 chunk，只在被点开的那一刻才加载；主包只剩桌面本身
+// 和常驻悬浮控件（音乐浮窗、迷你窗、桌宠）。
+// ssr:false 是必要的——这些 App 依赖 IndexedDB/localStorage，服务端渲染无意义。
+const PhoneThemeApp = dynamic(() => import("@/components/phone-theme-app").then((m) => m.PhoneThemeApp), { ssr: false });
+const PhoneCharacterApp = dynamic(() => import("@/components/phone-character-app").then((m) => m.PhoneCharacterApp), { ssr: false });
+const PhoneSettingsApp = dynamic(() => import("@/components/phone-settings-app").then((m) => m.PhoneSettingsApp), { ssr: false });
+const PhoneChatApp = dynamic(() => import("@/components/chat/phone-chat-app").then((m) => m.PhoneChatApp), { ssr: false });
+const MusicApp = dynamic(() => import("@/components/music/music-app"), { ssr: false });
+const PhoneCalendarApp = dynamic(() => import("@/components/calendar-app").then((m) => m.PhoneCalendarApp), { ssr: false });
+const PhoneQaApp = dynamic(() => import("@/components/phone-qa-app").then((m) => m.PhoneQaApp), { ssr: false });
+const ResourceHubApp = dynamic(() => import("@/components/resource-hub/resource-hub-app").then((m) => m.ResourceHubApp), { ssr: false });
+const RealityBridgeApp = dynamic(() => import("@/components/reality-bridge-app").then((m) => m.RealityBridgeApp), { ssr: false });
+const DiaryApp = dynamic(() => import("@/components/diary/diary-app").then((m) => m.DiaryApp), { ssr: false });
+const XiaohongshuApp = dynamic(() => import("@/components/xiaohongshu/xiaohongshu-app").then((m) => m.XiaohongshuApp), { ssr: false });
+const StoryApp = dynamic(() => import("@/components/story/story-app").then((m) => m.StoryApp), { ssr: false });
+const VnApp = dynamic(() => import("@/components/vn/vn-app").then((m) => m.VnApp), { ssr: false });
+const ReadingApp = dynamic(() => import("@/components/reading/reading-app"), { ssr: false });
+const MapApp = dynamic(() => import("@/components/map/map-app"), { ssr: false });
+const DwellingApp = dynamic(() => import("@/components/dwelling/dwelling-app").then((m) => m.DwellingApp), { ssr: false });
+const PhoneResourcesApp = dynamic(() => import("@/components/phone-resources-app").then((m) => m.PhoneResourcesApp), { ssr: false });
+const CheckPhoneApp = dynamic(() => import("@/components/checkphone/checkphone-app").then((m) => m.CheckPhoneApp), { ssr: false });
+const ShoppingApp = dynamic(() => import("@/components/shopping/shopping-app").then((m) => m.ShoppingApp), { ssr: false });
+const GameHubApp = dynamic(() => import("@/components/game/game-hub-app").then((m) => m.GameHubApp), { ssr: false });
+const MixologyApp = dynamic(() => import("@/components/mixology/mixology-app").then((m) => m.MixologyApp), { ssr: false });
+const InterviewMagazineApp = dynamic(() => import("@/components/interview/interview-magazine-app"), { ssr: false });
+const CoCreateApp = dynamic(() => import("@/components/cocreate/cocreate-app").then((m) => m.CoCreateApp), { ssr: false });
+const AppMarketApp = dynamic(() => import("@/components/app-market/app-market-app").then((m) => m.AppMarketApp), { ssr: false });
+const CustomAppRunner = dynamic(() => import("@/components/app-market/custom-app-runner").then((m) => m.CustomAppRunner), { ssr: false });
 import { hydrateKvDb, kvGet, kvSet, kvRemove, kvKeysWithPrefix } from "@/lib/kv-db";
 import { deleteDatabase } from "@/lib/data-management/idb";
 import { hydrateStoryStorage } from "@/lib/story-storage";
@@ -127,6 +135,13 @@ import { WidgetRenderer } from "@/components/widgets/widget-renderer";
 import type { DIYWidgetTemplate } from "@/lib/widget-types";
 import { DebugPromptPanel } from "@/components/debug-prompt-panel";
 import { QuickActionFloat } from "@/components/quick-action-float";
+import { FloatingControlDock } from "@/components/floating-control-dock";
+import { QuickNoteFloat } from "@/components/quick-note-float";
+import {
+    CONTROL_DOCK_ACTIVATE_EVENT,
+    getControlDockState,
+    subscribeControlDockState,
+} from "@/lib/floating-controls-store";
 import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_REQUEST_REPLY_EVENT, hydrateChatStorage, loadChatSessions, loadChatMessages, pushChatMessage, type ChatMessage, type ChatSession } from "@/lib/chat-storage";
 import { ensureGlobalBindingDefaults, resolveUserIdentity } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -2439,6 +2454,28 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     return () => window.removeEventListener("open-mini-chat", handler);
   }, []);
 
+  // 聊天小窗归坞管理：勾选 = 坞按钮可开合，取消勾选 = 小窗彻底隐藏（已打开的也强制关掉）
+  const miniChatInDock = useSyncExternalStore(
+    subscribeControlDockState,
+    () => getControlDockState().pinned["mini-chat"] !== false,
+    () => true,
+  );
+  useEffect(() => {
+    if (!miniChatInDock) setShowMiniChat(false);
+  }, [miniChatInDock]);
+
+  // 受统一控制坞驱动：坞里点「聊天小窗」时切换迷你聊天窗开合
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ control?: string }>).detail;
+      if (detail?.control !== "mini-chat") return;
+      if (!miniChatInDock) return;
+      setShowMiniChat(prev => !prev);
+    };
+    window.addEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+    return () => window.removeEventListener(CONTROL_DOCK_ACTIVATE_EVENT, handler);
+  }, [miniChatInDock]);
+
   const openChatSessionFromNotice = useCallback((sessionId: string) => {
     if (chatMessageNoticeTimerRef.current !== null) {
       window.clearTimeout(chatMessageNoticeTimerRef.current);
@@ -4096,10 +4133,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       return <MixologyApp onClose={() => setActiveApp(null)} />;
     }
 
-    if (activeApp === "storage_cleaner") {
-      return <StorageCleanerApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
-    }
-
     if (activeApp === "appmarket") {
       return (
         <AppMarketApp
@@ -4444,7 +4477,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               {/* Mini chat window — persists across music pages */}
               <MiniAppWindow
                 title="聊天"
-                visible={showMiniChat}
+                visible={showMiniChat && miniChatInDock}
                 onClose={handleMiniChatClose}
                 onExpand={handleMiniChatExpand}
               >
@@ -4816,6 +4849,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               ) : null}
               <DebugPromptPanel />
               <QuickActionFloat />
+              <FloatingControlDock activeApp={activeApp} />
+              <QuickNoteFloat />
               <MascotFloat />
               {/* 预览弹窗宿主：独立于桌宠的展开/收起状态，否则桌宠收成小球时弹不出来 */}
               <MascotPreviewHost />

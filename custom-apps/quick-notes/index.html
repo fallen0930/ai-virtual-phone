@@ -1,0 +1,997 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>随想笔记</title>
+<style>
+  :root{
+    --bg:#F1F2F6; --panel:#FFFFFF; --panel-2:#F7F8FA;
+    --line:#E4E6EB; --line-soft:#EFF1F4;
+    --title:#2C3440; --text:#797E85; --muted:#A0A3A8;
+    --accent:#5B6BE8; --accent-soft:rgba(91,107,232,.10);
+    --ai:#7C5BE8; --ai-soft:rgba(124,91,232,.10);
+    --danger:#FF3B30; --ok:#34C759; --warn:#FF9500;
+    --radius:14px;
+    --safe-top:var(--ai-phone-app-safe-top, 0px);
+    --safe-bottom:var(--ai-phone-app-safe-bottom, 12px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; height:100%;}
+  body{
+    background:var(--bg); color:var(--title);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; height:100%;
+  }
+  button{font:inherit; color:inherit; background:none; border:none; cursor:pointer;}
+  input,textarea,select{font:inherit; color:inherit;}
+
+  /* ── 顶栏 ── */
+  .qn-head{padding:calc(var(--safe-top) + 10px) 14px 8px; background:linear-gradient(180deg,#FFFFFF 0%,#F7F8FB 100%); border-bottom:1px solid var(--line-soft);}
+  .qn-head-row{display:flex; align-items:center; gap:10px;}
+  .qn-title{font-size:19px; font-weight:700; letter-spacing:.3px; display:flex; align-items:center; gap:7px;}
+  .qn-title .dot{width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .qn-seg{margin-left:auto; display:inline-flex; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:2px;}
+  .qn-seg button{padding:4px 12px; border-radius:8px; font-size:12.5px; color:var(--text); font-weight:600;}
+  .qn-seg button[data-on="1"]{background:var(--panel); color:var(--title); box-shadow:0 1px 2px rgba(44,52,64,.08);}
+  .qn-stat{margin-top:7px; font-size:11px; color:var(--muted);}
+  .qn-search{margin-top:9px; display:flex; align-items:center; gap:7px; background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:7px 10px;}
+  .qn-search svg{flex:none; opacity:.45;}
+  .qn-search input{flex:1; min-width:0; border:none; outline:none; background:transparent; font-size:13.5px;}
+  .qn-search input::placeholder{color:var(--muted);}
+  .qn-chips{margin-top:9px; display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none;}
+  .qn-chips::-webkit-scrollbar{display:none;}
+  .qn-chip{flex:none; padding:5px 11px; border-radius:999px; font-size:12.5px; color:var(--text); background:var(--panel); border:1px solid var(--line); white-space:nowrap;}
+  .qn-chip[data-active="1"]{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  .qn-chip .n{opacity:.6; margin-left:4px; font-size:11px;}
+  .qn-chip[data-active="1"] .n{opacity:.85;}
+  .qn-toolbar{margin-top:9px; display:flex; gap:8px; align-items:center;}
+  .qn-btn{display:inline-flex; align-items:center; gap:5px; justify-content:center; padding:7px 12px; border-radius:10px; font-size:12.5px; font-weight:600; background:var(--panel); border:1px solid var(--line); color:var(--title);}
+  .qn-btn:active{transform:scale(.98);}
+  .qn-btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .qn-btn.ai{background:var(--ai-soft); border-color:rgba(124,91,232,.28); color:var(--ai);}
+  .qn-btn.ghost{background:transparent; border-color:transparent; color:var(--text);}
+  .qn-btn.danger{color:var(--danger); border-color:rgba(255,59,48,.28);}
+  .qn-btn[disabled]{opacity:.45;}
+  .qn-btn.grow{flex:1;}
+  .qn-sort{margin-left:auto; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:4px;}
+  .qn-sort select{border:none; background:transparent; color:var(--text); font-size:12px; outline:none;}
+
+  /* ── 列表 ── */
+  .qn-body{flex:1; overflow:auto; padding:12px 14px calc(var(--safe-bottom) + 84px); -webkit-overflow-scrolling:touch;}
+  .qn-card{background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--radius); padding:12px 13px; margin-bottom:10px; box-shadow:0 1px 2px rgba(44,52,64,.03);}
+  .qn-card:active{background:var(--panel-2);}
+  .qn-card-top{display:flex; align-items:flex-start; gap:8px;}
+  .qn-card-title{font-size:14.5px; font-weight:650; line-height:1.35; flex:1; word-break:break-word;}
+  .qn-card-title .pin{color:var(--warn); margin-right:3px;}
+  .qn-badge{flex:none; font-size:10.5px; padding:2px 7px; border-radius:6px; font-weight:600; background:var(--accent-soft); color:var(--accent); white-space:nowrap;}
+  .qn-badge.inbox{background:rgba(255,149,0,.12); color:var(--warn);}
+  .qn-badge.dim{background:rgba(121,126,133,.10); color:var(--text);}
+  .qn-badge.ai{background:var(--ai-soft); color:var(--ai);}
+  .qn-card-preview{margin-top:6px; font-size:12.5px; color:var(--text); display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; white-space:pre-wrap;}
+  .qn-card-summary{margin-top:6px; font-size:12px; color:var(--ai); background:var(--ai-soft); border-radius:8px; padding:5px 9px; line-height:1.5;}
+  .qn-card-foot{margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px; color:var(--muted);}
+  .qn-tag{font-size:10.5px; padding:1.5px 7px; border-radius:5px; background:var(--panel-2); border:1px solid var(--line-soft); color:var(--text);}
+  .qn-meta{margin-left:auto; white-space:nowrap;}
+  .qn-empty{text-align:center; color:var(--muted); padding:48px 20px; font-size:13px; line-height:1.9;}
+  .qn-empty b{display:block; color:var(--title); font-size:15px; margin-bottom:6px;}
+  .qn-hintbar{font-size:11.5px; color:var(--text); background:#FFF9EC; border:1px solid #F5E3BE; border-radius:10px; padding:8px 11px; margin-bottom:10px; line-height:1.6;}
+  .qn-busy{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ai); padding:8px 2px;}
+  .spin{width:13px; height:13px; border:2px solid var(--ai-soft); border-top-color:var(--ai); border-radius:50%; animation:qnSpin .7s linear infinite; flex:none;}
+  @keyframes qnSpin{to{transform:rotate(360deg);}}
+
+  /* ── 底部主操作 ── */
+  .qn-foot{position:fixed; left:0; right:0; bottom:0; z-index:20; padding:10px 14px calc(var(--safe-bottom) + 8px); background:linear-gradient(180deg,rgba(241,242,246,0) 0%,var(--bg) 42%); display:flex; gap:8px;}
+
+  /* ── 抽屉 ── */
+  .qn-sheet{position:fixed; inset:0; z-index:40; display:none;}
+  .qn-sheet[data-open="1"]{display:block;}
+  .qn-mask{position:absolute; inset:0; background:rgba(28,32,40,.34);}
+  .qn-panel{position:absolute; left:0; right:0; bottom:0; max-height:94%; background:var(--bg); border-radius:20px 20px 0 0; overflow:hidden; display:flex; flex-direction:column; animation:qnUp .22s ease; box-shadow:0 -8px 30px rgba(28,32,40,.18);}
+  @keyframes qnUp{from{transform:translateY(24px); opacity:.4;} to{transform:translateY(0); opacity:1;}}
+  .qn-sheet-head{padding:14px 14px 10px; background:var(--panel); border-bottom:1px solid var(--line-soft); display:flex; align-items:center; gap:9px;}
+  .qn-sheet-title{font-size:15.5px; font-weight:700;}
+  .qn-sheet-sub{font-size:11.5px; color:var(--muted);}
+  .qn-sheet-body{flex:1; overflow:auto; padding:14px; -webkit-overflow-scrolling:touch;}
+  .qn-sheet-foot{padding:10px 14px calc(var(--safe-bottom) + 10px); background:var(--panel); border-top:1px solid var(--line-soft); display:flex; gap:8px; flex-wrap:wrap;}
+  .qn-close{margin-left:auto; width:30px; height:30px; border-radius:50%; background:var(--panel-2); color:var(--text); font-size:15px; line-height:1;}
+  .qn-field{margin-bottom:13px;}
+  .qn-label{font-size:12px; color:var(--text); margin-bottom:5px; display:flex; align-items:center; gap:6px;}
+  .qn-input,.qn-textarea,.qn-select{width:100%; background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:9px 11px; outline:none; font-size:13.5px; color:var(--title);}
+  .qn-input:focus,.qn-textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .qn-textarea{min-height:150px; resize:vertical; line-height:1.6; font-family:inherit;}
+  .qn-textarea.tall{min-height:220px;}
+  .qn-row{display:flex; gap:8px;}
+  .qn-row>*{flex:1; min-width:0;}
+  .qn-charcard{display:flex; align-items:center; gap:10px; padding:10px 11px; border:1px solid var(--line-soft); background:var(--panel); border-radius:12px; margin-bottom:8px;}
+  .qn-charcard[data-active="1"]{border-color:var(--ai); background:var(--ai-soft);}
+  .qn-charcard .av{width:34px; height:34px; border-radius:50%; background:var(--accent-soft); color:var(--accent); display:flex; align-items:center; justify-content:center; font-weight:700; flex:none; overflow:hidden;}
+  .qn-charcard .av img{width:100%; height:100%; object-fit:cover;}
+  .qn-charcard .nm{font-size:13.5px; font-weight:600; word-break:break-word;}
+  .qn-charcard .ds{font-size:11px; color:var(--muted); margin-top:2px; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden;}
+  .qn-chiprow{display:flex; gap:6px; flex-wrap:wrap;}
+  .qn-chiprow .pk{padding:5px 10px; border-radius:8px; font-size:12px; background:var(--panel-2); border:1px solid var(--line); color:var(--text);}
+  .qn-chiprow .pk[data-on="1"]{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  .qn-aibox{background:var(--ai-soft); border:1px solid rgba(124,91,232,.22); border-radius:12px; padding:11px 12px; font-size:13px; line-height:1.65; color:#4a3f7a; white-space:pre-wrap; word-break:break-word; max-height:320px; overflow:auto;}
+  .qn-aibox .who{font-size:11px; color:var(--ai); font-weight:700; margin-bottom:5px;}
+  .qn-md{font-size:13px;}
+  .qn-md h4{margin:10px 0 5px; font-size:13.5px;}
+  .qn-md p{margin:5px 0;}
+  .qn-md li{margin:3px 0 3px 2px;}
+
+  /* ── 应用内弹窗 ── */
+  .qn-dialog{position:fixed; inset:0; z-index:80; display:none; align-items:center; justify-content:center; padding:24px;}
+  .qn-dialog[data-open="1"]{display:flex;}
+  .qn-dialog-mask{position:absolute; inset:0; background:rgba(24,28,36,.42);}
+  .qn-dialog-box{position:relative; width:100%; max-width:340px; background:var(--panel); border-radius:16px; padding:18px 16px 14px; box-shadow:0 16px 40px rgba(20,24,32,.28); animation:qnUp .18s ease;}
+  .qn-dialog-title{font-size:15px; font-weight:700; margin-bottom:6px;}
+  .qn-dialog-text{font-size:13px; color:var(--text); line-height:1.6; white-space:pre-wrap; word-break:break-word; max-height:300px; overflow:auto;}
+  .qn-dialog-copy{width:100%; margin-top:9px; height:96px; border:1px solid var(--line); border-radius:10px; padding:8px; font-size:12px; resize:none; background:var(--panel-2);}
+  .qn-dialog-actions{margin-top:14px; display:flex; gap:8px;}
+  .qn-dialog-actions .qn-btn{flex:1;}
+
+  .qn-toast{position:fixed; left:50%; bottom:calc(var(--safe-bottom) + 96px); transform:translate(-50%,10px); background:rgba(30,34,42,.92); color:#fff; font-size:12.5px; padding:8px 15px; border-radius:999px; opacity:0; pointer-events:none; transition:.2s; z-index:90; max-width:78%; text-align:center;}
+  .qn-toast[data-show="1"]{opacity:1; transform:translate(-50%,0);}
+</style>
+</head>
+<body>
+
+<header class="qn-head">
+  <div class="qn-head-row">
+    <div class="qn-title"><span class="dot"></span>随想笔记</div>
+    <div class="qn-seg">
+      <button id="qnTabNotes" data-on="1">想法</button>
+      <button id="qnTabAnas" data-on="0">分析</button>
+    </div>
+  </div>
+  <div class="qn-stat" id="qnStat"></div>
+  <div class="qn-search">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="qnSearch" placeholder="搜索标题 / 正文 / 标签" />
+  </div>
+  <div class="qn-chips" id="qnChips"></div>
+  <div class="qn-toolbar">
+    <button class="qn-btn ai" id="qnAiAll">AI 批量处理</button>
+    <button class="qn-btn" id="qnRefresh">刷新</button>
+    <button class="qn-btn" id="qnSettings">设置</button>
+    <div class="qn-sort">
+      <span>排序</span>
+      <select id="qnSort">
+        <option value="updated">最近更新</option>
+        <option value="created">创建时间</option>
+        <option value="title">标题</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main class="qn-body" id="qnList"></main>
+
+<footer class="qn-foot">
+  <button class="qn-btn primary grow" id="qnNew">＋ 记一条想法</button>
+</footer>
+
+<!-- 编辑 / 详情 -->
+<div class="qn-sheet" id="qnEditSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div>
+        <div class="qn-sheet-title" id="qnEditTitle">新建想法</div>
+        <div class="qn-sheet-sub" id="qnEditSub"></div>
+      </div>
+      <button class="qn-close" data-close="1">✕</button>
+    </div>
+    <div class="qn-sheet-body">
+      <div class="qn-field"><div class="qn-label">标题</div><input class="qn-input" id="qnFTitle" placeholder="给这条想法起个名字（可留空）" /></div>
+      <div class="qn-field"><div class="qn-label">内容</div><textarea class="qn-textarea" id="qnFText" placeholder="随手把想法写下来，不用讲究条理……"></textarea></div>
+      <div class="qn-row">
+        <div class="qn-field"><div class="qn-label">分类</div><input class="qn-input" id="qnFCat" list="qnCatList" placeholder="未分类" /><datalist id="qnCatList"></datalist></div>
+      </div>
+      <div class="qn-field"><div class="qn-label">标签（逗号分隔）</div><input class="qn-input" id="qnFTags" placeholder="如：AI, 交互, 待验证" /></div>
+      <div class="qn-field">
+        <div class="qn-label">状态</div>
+        <div class="qn-chiprow" id="qnFStatus">
+          <button class="pk" data-val="inbox" data-on="1">收集箱</button>
+          <button class="pk" data-val="sorted">已整理</button>
+          <button class="pk" data-val="archived">归档</button>
+        </div>
+      </div>
+      <div class="qn-field" id="qnEditAiWrap" style="display:none">
+        <div class="qn-label">AI 整理结果</div>
+        <div class="qn-aibox" id="qnEditAiBox"></div>
+      </div>
+    </div>
+    <div class="qn-sheet-foot">
+      <button class="qn-btn grow" id="qnEditAi">AI 整理这条</button>
+      <button class="qn-btn ai" id="qnEditAsk">问角色</button>
+      <button class="qn-btn primary grow" id="qnEditSave">保存</button>
+      <button class="qn-btn danger" id="qnEditDel">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 选角色 -->
+<div class="qn-sheet" id="qnCharSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div><div class="qn-sheet-title">让谁来看这些想法</div><div class="qn-sheet-sub">以角色的视角分析、点评、给建议</div></div>
+      <button class="qn-close" data-close="1">✕</button>
+    </div>
+    <div class="qn-sheet-body" id="qnCharList"></div>
+  </div>
+</div>
+
+<!-- 分析记录 -->
+<div class="qn-sheet" id="qnAnaSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div><div class="qn-sheet-title" id="qnAnaTitle">分析</div><div class="qn-sheet-sub" id="qnAnaSub"></div></div>
+      <button class="qn-close" data-close="1">✕</button>
+    </div>
+    <div class="qn-sheet-body"><div class="qn-aibox" id="qnAnaBody" style="max-height:none"></div></div>
+    <div class="qn-sheet-foot">
+      <button class="qn-btn grow" id="qnAnaCopy">复制</button>
+      <button class="qn-btn ai" id="qnAnaChat">发到聊天室</button>
+      <button class="qn-btn danger" id="qnAnaDel">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="qn-sheet" id="qnSetSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div><div class="qn-sheet-title">设置</div><div class="qn-sheet-sub">分类清单与默认角色</div></div>
+      <button class="qn-close" data-close="1">✕</button>
+    </div>
+    <div class="qn-sheet-body">
+      <div class="qn-field"><div class="qn-label">分类清单（每行一个）</div><textarea class="qn-textarea" id="qnSetCats" style="min-height:130px"></textarea></div>
+      <div class="qn-field"><div class="qn-label">默认角色（「问角色」直接用）</div><select class="qn-select" id="qnSetChar"></select></div>
+      <div class="qn-hintbar">提示：分类清单会影响 AI 归类的候选范围；分类留空的笔记会待在「收集箱」里等你整理。</div>
+    </div>
+    <div class="qn-sheet-foot"><button class="qn-btn primary grow" id="qnSetSave">保存设置</button></div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="qn-dialog" id="qnDialog">
+  <div class="qn-dialog-mask"></div>
+  <div class="qn-dialog-box">
+    <div class="qn-dialog-title" id="qnDialogTitle">提示</div>
+    <div class="qn-dialog-text" id="qnDialogText"></div>
+    <textarea class="qn-dialog-copy" id="qnDialogCopy" readonly style="display:none"></textarea>
+    <div class="qn-dialog-actions">
+      <button class="qn-btn" id="qnDialogCancel">取消</button>
+      <button class="qn-btn primary" id="qnDialogOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="qn-toast" id="qnToast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ══════════════════════════════════════════════════════
+     0. 常量 / 小工具
+     ══════════════════════════════════════════════════════ */
+  var COLL_NOTES = "notes";
+  var COLL_ANAS = "analyses";
+  var COLL_META = "meta";
+
+  var DEFAULT_CATS = ["产品想法", "交互/设计", "技术实现", "待办", "参考/灵感", "其他"];
+  var MAX_TITLE = 120;
+  var MAX_TEXT = 20000;
+
+  var AI = (typeof window.AiPhone !== "undefined" && window.AiPhone) || null;
+  var canDb = !!(AI && AI.db && AI.db.list);
+  var canChat = !!(AI && AI.ai && AI.ai.chat);
+  var canClassify = !!(AI && AI.ai && AI.ai.classify);
+  var canGen = !!(AI && AI.ai && AI.ai.generate);
+  var canChars = !!(AI && AI.characters && AI.characters.list);
+  var canSendChat = !!(AI && AI.chat && AI.chat.sendMessage);
+
+  var $ = function (id) { return document.getElementById(id); };
+  function uid(prefix) { return (prefix || "n") + "_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8); }
+  function nowIso() { return new Date().toISOString(); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function clampText(s, max) { return String(s == null ? "" : s).replace(/\u0000/g, "").slice(0, max); }
+  function fmtTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso), t = Date.now() - d.getTime();
+    if (isNaN(d.getTime())) return "";
+    if (t < 60000) return "刚刚";
+    if (t < 3600000) return Math.floor(t / 60000) + " 分钟前";
+    if (t < 86400000) return Math.floor(t / 3600000) + " 小时前";
+    if (t < 86400000 * 7) return Math.floor(t / 86400000) + " 天前";
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+  function toast(msg) {
+    var el = $("qnToast");
+    el.textContent = msg;
+    el.setAttribute("data-show", "1");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.setAttribute("data-show", "0"); }, 2000);
+  }
+  function parseTags(raw) {
+    return String(raw || "").split(/[,，;；\n\t]+/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 20);
+  }
+  function titleOf(note) { return (note.title && note.title.trim()) || (note.text || "").trim().slice(0, 24) || "未命名想法"; }
+
+  /* ── 应用内弹窗（沙盒无 allow-modals，confirm/alert/prompt 全部失效） ── */
+  var _dlgResolve = null;
+  function _openDialog(o) {
+    return new Promise(function (resolve) {
+      _dlgResolve = resolve;
+      $("qnDialogTitle").textContent = o.title || "提示";
+      var t = $("qnDialogText");
+      t.textContent = o.message || "";
+      t.style.display = o.message ? "" : "none";
+      var c = $("qnDialogCopy");
+      if (o.copyText) { c.value = o.copyText; c.style.display = ""; setTimeout(function () { try { c.focus(); c.select(); } catch (e) {} }, 30); }
+      else { c.value = ""; c.style.display = "none"; }
+      var cancel = $("qnDialogCancel");
+      if (o.cancelText === null) cancel.style.display = "none";
+      else { cancel.style.display = ""; cancel.textContent = o.cancelText || "取消"; }
+      var ok = $("qnDialogOk");
+      ok.textContent = o.okText || "确定";
+      ok.className = "qn-btn " + (o.danger ? "danger" : "primary");
+      $("qnDialog").setAttribute("data-open", "1");
+    });
+  }
+  function _closeDialog(result) {
+    $("qnDialog").setAttribute("data-open", "0");
+    var r = _dlgResolve; _dlgResolve = null;
+    if (r) r(result);
+  }
+  function askConfirm(message, o) {
+    o = o || {};
+    return _openDialog({ title: o.title || "确认操作", message: message, okText: o.okText || "确定", cancelText: "取消", danger: !!o.danger });
+  }
+  function showNotice(title, message, o) {
+    return _openDialog({ title: title || "提示", message: message, okText: (o && o.okText) ? o.okText : "知道了", cancelText: null });
+  }
+  function copyText(text) {
+    return new Promise(function (resolve) {
+      var done = false;
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        done = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (e) { done = false; }
+      if (done) { toast("已复制"); resolve(true); }
+      else { _openDialog({ title: "手动复制", message: "当前环境不让应用直接写剪贴板。文本已选中，长按 / 右键复制即可。", copyText: text, okText: "关闭", cancelText: null }); resolve(false); }
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     1. 存储层（AiPhone.db）
+     ══════════════════════════════════════════════════════ */
+  var store = {
+    notes: [], anas: [], chars: [],
+    cats: DEFAULT_CATS.slice(),
+    defaultCharId: "",
+    loaded: false,
+    view: "notes",      // notes | anas
+    q: "", cat: "", sort: "updated",
+    editing: null,      // 正在编辑的 note（内存对象）
+    lastAna: null
+  };
+
+  function dbList(coll) {
+    if (!canDb) return Promise.resolve([]);
+    return AI.db.list(coll, { limit: 500 }).then(function (r) { return Array.isArray(r) ? r : []; }).catch(function () { return []; });
+  }
+  function dbCreate(coll, data) { return AI.db.create(coll, data); }
+  function dbUpdate(coll, id, patch) { return AI.db.update(coll, id, patch); }
+  function dbDelete(coll, id) { return AI.db.delete(coll, id); }
+
+  function normalizeNote(row) {
+    return {
+      id: String(row.id || uid("note")),
+      title: String(row.title || ""),
+      text: String(row.text || ""),
+      category: String(row.category || ""),
+      tags: Array.isArray(row.tags) ? row.tags.map(String).slice(0, 20) : [],
+      status: (row.status === "sorted" || row.status === "archived") ? row.status : "inbox",
+      pinned: row.pinned === true,
+      source: row.source === "float" ? "float" : "app",
+      aiSummary: String(row.aiSummary || ""),
+      createdAt: String(row.createdAt || nowIso()),
+      updatedAt: String(row.updatedAt || row.createdAt || nowIso())
+    };
+  }
+  function normalizeAna(row) {
+    return {
+      id: String(row.id || uid("ana")),
+      noteIds: Array.isArray(row.noteIds) ? row.noteIds.map(String) : [],
+      noteTitles: Array.isArray(row.noteTitles) ? row.noteTitles.map(String) : [],
+      characterId: String(row.characterId || ""),
+      characterName: String(row.characterName || "AI"),
+      mode: String(row.mode || "character"),
+      title: String(row.title || "分析"),
+      text: String(row.text || ""),
+      sentToChat: row.sentToChat === true,
+      createdAt: String(row.createdAt || nowIso())
+    };
+  }
+
+  function loadAll() {
+    return Promise.all([dbList(COLL_NOTES), dbList(COLL_ANAS), dbList(COLL_META)]).then(function (res) {
+      store.notes = res[0].map(normalizeNote);
+      store.anas = res[1].map(normalizeAna);
+      var meta = res[2][0] || {};
+      if (Array.isArray(meta.categories) && meta.categories.length) store.cats = meta.categories.map(String);
+      store.defaultCharId = String(meta.defaultCharacterId || "");
+      store.loaded = true;
+      return loadCharacters();
+    });
+  }
+  function loadCharacters() {
+    if (!canChars) return Promise.resolve([]);
+    return AI.characters.list().then(function (list) {
+      store.chars = Array.isArray(list) ? list : (list && Array.isArray(list.characters) ? list.characters : []);
+      return store.chars;
+    }).catch(function () { store.chars = []; return []; });
+  }
+  function saveMeta() {
+    var row = { id: "config", categories: store.cats.slice(), defaultCharacterId: store.defaultCharId, updatedAt: nowIso() };
+    return dbList(COLL_META).then(function (rows) {
+      if (rows && rows[0] && rows[0].id) return dbUpdate(COLL_META, rows[0].id, row);
+      return dbCreate(COLL_META, row);
+    }).catch(function () {});
+  }
+
+  /* ══════════════════════════════════════════════════════
+     2. AI 调用封装（全部走宿主桥接，失败一律 catch 成 null）
+     ══════════════════════════════════════════════════════ */
+  function aiChat(system, user, opts) {
+    if (!canChat) return Promise.reject(new Error("当前没有可用的 AI（缺少 ai.chat 权限或未配置模型）"));
+    opts = opts || {};
+    // 注意：宿主在 messages 非空时不会单独读取 system 字段，必须把 system 放进 messages 里。
+    return AI.ai.chat({
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      temperature: (opts.temperature != null ? opts.temperature : 0.4),
+      maxTokens: opts.maxTokens || 900
+    }).then(function (r) {
+      var text = (r && (r.text || r.content)) || "";
+      if (!text) throw new Error("AI 没有返回内容");
+      return text;
+    });
+  }
+  function aiGenerate(characterId, instruction, body) {
+    if (!canGen) return Promise.reject(new Error("当前没有可用的 AI（缺少 ai.generate 权限）"));
+    // 注意：宿主只在 input 为对象时才拼进提示词，字符串正文必须并进 instruction。
+    var full = String(instruction || "") + (body ? "\n\n" + body : "");
+    return AI.ai.generate({ characterId: characterId, instruction: full, historyLimit: 6 }).then(function (r) {
+      var text = (r && (r.text || r.content)) || "";
+      if (!text) throw new Error("角色没有返回内容");
+      return text;
+    });
+  }
+  function aiClassify(text, labels) {
+    if (!canClassify) return Promise.resolve("");
+    return AI.ai.classify({ text: text, labels: labels, categories: labels }).then(function (r) {
+      return (r && r.label) ? String(r.label) : "";
+    }).catch(function () { return ""; });
+  }
+  function parseJsonLoose(text) {
+    var t = String(text || "").trim();
+    t = t.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    var m = t.match(/\{[\s\S]*\}/);
+    if (m) t = m[0];
+    try { return JSON.parse(t); } catch (e) { return null; }
+  }
+
+  var SYS_ORGANIZE = "你是笔记整理助手。阅读用户的一条想法，输出严格的 JSON（不要任何解释、不要代码块围栏）：\n{\"category\":\"分类\",\"tags\":[\"标签1\",\"标签2\"],\"summary\":\"一句话摘要\"}\n规则：category 必须从用户给出的分类清单里选一个；tags 给 2~5 个简短中文/英文关键词；summary 用一句话概括这条想法的核心，不超过 40 字。";
+  var SYS_BATCH = "你是我的开发想法整理助手。下面是我近期随手记录的一批零散想法。请把它们归纳成一份清晰的清单：先按主题分组（每组一个主题小标题 + 该组要点），再在最后给一句整体观察（我最近在想什么、有哪些趋势或风险）。用简体中文，可用 Markdown 小标题与短横线列表，不要客套话。";
+
+  function organizeNote(note) {
+    var user = "分类清单：" + store.cats.join("、") + "\n\n想法标题：" + titleOf(note) + "\n想法正文：\n" + (note.text || "(无正文)");
+    return aiChat(SYS_ORGANIZE, user, { temperature: 0.2, maxTokens: 500 }).then(function (out) {
+      var obj = parseJsonLoose(out);
+      if (obj && typeof obj === "object") {
+        var cat = String(obj.category || "").trim();
+        var tags = Array.isArray(obj.tags) ? obj.tags.map(String).filter(Boolean).slice(0, 6) : [];
+        var summary = String(obj.summary || "").trim();
+        if (cat && store.cats.length && store.cats.indexOf(cat) < 0) {
+          // 模型给了清单外的分类，保留但记下
+        }
+        return { category: cat, tags: tags, summary: summary };
+      }
+      // 退化：JSON 解析失败时，退到 classify 做分类，摘要用原文本截断
+      return aiClassify(note.text || titleOf(note), store.cats).then(function (label) {
+        return { category: label || "", tags: [], summary: String(out || "").replace(/\s+/g, " ").slice(0, 40) };
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     3. 渲染
+     ══════════════════════════════════════════════════════ */
+  function renderStat() {
+    var inbox = store.notes.filter(function (n) { return n.status === "inbox"; }).length;
+    var sorted = store.notes.filter(function (n) { return n.status === "sorted"; }).length;
+    $("qnStat").textContent = "共 " + store.notes.length + " 条想法 · 收集箱 " + inbox + " · 已整理 " + sorted + " · 分析 " + store.anas.length + " 篇";
+  }
+
+  function renderChips() {
+    var counts = {};
+    store.notes.forEach(function (n) { var c = n.category || "未分类"; counts[c] = (counts[c] || 0) + 1; });
+    var inbox = store.notes.filter(function (n) { return n.status === "inbox"; }).length;
+    var cats = store.cats.slice();
+    store.notes.forEach(function (n) { if (n.category && cats.indexOf(n.category) < 0) cats.push(n.category); });
+
+    var html = chip("", "全部", store.notes.length) + chip("inbox", "收集箱", inbox);
+    cats.forEach(function (c) { if (counts[c]) html += chip("c:" + c, c, counts[c]); });
+    $("qnChips").innerHTML = html;
+
+    function chip(val, label, n) {
+      var active = (store.cat === val || (val === "" && !store.cat)) ? "1" : "0";
+      return '<button class="qn-chip" data-active="' + active + '" data-cat="' + escapeHtml(val) + '">' + escapeHtml(label) + '<span class="n">' + n + "</span></button>";
+    }
+  }
+
+  function filteredNotes() {
+    var q = store.q.trim().toLowerCase();
+    var list = store.notes.filter(function (n) {
+      if (store.cat === "inbox") { if (n.status !== "inbox") return false; }
+      else if (store.cat.indexOf("c:") === 0) { if ((n.category || "未分类") !== store.cat.slice(2)) return false; }
+      if (q) {
+        var hay = (n.title + " " + n.text + " " + n.tags.join(" ") + " " + n.category).toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+    list.sort(function (a, b) {
+      if (store.sort === "title") return titleOf(a).localeCompare(titleOf(b), "zh");
+      if (store.sort === "created") return String(b.createdAt).localeCompare(String(a.createdAt));
+      return String(b.updatedAt).localeCompare(String(a.updatedAt));
+    });
+    return list;
+  }
+
+  function renderList() {
+    var box = $("qnList");
+    if (store.loading) { box.innerHTML = '<div class="qn-busy"><span class="spin"></span>' + escapeHtml(store.loadingText || "处理中…") + "</div>"; return; }
+    if (store.view === "anas") return renderAnaList();
+
+    var list = filteredNotes();
+    if (!store.notes.length) {
+      box.innerHTML = '<div class="qn-empty"><b>还没有想法</b>点下面的「记一条想法」，或在对局界面的速记小窗里随手记。<br/>之后让 AI 帮你归类、让角色帮你点评。</div>';
+      return;
+    }
+    if (!list.length) { box.innerHTML = '<div class="qn-empty">没有符合条件的想法</div>'; return; }
+
+    box.innerHTML = list.map(function (n) {
+      var badges = "";
+      if (n.status === "inbox") badges += '<span class="qn-badge inbox">收集箱</span>';
+      if (n.status === "archived") badges += '<span class="qn-badge dim">归档</span>';
+      if (n.category) badges += '<span class="qn-badge">' + escapeHtml(n.category) + "</span>";
+      if (n.source === "float") badges += '<span class="qn-badge dim">速记</span>';
+      var tags = n.tags.map(function (t) { return '<span class="qn-tag">#' + escapeHtml(t) + "</span>"; }).join("");
+      var summary = n.aiSummary ? '<div class="qn-card-summary">AI：' + escapeHtml(n.aiSummary) + "</div>" : "";
+      return '<article class="qn-card" data-open-note="' + escapeHtml(n.id) + '">' +
+        '<div class="qn-card-top"><div class="qn-card-title">' + (n.pinned ? '<span class="pin">★</span>' : "") + escapeHtml(titleOf(n)) + "</div>" + badges + "</div>" +
+        (n.text ? '<div class="qn-card-preview">' + escapeHtml(n.text.slice(0, 220)) + "</div>" : "") +
+        summary +
+        '<div class="qn-card-foot">' + tags + '<span class="qn-meta">' + fmtTime(n.updatedAt) + "</span></div>" +
+        "</article>";
+    }).join("");
+  }
+
+  function renderAnaList() {
+    var box = $("qnList");
+    if (!store.anas.length) {
+      box.innerHTML = '<div class="qn-empty"><b>还没有分析</b>在想法里点「问角色」，或选多条想法让角色点评，结果会存到这里。</div>';
+      return;
+    }
+    var list = store.anas.slice().sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+    box.innerHTML = list.map(function (a) {
+      var preview = a.text.replace(/\s+/g, " ").slice(0, 160);
+      return '<article class="qn-card" data-open-ana="' + escapeHtml(a.id) + '">' +
+        '<div class="qn-card-top"><div class="qn-card-title">' + escapeHtml(a.title || "分析") + '</div><span class="qn-badge ai">' + escapeHtml(a.characterName || "AI") + "</span></div>" +
+        '<div class="qn-card-preview">' + escapeHtml(preview) + "</div>" +
+        '<div class="qn-card-foot"><span>' + (a.noteIds.length ? "涉及 " + a.noteIds.length + " 条想法" : "") + '</span><span class="qn-meta">' + fmtTime(a.createdAt) + "</span></div>" +
+        "</article>";
+    }).join("");
+  }
+
+  function renderAll() { renderStat(); renderChips(); renderList(); renderTabs(); }
+
+  function renderTabs() {
+    $("qnTabNotes").setAttribute("data-on", store.view === "notes" ? "1" : "0");
+    $("qnTabAnas").setAttribute("data-on", store.view === "anas" ? "1" : "0");
+    $("qnAiAll").style.display = store.view === "notes" ? "" : "none";
+  }
+
+  function setBusy(on, text) {
+    store.loading = !!on; store.loadingText = text || "";
+    renderList();
+  }
+
+  /* ══════════════════════════════════════════════════════
+     4. 编辑面板
+     ══════════════════════════════════════════════════════ */
+  function refreshDatalist() {
+    $("qnCatList").innerHTML = store.cats.map(function (c) { return '<option value="' + escapeHtml(c) + '"></option>'; }).join("");
+  }
+
+  function openEditor(noteId) {
+    var n = noteId ? store.notes.filter(function (x) { return x.id === noteId; })[0] : null;
+    store.editing = n ? JSON.parse(JSON.stringify(n)) : { id: "", title: "", text: "", category: "", tags: [], status: "inbox", aiSummary: "" };
+    $("qnEditTitle").textContent = n ? "编辑想法" : "新建想法";
+    $("qnEditSub").textContent = n ? ("创建于 " + fmtTime(n.createdAt)) : "写下来就好，整理交给 AI";
+    $("qnFTitle").value = store.editing.title || "";
+    $("qnFText").value = store.editing.text || "";
+    $("qnFCat").value = store.editing.category || "";
+    $("qnFTags").value = (store.editing.tags || []).join(", ");
+    setStatusChips(store.editing.status || "inbox");
+    var wrap = $("qnEditAiWrap");
+    if (store.editing.aiSummary) { wrap.style.display = ""; $("qnEditAiBox").textContent = store.editing.aiSummary; }
+    else wrap.style.display = "none";
+    $("qnEditDel").style.display = n ? "" : "none";
+    refreshDatalist();
+    $("qnEditSheet").setAttribute("data-open", "1");
+  }
+  function setStatusChips(val) {
+    var kids = $("qnFStatus").children;
+    for (var i = 0; i < kids.length; i++) kids[i].setAttribute("data-on", kids[i].getAttribute("data-val") === val ? "1" : "0");
+    store.editing.status = val;
+  }
+  function collectEditor() {
+    store.editing.title = clampText($("qnFTitle").value.trim(), MAX_TITLE);
+    store.editing.text = clampText($("qnFText").value, MAX_TEXT);
+    store.editing.category = clampText($("qnFCat").value.trim(), 40);
+    store.editing.tags = parseTags($("qnFTags").value);
+    return store.editing;
+  }
+  function saveEditor() {
+    var e = collectEditor();
+    if (!e.text.trim() && !e.title.trim()) { toast("内容为空"); return; }
+    var payload = {
+      title: e.title, text: e.text, category: e.category, tags: e.tags,
+      status: e.status, pinned: !!e.pinned, source: e.source || "app", aiSummary: e.aiSummary || "",
+      updatedAt: nowIso()
+    };
+    var p;
+    if (e.id) p = dbUpdate(COLL_NOTES, e.id, payload).then(function () { return e.id; });
+    else { payload.createdAt = nowIso(); p = dbCreate(COLL_NOTES, payload).then(function (row) { return (row && row.id) || payload.id; }); }
+    p.then(function () { closeSheets(); return reloadNotes(); }).then(function () { toast("已保存"); });
+  }
+  function deleteEditor() {
+    var e = store.editing;
+    if (!e || !e.id) return;
+    askConfirm("删除这条想法？删除后无法恢复。", { danger: true, okText: "删除" }).then(function (ok) {
+      if (!ok) return;
+      dbDelete(COLL_NOTES, e.id).then(function () { closeSheets(); return reloadNotes(); }).then(function () { toast("已删除"); });
+    });
+  }
+  function reloadNotes() {
+    return dbList(COLL_NOTES).then(function (rows) { store.notes = rows.map(normalizeNote); renderAll(); });
+  }
+  function reloadAnas() {
+    return dbList(COLL_ANAS).then(function (rows) { store.anas = rows.map(normalizeAna); renderAll(); });
+  }
+
+  function runOrganizeInEditor() {
+    var e = collectEditor();
+    if (!canChat && !canClassify) { showNotice("暂不可用", "AI 归类需要模型与 ai.chat / ai.classify 权限。请先在宿主里配置可用的模型。"); return; }
+    setEditorBusy(true, "AI 正在整理…");
+    organizeNote(e).then(function (r) {
+      if (r.category) e.category = r.category;
+      if (r.tags && r.tags.length) e.tags = r.tags;
+      e.aiSummary = r.summary || "";
+      if (e.status === "inbox") e.status = "sorted";
+      $("qnFCat").value = e.category || "";
+      $("qnFTags").value = (e.tags || []).join(", ");
+      setStatusChips(e.status);
+      if (e.aiSummary) { $("qnEditAiWrap").style.display = ""; $("qnEditAiBox").textContent = e.aiSummary; }
+      toast("AI 已整理，确认后保存");
+    }).catch(function (err) {
+      showNotice("AI 整理失败", String(err && err.message ? err.message : err));
+    }).then(function () { setEditorBusy(false); });
+  }
+  function setEditorBusy(on, text) {
+    $("qnEditAi").disabled = on; $("qnEditAsk").disabled = on; $("qnEditSave").disabled = on;
+    $("qnEditAi").textContent = on ? (text || "处理中…") : "AI 整理这条";
+  }
+
+  /* ══════════════════════════════════════════════════════
+     5. 问角色
+     ══════════════════════════════════════════════════════ */
+  var askCtx = null; // { mode:"single"|"inbox", notes:[...] , onDone }
+  function openCharPicker(ctx) {
+    askCtx = ctx;
+    if (!canChars || !store.chars.length) {
+      var tip = canChars ? "还没有角色卡，先去「角色」里建一个。" : "当前没有角色数据（缺少 characters.read 权限）。";
+      showNotice("没有可选角色", tip + "\n\n你也可以直接用 AI 整理（通用模型）来归类。");
+      return;
+    }
+    var def = store.defaultCharId;
+    $("qnCharList").innerHTML = store.chars.map(function (c) {
+      var name = c.name || c.id || "角色";
+      var av = c.avatar ? '<img src="' + escapeHtml(c.avatar) + '" alt="" />' : escapeHtml(String(name).slice(0, 1));
+      var ds = c.persona || c.description || c.desc || "";
+      return '<div class="qn-charcard" data-char="' + escapeHtml(String(c.id)) + '"' + (c.id === def ? ' data-active="1"' : "") + ">" +
+        '<div class="av">' + av + "</div><div><div class=\"nm\">" + escapeHtml(name) + '</div><div class="ds">' + escapeHtml(String(ds).slice(0, 60)) + "</div></div></div>";
+    }).join("");
+    $("qnCharSheet").setAttribute("data-open", "1");
+  }
+  function runAskCharacter(characterId) {
+    if (!askCtx) return;
+    var char = store.chars.filter(function (c) { return String(c.id) === String(characterId); })[0] || { name: "AI" };
+    var notes = askCtx.notes;
+    var isBatch = askCtx.mode === "inbox";
+    var body = notes.map(function (n, i) {
+      return "【" + (i + 1) + "】" + titleOf(n) + (n.category ? "（" + n.category + "）" : "") + "\n" + (n.text || "");
+    }).join("\n\n---\n\n");
+    var instr = isBatch
+      ? "下面是我近期随手记录的一批开发想法。请你读一遍，以你的视角帮我：1) 看出其中隐含的关联与主线；2) 指出可能的风险、矛盾或我没想到的点；3) 给出你觉得最值得推进的 2~3 件下一步。语气自然，像在和我聊天。"
+      : "下面是我刚记下的一条想法。请你读一读，以你的视角点评：它值不值得做、可能踩的坑、以及可以怎么往前走。自然一点，别写成报告。";
+    var id = uid("ana");
+    var title = (char.name || "AI") + " 的看法";
+    var rec = { id: id, noteIds: notes.map(function (n) { return n.id; }), noteTitles: notes.map(titleOf), characterId: characterId, characterName: char.name || "AI", mode: isBatch ? "batch" : "single", title: title, text: "", sentToChat: false, createdAt: nowIso() };
+    closeSheets();
+    setBusy(true, (char.name || "角色") + " 正在读你的想法…");
+    store.view = "notes";
+    aiGenerate(characterId, instr, body).then(function (text) {
+      rec.text = text;
+      return dbCreate(COLL_ANAS, rec);
+    }).then(function () {
+      return reloadAnas();
+    }).then(function () {
+      setBusy(false);
+      openAna(rec.id);
+      toast("已保存到「分析」");
+    }).catch(function (err) {
+      setBusy(false);
+      showNotice("问角色失败", String(err && err.message ? err.message : err));
+    });
+  }
+
+  /* ── 分析详情 ── */
+  function openAna(id) {
+    var a = store.anas.filter(function (x) { return x.id === id; })[0];
+    if (!a) return;
+    store.lastAna = a;
+    $("qnAnaTitle").textContent = a.title || "分析";
+    $("qnAnaSub").textContent = (a.characterName || "AI") + " · " + fmtTime(a.createdAt) + (a.noteIds.length ? " · 涉及 " + a.noteIds.length + " 条想法" : "");
+    $("qnAnaBody").innerHTML = '<div class="who">' + escapeHtml(a.characterName || "AI") + '</div>' + simpleMd(a.text);
+    $("qnAnaChat").style.display = canSendChat ? "" : "none";
+    $("qnAnaChat").textContent = a.sentToChat ? "再发一次" : "发到聊天室";
+    $("qnAnaSheet").setAttribute("data-open", "1");
+  }
+  function simpleMd(text) {
+    var esc = escapeHtml(text || "");
+    var lines = esc.split(/\n/);
+    var out = [], inUl = false;
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      var h = ln.match(/^#{1,4}\s+(.*)$/) || ln.match(/^\*\*(.+)\*\*$/);
+      var li = ln.match(/^\s*[-*]\s+(.*)$/);
+      if (li) { if (!inUl) { out.push("<ul>"); inUl = true; } out.push("<li>" + li[1] + "</li>"); continue; }
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (h) { out.push("<h4>" + h[1] + "</h4>"); continue; }
+      if (!ln.trim()) { out.push(""); continue; }
+      out.push("<p>" + ln + "</p>");
+    }
+    if (inUl) out.push("</ul>");
+    return '<div class="qn-md">' + out.join("") + "</div>";
+  }
+  function sendAnaToChat() {
+    var a = store.lastAna;
+    if (!a || !canSendChat) return;
+    if (!a.characterId) { showNotice("无法发送", "这篇分析没有关联角色。"); return; }
+    $("qnAnaChat").disabled = true;
+    AI.chat.sendMessage({ characterId: a.characterId, text: "【" + (a.title || "分析") + "】\n" + a.text }).then(function () {
+      var patch = { sentToChat: true };
+      dbUpdate(COLL_ANAS, a.id, patch).then(function () { a.sentToChat = true; }).catch(function () {});
+      $("qnAnaChat").textContent = "已发送 ✓";
+      toast("已发到与 " + (a.characterName || "角色") + " 的聊天");
+    }).catch(function (err) {
+      showNotice("发送失败", String(err && err.message ? err.message : err));
+    }).then(function () { $("qnAnaChat").disabled = false; });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     6. 批量 AI 整理
+     ══════════════════════════════════════════════════════ */
+  function aiOrganizeAll() {
+    var inbox = store.notes.filter(function (n) { return n.status === "inbox"; });
+    if (!inbox.length) { toast("收集箱是空的，没有要整理的"); return; }
+    askConfirm("用 AI 整理收集箱里的 " + inbox.length + " 条想法？\n（逐条归类 + 打标签 + 写摘要，需要一点时间）", { okText: "开始整理" }).then(function (ok) {
+      if (!ok) return;
+      var i = 0;
+      function step() {
+        if (i >= inbox.length) { setBusy(false); return reloadNotes().then(function () { toast("整理完成"); }); }
+        var n = inbox[i++];
+        setBusy(true, "AI 整理中…（" + i + "/" + inbox.length + "）");
+        return organizeNote(n).then(function (r) {
+          var patch = { category: r.category || n.category, tags: (r.tags && r.tags.length ? r.tags : n.tags), aiSummary: r.summary || "", status: "sorted", updatedAt: nowIso() };
+          return dbUpdate(COLL_NOTES, n.id, patch).catch(function () {});
+        }).catch(function () { /* 单条失败跳过 */ }).then(step);
+      }
+      step();
+    });
+  }
+  function aiBatchSummarize() {
+    if (!store.notes.length) { toast("还没有想法"); return; }
+    var sel = filteredNotes().slice(0, 40).map(function (n) { return "· " + titleOf(n) + "：" + (n.text || "").replace(/\s+/g, " ").slice(0, 120); }).join("\n");
+    setBusy(true, "AI 正在归纳…"); store.view = "notes";
+    aiChat(SYS_BATCH, sel, { temperature: 0.5, maxTokens: 1200 }).then(function (text) {
+      var rec = { id: uid("ana"), noteIds: [], noteTitles: [], characterId: "", characterName: "AI 归纳", mode: "summarize", title: "AI 归纳（" + new Date().toLocaleDateString() + "）", text: text, sentToChat: false, createdAt: nowIso() };
+      return dbCreate(COLL_ANAS, rec).then(function () { return rec.id; });
+    }).then(function (id) {
+      return reloadAnas().then(function () { setBusy(false); store.view = "anas"; renderAll(); openAna(id); toast("归纳完成"); });
+    }).catch(function (err) {
+      setBusy(false); showNotice("归纳失败", String(err && err.message ? err.message : err));
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     7. 设置
+     ══════════════════════════════════════════════════════ */
+  function openSettings() {
+    $("qnSetCats").value = store.cats.join("\n");
+    var sel = $("qnSetChar");
+    sel.innerHTML = '<option value="">（不指定，每次手动选）</option>' + store.chars.map(function (c) {
+      return '<option value="' + escapeHtml(String(c.id)) + '"' + (String(c.id) === store.defaultCharId ? " selected" : "") + ">" + escapeHtml(c.name || c.id) + "</option>";
+    }).join("");
+    $("qnSetSheet").setAttribute("data-open", "1");
+  }
+  function saveSettings() {
+    var cats = $("qnSetCats").value.split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 40);
+    store.cats = cats.length ? cats : DEFAULT_CATS.slice();
+    store.defaultCharId = $("qnSetChar").value || "";
+    saveMeta().then(function () { closeSheets(); renderAll(); refreshDatalist(); toast("设置已保存"); });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     8. 事件绑定
+     ══════════════════════════════════════════════════════ */
+  function closeSheets() {
+    ["qnEditSheet", "qnCharSheet", "qnAnaSheet", "qnSetSheet"].forEach(function (id) { $(id).setAttribute("data-open", "0"); });
+  }
+
+  function bind() {
+    // 列表点击
+    $("qnList").addEventListener("click", function (e) {
+      var card = e.target.closest ? e.target.closest("[data-open-note]") : null;
+      if (card) { openEditor(card.getAttribute("data-open-note")); return; }
+      var ana = e.target.closest ? e.target.closest("[data-open-ana]") : null;
+      if (ana) { openAna(ana.getAttribute("data-open-ana")); return; }
+    });
+    // 分类 chips
+    $("qnChips").addEventListener("click", function (e) {
+      var b = e.target.closest ? e.target.closest("[data-cat]") : null;
+      if (!b) return;
+      var val = b.getAttribute("data-cat");
+      store.cat = (store.cat === val) ? "" : val;
+      renderChips(); renderList();
+    });
+    // 搜索 / 排序 / tab
+    $("qnSearch").addEventListener("input", function () { store.q = this.value; renderList(); });
+    $("qnSort").addEventListener("change", function () { store.sort = this.value; renderList(); });
+    $("qnTabNotes").addEventListener("click", function () { store.view = "notes"; renderAll(); });
+    $("qnTabAnas").addEventListener("click", function () { store.view = "anas"; renderAll(); });
+    $("qnNew").addEventListener("click", function () { openEditor(""); });
+    $("qnRefresh").addEventListener("click", function () {
+      var p = store.view === "anas" ? reloadAnas() : reloadNotes();
+      Promise.resolve(p).then(function () { toast("已刷新"); });
+    });
+    $("qnSettings").addEventListener("click", openSettings);
+    $("qnAiAll").addEventListener("click", function () {
+      // 优先「问角色」批量点评；若没角色则退化为逐条 AI 整理
+      var inbox = store.notes.filter(function (n) { return n.status === "inbox"; });
+      if (store.chars.length) {
+        askConfirm("对收集箱的 " + inbox.length + " 条想法做点什么？\n\n· 让角色点评 = 选中角色读一遍并给建议\n· 逐条 AI 整理 = 自动归类打标签写摘要", { okText: "让角色点评" }).then(function (ok) {
+          if (ok) {
+            if (!inbox.length) { toast("收集箱是空的"); return; }
+            openCharPicker({ mode: "inbox", notes: inbox });
+          } else {
+            askConfirm("改为逐条 AI 整理？", { okText: "整理" }).then(function (yes) { if (yes) aiOrganizeAll(); });
+          }
+        });
+      } else {
+        aiOrganizeAll();
+      }
+    });
+
+    // 编辑面板
+    $("qnFStatus").addEventListener("click", function (e) {
+      var b = e.target.closest ? e.target.closest("[data-val]") : null;
+      if (b) setStatusChips(b.getAttribute("data-val"));
+    });
+    $("qnEditSave").addEventListener("click", saveEditor);
+    $("qnEditDel").addEventListener("click", deleteEditor);
+    $("qnEditAi").addEventListener("click", runOrganizeInEditor);
+    $("qnEditAsk").addEventListener("click", function () {
+      var e = collectEditor();
+      if (!e.text.trim() && !e.title.trim()) { toast("先写点内容"); return; }
+      openCharPicker({ mode: "single", notes: [e] });
+    });
+
+    // 选角色
+    $("qnCharList").addEventListener("click", function (e) {
+      var c = e.target.closest ? e.target.closest("[data-char]") : null;
+      if (c) runAskCharacter(c.getAttribute("data-char"));
+    });
+
+    // 分析面板
+    $("qnAnaCopy").addEventListener("click", function () { if (store.lastAna) copyText(store.lastAna.text); });
+    $("qnAnaChat").addEventListener("click", sendAnaToChat);
+    $("qnAnaDel").addEventListener("click", function () {
+      var a = store.lastAna; if (!a) return;
+      askConfirm("删除这篇分析？", { danger: true, okText: "删除" }).then(function (ok) {
+        if (!ok) return;
+        dbDelete(COLL_ANAS, a.id).then(function () { closeSheets(); return reloadAnas(); }).then(function () { toast("已删除"); });
+      });
+    });
+
+    // 设置
+    $("qnSetSave").addEventListener("click", saveSettings);
+
+    // 弹窗
+    $("qnDialogOk").addEventListener("click", function () { _closeDialog(true); });
+    $("qnDialogCancel").addEventListener("click", function () { _closeDialog(false); });
+    $("qnDialog").querySelector(".qn-dialog-mask").addEventListener("click", function () { _closeDialog(false); });
+
+    // 抽屉关闭
+    document.addEventListener("click", function (e) {
+      var x = e.target.closest ? e.target.closest("[data-close]") : null;
+      if (x) closeSheets();
+    });
+
+    // 从宿主同步：宿主速记小窗写入后广播的事件（若宿主支持）
+    if (AI && AI.on) {
+      try { AI.on("app.data.changed", function () { reloadNotes(); }); } catch (e) {}
+    }
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") { reloadNotes(); }
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
+     9. 启动
+     ══════════════════════════════════════════════════════ */
+  function boot() {
+    bind();
+    if (!canDb) {
+      $("qnList").innerHTML = '<div class="qn-empty"><b>存储不可用</b>当前环境没有可用的数据接口（app.data.read/write）。</div>';
+      renderTabs();
+      return;
+    }
+    setBusy(true, "加载中…");
+    loadAll().then(function () {
+      store.view = "notes";
+      setBusy(false);
+      renderAll();
+      refreshDatalist();
+    }).catch(function (err) {
+      setBusy(false);
+      $("qnList").innerHTML = '<div class="qn-empty">加载失败：' + escapeHtml(String(err && err.message ? err.message : err)) + "</div>";
+    });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>
+</body>
+</html>

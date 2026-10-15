@@ -12,6 +12,7 @@ import {
   closeMascotPanel,
   deactivateMascot,
 } from "@/lib/mascot-state";
+import { LLM_SPEND_NOTICE_EVENT, type LlmSpendNoticeDetail } from "@/lib/api-accounts";
 import { getMascotContext, subscribeMascotContext } from "@/lib/mascot-context";
 import { mascotNavigate, DIY_WIDGET_PREVIEW_EVENT, type DiyWidgetPreviewEventDetail, type DiyWidgetPreviewRequest } from "@/lib/mascot-events";
 import { DIY_WIDGET_GUARD_STYLE } from "@/components/widgets/diy-widget-renderer";
@@ -618,6 +619,12 @@ export function MascotFloat() {
   const [nineSliceCalibration, setNineSliceCalibration] = useState<NineSliceCalibrationEventDetail | null>(null);
   const [diyWidgetPreview, setDiyWidgetPreview] = useState<DiyWidgetPreviewRequest | null>(null);
   const [activeMascotMessageIndex, setActiveMascotMessageIndex] = useState<number | null>(null);
+  /**
+   * 扣费提示：手机顶部的全局提示会被这个面板盖住（面板 z-index 9999 > 全局提示 8），
+   * 所以小窗开着时改成在面板内部就地弹一条，关掉面板再看全局那条。
+   */
+  const [chargeToast, setChargeToast] = useState<LlmSpendNoticeDetail | null>(null);
+  const chargeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const msgLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const msgLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const msgLongPressTriggeredRef = useRef(false);
@@ -628,6 +635,29 @@ export function MascotFloat() {
   useEffect(() => {
     void hydrateMascotChat();
   }, []);
+
+  // 扣费提示：自动扣费时在面板内部就地显示（手机顶部那条全局提示会被本面板盖住）
+  useEffect(() => {
+    const onSpend = (event: Event) => {
+      // 面板没开时全局提示不会被挡，交给它显示就够了，这里不重复弹
+      if (!isMascotPanelOpen()) return;
+      const detail = (event as CustomEvent<LlmSpendNoticeDetail>).detail;
+      if (!detail) return;
+      setChargeToast(detail);
+      if (chargeToastTimerRef.current) clearTimeout(chargeToastTimerRef.current);
+      chargeToastTimerRef.current = setTimeout(() => setChargeToast(null), 3600);
+    };
+    window.addEventListener(LLM_SPEND_NOTICE_EVENT, onSpend);
+    return () => {
+      window.removeEventListener(LLM_SPEND_NOTICE_EVENT, onSpend);
+      if (chargeToastTimerRef.current) clearTimeout(chargeToastTimerRef.current);
+    };
+  }, []);
+
+  // 面板关掉后清掉残留提示，免得下次打开还挂着上一笔的旧数字
+  useEffect(() => {
+    if (!panelOpen) setChargeToast(null);
+  }, [panelOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1933,6 +1963,50 @@ export function MascotFloat() {
         }
         .mascot-ctx-home:active { color: var(--mascot-text, rgba(255,255,255,0.6)); }
 
+        /* ── 扣费提示 ──
+           手机顶部那条全局提示在 z-index 上低于本面板（8 < 9999），小窗一开就被压住看不见，
+           所以扣费改成在面板内部浮一条，3.6s 自动消失，pointer-events:none 不挡操作。 */
+        .mascot-charge-toast {
+          position: absolute;
+          top: 12px;
+          left: 10px;
+          right: 10px;
+          z-index: 4;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 7px 10px;
+          border-radius: 11px;
+          background: rgba(18, 16, 28, 0.96);
+          border: 1px solid var(--mascot-accent, rgba(200,180,240,0.55));
+          box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+          color: var(--mascot-text, rgba(255,255,255,0.92));
+          font-size: calc(11.5px*var(--app-text-scale,1));
+          pointer-events: none;
+          animation: mascot-charge-in 200ms ease-out both;
+        }
+        .mascot-charge-toast b {
+          color: var(--mascot-accent, #c8b4f0);
+          font-size: calc(13.5px*var(--app-text-scale,1));
+          font-weight: 700;
+          flex-shrink: 0;
+        }
+        .mascot-charge-toast span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .mascot-charge-toast small {
+          margin-left: auto;
+          flex-shrink: 0;
+          color: var(--mascot-text-dim, rgba(255,255,255,0.62));
+        }
+        @keyframes mascot-charge-in {
+          from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
         /* ── Chat area ── */
         .mascot-chat {
           border-top: 1px solid var(--mascot-border, rgba(255,255,255,0.06));
@@ -2237,6 +2311,14 @@ export function MascotFloat() {
             >
               {/* 模块抽屉 — 任何页面都显示，作为统一的顶部把手 */}
               {moduleDrawer}
+              {/* 扣费提示：就地显示，免得被面板自己盖住 */}
+              {chargeToast ? (
+                <div className="mascot-charge-toast" role="status" aria-live="polite">
+                  <b>−{chargeToast.amount}</b>
+                  <span>{chargeToast.configName}</span>
+                  <small>剩 {chargeToast.balance}</small>
+                </div>
+              ) : null}
               {isDesktop ? (
                 <>
                   {/* Chat section */}

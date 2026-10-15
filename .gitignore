@@ -34,3 +34,10 @@ android-shell/.gradle/
 android-shell/app/build/
 *.apk
 FloatShell-*.apk
+
+# Temporary local work files
+.workbuddy/
+preview_header_fix.html
+api-folders-*.patch
+api-folders-patch-*.zip
+worldbook-file-vault-patch-*.zip

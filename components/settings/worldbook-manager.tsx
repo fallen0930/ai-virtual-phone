@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback } from "react";
-import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace } from "lucide-react";
+import { Plus, BookOpen, FileText, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace } from "lucide-react";
 import {
     loadWorldBooks,
     saveWorldBooks,
@@ -12,8 +12,10 @@ import {
 } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import type { WorldBookConfig, WorldBookEntry } from "@/lib/settings-types";
+import type { WorldBookEntryDraft } from "@/lib/worldbook-file-vault";
 import { SettingsContext } from "../phone-settings-app";
 import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
+import { WorldBookFileVaultImport } from "./worldbook-file-vault";
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 
@@ -369,6 +371,8 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
     // ── 条目级导入/导出（左滑「替换/导出」+ 底部「添加条目」菜单） ──
     const [addEntryMenuOpen, setAddEntryMenuOpen] = useState(false);
+    /** 从文件库导入条目（选材料 → 选分条方式 → 预览 → 落库） */
+    const [fvImportOpen, setFvImportOpen] = useState(false);
     const entryFileInputRef = useRef<HTMLInputElement>(null);
     const entryImportModeRef = useRef<{ mode: "append" } | { mode: "replace"; uid: string } | null>(null);
 
@@ -426,6 +430,33 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         // 保留原 uid，只替换内容
         const finalEntry = { ...sanitized, uid: targetUid };
         updateBook(book.id, { entries: (book.entries || []).map(e => e.uid === targetUid ? finalEntry : e) });
+    };
+
+    /**
+     * 从文件库导入：把草稿（关键词 / 正文 / 备注）补上默认触发设置后落到当前世界书。
+     * 默认值走 sanitizeEntryImport，和 JSON 导入完全同源，避免两套默认值漂移。
+     */
+    const importDraftsFromFileVault = (drafts: WorldBookEntryDraft[]) => {
+        if (!activeBook) return;
+        const base = Date.now();
+        const appended = drafts
+            .map((draft, i) => sanitizeEntryImport(draft, `wb-entry-${base + i}`))
+            .filter((entry): entry is WorldBookEntry => !!entry);
+        setFvImportOpen(false);
+        if (appended.length === 0) {
+            setImportError("这些材料没能转成世界书条目。");
+            return;
+        }
+        updateBook(activeBook.id, { entries: [...(activeBook.entries || []), ...appended] });
+        setEditingUid(appended[0].uid);
+        window.dispatchEvent(new CustomEvent("global-notice", {
+            detail: `已从文件库添加 ${appended.length} 条世界书条目`,
+        }));
+        window.setTimeout(() => {
+            wbContainerRef.current
+                ?.querySelector(`[data-swipe-id="${CSS.escape(appended[0].uid)}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
     };
 
     const exportEntry = async (entry: WorldBookEntry) => {
@@ -911,9 +942,25 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                         >
                             <Upload size={16} /> 从 JSON 文件导入
                         </button>
+                        <button
+                            type="button"
+                            className="ui-btn ui-btn-outline w-full"
+                            onClick={() => {
+                                setAddEntryMenuOpen(false);
+                                setFvImportOpen(true);
+                            }}
+                        >
+                            <FileText size={16} /> 从文件库导入
+                        </button>
                     </div>
                 </BottomSheet>
             )}
+
+            <WorldBookFileVaultImport
+                open={fvImportOpen}
+                onClose={() => setFvImportOpen(false)}
+                onImport={importDraftsFromFileVault}
+            />
 
             {expandUid && (() => {
                 const entry = activeBook?.entries?.find(e => e.uid === expandUid);

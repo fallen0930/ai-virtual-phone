@@ -6,6 +6,9 @@ import type {
     RegexConfig,
     RegexRule,
     ApiConfig,
+    ApiGroup,
+    ApiAccount,
+    ApiLedgerEntry,
     VoiceApiConfig,
     ImageGenerationSettings,
     OpenAiImagePreset,
@@ -79,6 +82,9 @@ function isUnsupportedWorldBookFormat(obj: Record<string, unknown>): boolean {
 
 // --- Keys ---
 const API_CONFIGS_KEY = "ai_phone_api_configs_v1";
+const API_GROUPS_KEY = "ai_phone_api_groups_v1";
+const API_ACCOUNTS_KEY = "ai_phone_api_accounts_v1";
+const API_LEDGER_KEY = "ai_phone_api_ledger_v1";
 const VOICE_CONFIGS_KEY = "ai_phone_voice_configs_v1";
 const IMAGE_GENERATION_SETTINGS_KEY = "ai_phone_image_generation_settings_v1";
 const BINDINGS_KEY = "ai_phone_bindings_v1";
@@ -89,6 +95,9 @@ const USER_IDENTITIES_KEY = "ai_phone_user_identities_v1";
 // Legacy key for migration
 const LEGACY_OVERRIDES_KEY = "ai_phone_char_settings_v1";
 registerKvMigration(API_CONFIGS_KEY);
+registerKvMigration(API_GROUPS_KEY);
+registerKvMigration(API_ACCOUNTS_KEY);
+registerKvMigration(API_LEDGER_KEY);
 registerKvMigration(VOICE_CONFIGS_KEY);
 registerKvMigration(IMAGE_GENERATION_SETTINGS_KEY);
 registerKvMigration(BINDINGS_KEY);
@@ -648,6 +657,106 @@ export function loadApiConfigs(): ApiConfig[] {
 export function saveApiConfigs(configs: ApiConfig[]): void {
     if (typeof window === "undefined") return;
     kvSet(API_CONFIGS_KEY, JSON.stringify(configs.map(normalizeApiConfig)));
+}
+
+// --- API Groups（文件夹） ──────────────────────────────────────
+
+function normalizeApiGroup(group: ApiGroup): ApiGroup {
+    return {
+        id: typeof group?.id === "string" ? group.id : generateId("apigroup"),
+        name: typeof group?.name === "string" && group.name.trim() ? group.name : "新文件夹",
+        collapsed: group?.collapsed === true,
+        createdAt: typeof group?.createdAt === "number" ? group.createdAt : undefined,
+    };
+}
+
+export function loadApiGroups(): ApiGroup[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = kvGet(API_GROUPS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as ApiGroup[];
+        return Array.isArray(parsed) ? parsed.map(normalizeApiGroup) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveApiGroups(groups: ApiGroup[]): void {
+    if (typeof window === "undefined") return;
+    kvSet(API_GROUPS_KEY, JSON.stringify(groups.map(normalizeApiGroup)));
+}
+
+// --- API Accounts（一个文件夹一本账） ────────────────────────────
+
+function normalizeApiAccount(raw: Partial<ApiAccount> | undefined): ApiAccount {
+    const balance = Number(raw?.balance);
+    const rate = Number(raw?.rate);
+    const lowThreshold = Number(raw?.lowThreshold);
+    return {
+        id: typeof raw?.id === "string" ? raw.id : "",
+        balance: Number.isFinite(balance) ? balance : 0,
+        rate: Number.isFinite(rate) && rate > 0 ? rate : 220,
+        lowThreshold: Number.isFinite(lowThreshold) && lowThreshold > 0 ? lowThreshold : undefined,
+        note: typeof raw?.note === "string" && raw.note.trim() ? raw.note : undefined,
+        autoCharge: raw?.autoCharge === false ? false : true,
+        billingMode: raw?.billingMode === "per_task" ? "per_task" : "per_call",
+        updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : undefined,
+    };
+}
+
+export function loadApiAccounts(): ApiAccount[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = kvGet(API_ACCOUNTS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as Partial<ApiAccount>[];
+        return Array.isArray(parsed) ? parsed.map(normalizeApiAccount) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveApiAccounts(accounts: ApiAccount[]): void {
+    if (typeof window === "undefined") return;
+    kvSet(API_ACCOUNTS_KEY, JSON.stringify(accounts.map(normalizeApiAccount)));
+}
+
+// --- API Ledger（账目流水，新→旧） ──────────────────────────────
+
+function normalizeApiLedgerEntry(raw: Partial<ApiLedgerEntry> | undefined): ApiLedgerEntry {
+    const amount = Number(raw?.amount);
+    const balanceAfter = Number(raw?.balanceAfter);
+    const createdAt = Number(raw?.createdAt);
+    const kind = raw?.kind === "topup" || raw?.kind === "set" ? raw.kind : "spend";
+    return {
+        id: typeof raw?.id === "string" && raw.id ? raw.id : generateId("apiledger"),
+        accountId: typeof raw?.accountId === "string" ? raw.accountId : "",
+        configId: typeof raw?.configId === "string" && raw.configId ? raw.configId : undefined,
+        configName: typeof raw?.configName === "string" && raw.configName ? raw.configName : undefined,
+        kind,
+        amount: Number.isFinite(amount) ? amount : 0,
+        balanceAfter: Number.isFinite(balanceAfter) ? balanceAfter : 0,
+        note: typeof raw?.note === "string" && raw.note.trim() ? raw.note : undefined,
+        createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    };
+}
+
+export function loadApiLedger(): ApiLedgerEntry[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = kvGet(API_LEDGER_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as Partial<ApiLedgerEntry>[];
+        return Array.isArray(parsed) ? parsed.map(normalizeApiLedgerEntry) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveApiLedger(entries: ApiLedgerEntry[]): void {
+    if (typeof window === "undefined") return;
+    kvSet(API_LEDGER_KEY, JSON.stringify(entries.map(normalizeApiLedgerEntry)));
 }
 
 // --- Voice Configs ──────────────────────────────────────────

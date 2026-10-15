@@ -35,6 +35,13 @@ function readArgOrEnv(name, envName, fallback) {
 }
 
 const isDev = process.argv.includes("--dev");
+// 自定义 server 不会继承 `next dev --turbopack`，必须显式传给 next()。
+// 只在 dev 下有意义：Turbopack 用 Rust 编译器，冷编译与增量热更都远快于 webpack，
+// 且内存占用低得多，能明显缓解大项目的 dev 卡顿。传 TURBOPACK=0 可强制退回 webpack。
+const useTurbopack =
+  isDev &&
+  process.env.TURBOPACK !== "0" &&
+  (process.argv.includes("--turbopack") || process.env.TURBOPACK === "1");
 const defaultPort = "3001";
 const port = Number(readArgOrEnv("--port", "PORT", defaultPort));
 const hostname = readArgOrEnv("--host", "HOST", isDev ? "0.0.0.0" : "127.0.0.1");
@@ -44,7 +51,8 @@ const app = next({
   dev: isDev,
   dir,
   hostname,
-  port
+  port,
+  turbopack: useTurbopack
 });
 
 const handle = app.getRequestHandler();

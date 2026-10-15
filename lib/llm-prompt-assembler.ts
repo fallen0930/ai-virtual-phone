@@ -1298,6 +1298,40 @@ function resolveWorldBookDepth(entry: WorldBookEntry): number {
     return 995;
 }
 
+/**
+ * 灾难性回溯（ReDoS）防护。
+ *
+ * 世界书的 key 和正则替换规则的 pattern 都是用户手写的，会直接拿去
+ * `new RegExp(...)` 再对整段上下文 / 整条消息执行。只要写出 `(a+)+`、
+ * `(\w+\s?)+x` 这类"量词套量词"的模式，在长文本上失配时回溯次数是
+ * 输入长度的指数级——一次 .test() 就能把浏览器主线程钉死几十秒到永久，
+ * 表现就是"页面点了没反应 / 整个手机卡住"。
+ *
+ * 这里做的是编译前的静态拦截：宁可误杀一条可疑规则（那条规则不生效），
+ * 也绝不让整页卡死。
+ */
+// 形如 (a+)+ / (\w+\s?)+x / (a*)* —— 被量词修饰的组里又含量词
+const REDOS_NESTED_QUANTIFIER = /\([^()]*[+*][^()]*\)[+*]/;
+// 正常用途写不出这么长的 pattern，超长一律按危险处理
+const MAX_REGEX_SRC_LENGTH = 500;
+// 参与正则匹配的文本上限；超出只保留尾部（关键词通常出现在近期对话里）
+const MAX_REGEX_TEST_TEXT_LENGTH = 200_000;
+
+/** 判断正则源码是否可能导致灾难性回溯。true = 有风险，不应编译执行。 */
+function isReDoSRiskyRegexSource(src: unknown): boolean {
+    if (typeof src !== "string" || !src) return false;
+    if (src.length > MAX_REGEX_SRC_LENGTH) return true;
+    return REDOS_NESTED_QUANTIFIER.test(src);
+}
+
+/** 给正则匹配兜底：文本过长时只保留尾部，避免超长输入放大回溯成本。 */
+function clampTextForRegex(text: string): string {
+    if (typeof text !== "string") return text;
+    return text.length > MAX_REGEX_TEST_TEXT_LENGTH
+        ? text.slice(text.length - MAX_REGEX_TEST_TEXT_LENGTH)
+        : text;
+}
+
 export function isWorldBookEntryActivated(entry: WorldBookEntry, contextText: string): boolean {
     if (entry.constant) return true;
 
@@ -1308,9 +1342,11 @@ export function isWorldBookEntryActivated(entry: WorldBookEntry, contextText: st
     let keyMatch = false;
     if (entry.use_regex) {
         keyMatch = keys.some(k => {
+            // 危险模式直接跳过：宁可这条 key 不生效，也不能把主线程卡死
+            if (isReDoSRiskyRegexSource(k)) return false;
             try {
                 const regex = new RegExp(k, "i");
-                return regex.test(contextText);
+                return regex.test(clampTextForRegex(contextText));
             } catch {
                 return false;
             }
@@ -1366,9 +1402,11 @@ function regexFromString(input: string): RegExp | null {
         const m = input.match(/(\/?)(.+)\1([a-z]*)/i);
         if (m) {
             if (m[3] && !/^(?!.*?(.).*?\1)[dgimsuyv]+$/.test(m[3])) {
-                compiled = new RegExp(input);
+                // 整串按普通文本处理，仍要挡住超长输入
+                compiled = input.length > MAX_REGEX_SRC_LENGTH ? null : new RegExp(input);
             } else {
-                compiled = new RegExp(m[2], m[3]);
+                // 用户自己写的 pattern：挡住量词嵌套这类会指数回溯的写法
+                compiled = isReDoSRiskyRegexSource(m[2]) ? null : new RegExp(m[2], m[3]);
             }
         }
     } catch {

@@ -6,24 +6,41 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-    Archive, ChevronLeft, Copy, Download, GlassWater, ImageDown, Martini, MoreHorizontal, Pencil, Play, Plug, Plus, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
+    Archive, Bookmark, ChevronLeft, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
 import {
     clearMixMaterialPublished,
     clearMixRecipePublished,
+    deleteMixFavorite,
+    deleteMixFolder,
     deleteMixMaterial,
     deleteMixRecipe,
     deleteMixSession,
+    deleteMixSessionFolder,
+    findRecipeFolderId,
+    findSessionFolderId,
     getMixBuiltin,
     getMixMaterial,
     isMixBuiltinId,
     listMixPickables,
     MIX_CABINET_UPDATED_EVENT,
     loadMixCabinet,
+    loadMixFavorites,
+    loadMixFolders,
     loadMixProfile,
     loadMixRecipes,
+    loadMixSessionFolders,
     loadMixSessions,
     markMixMaterialSynced,
     markMixRecipeSynced,
+    addRecipeToFolder,
+    addSessionToFolder,
+    removeRecipeFromFolder,
+    removeSessionFromFolder,
+    renameMixRecipe,
+    renameMixSession,
+    saveMixFavorite,
+    saveMixFolder,
+    saveMixSessionFolder,
     saveMixMaterial,
     saveMixProfile,
     saveMixRecipe,
@@ -31,7 +48,7 @@ import {
 } from "@/lib/mixology/storage";
 import { mixRoundCount, runMixSessionStart, startMixSession } from "@/lib/mixology/engine";
 import { disposeMixSandboxesForMaterial } from "@/lib/mixology/mechanism-runtime";
-import { mixKindRunsActiveCode } from "@/lib/mixology/types";
+import { mixKindRunsActiveCode, MIX_SLOT_STACK } from "@/lib/mixology/types";
 import {
     createMixId,
     MIX_KIND_LABELS,
@@ -40,10 +57,13 @@ import {
     mixCloudState,
     mixKindHasCover,
     type MixCharacterCard,
+    type MixFavoritePreset,
     type MixMaterial,
     type MixMaterialKind,
     type MixRecipe,
+    type MixRecipeFolder,
     type MixSession,
+    type MixSessionFolder,
     mixSlotEntries,
     mixSlotFirstId,
     type MixSlotEntry,
@@ -58,6 +78,15 @@ import { CommentThread, MixologyHall } from "./mixology-hall";
 import { AuthorAvatar, KindGlyph, MatCard, MaterialDetail, MixConfirm, MixTagList, SealedNote, formatMixTime } from "./mixology-shared";
 import { MixConnectorSheet } from "./connector-sheet";
 import { MixSlotEditor } from "./slot-editor";
+import { MixFileVaultImport } from "./mix-file-vault";
+import { MixReadCostPanel } from "./read-cost-panel";
+import { MixBalanceChip } from "./mix-balance-chip";
+import { ApiAccountPanel } from "@/components/settings/api-account-panel";
+import {
+    API_ACCOUNTS_UPDATED_EVENT,
+    accountLabel,
+} from "@/lib/api-accounts";
+import { resolveMixAccountId } from "@/lib/mixology/account";
 import { describeMixCondition } from "@/lib/mixology/state";
 
 /** 头像统一压成 192px JPEG dataURL 的小圆图，随发布上云也不占地方 */
@@ -93,7 +122,12 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [tab, setTab] = useState<MixTab>("bar");
     const [cabinet, setCabinet] = useState<MixMaterial[]>(() => loadMixCabinet());
     const [recipes, setRecipes] = useState<MixRecipe[]>(() => loadMixRecipes());
-    const [sessions, setSessions] = useState<MixSession[]>(() => loadMixSessions());
+    // 酒局列表只列「根对局」：分叉出来的支线（有 parentId）不在这里出现，
+    // 只能进对局后从 🌳 世界树查看/切换，避免"开个支线就多出一场对局"的观感。
+    const [sessions, setSessions] = useState<MixSession[]>(() => loadMixSessions().filter((s) => !s.parentId));
+    const [favorites, setFavorites] = useState<MixFavoritePreset[]>(() => loadMixFavorites());
+    const [folders, setFolders] = useState<MixRecipeFolder[]>(() => loadMixFolders());
+    const [sessionFolders, setSessionFolders] = useState<MixSessionFolder[]>(() => loadMixSessionFolders());
     const [cabinetKind, setCabinetKind] = useState<MixMaterialKind>("character");
     // 酒材/配方页手动刷新：令牌触发子组件重拉，loading 驱动头部图标旋转
     const [hallReload, setHallReload] = useState(0);
@@ -109,6 +143,10 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [profileOpen, setProfileOpen] = useState(false);
     // 连接器管理：玩家自己的外部接口配置（机括 mix.call 用），酒柜页头部打开
     const [connectorsOpen, setConnectorsOpen] = useState(false);
+    // API 账户：特调界面只做展示（当前全局默认 API 所属的那本账），方便随时对余额有概念
+    // 余额读数与扣费闪烁都在 MixBalanceChip 内部处理，这里只需要知道「是哪本账」
+    const [accountOpen, setAccountOpen] = useState(false);
+    const [accountId, setAccountId] = useState("");
     const [profileName, setProfileName] = useState("");
     const [profileAvatar, setProfileAvatar] = useState("");
     const avatarFileRef = useRef<HTMLInputElement | null>(null);
@@ -116,6 +154,37 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [editor, setEditor] = useState<{ kind: MixMaterialKind; initial?: MixMaterial } | null>(null);
     const [barTab, setBarTab] = useState<"create" | "mine">("create");
     const [recipeMenu, setRecipeMenu] = useState<MixRecipe | null>(null);
+    // 重命名配方
+    const [renameSheetOpen, setRenameSheetOpen] = useState(false);
+    const [renameTarget, setRenameTarget] = useState<MixRecipe | null>(null);
+    const [renameValue, setRenameValue] = useState("");
+    // 喜好配方
+    const [favPickerOpen, setFavPickerOpen] = useState(false);
+    const [favSaveSheetOpen, setFavSaveSheetOpen] = useState(false);
+    const [favSaveName, setFavSaveName] = useState("");
+    // 文件夹管理
+    const [folderSheetOpen, setFolderSheetOpen] = useState(false);
+    const [folderEditing, setFolderEditing] = useState<MixRecipeFolder | null>(null);
+    const [folderNameInput, setFolderNameInput] = useState("");
+    const [moveFolderSheetOpen, setMoveFolderSheetOpen] = useState(false);
+    const [moveFolderTarget, setMoveFolderTarget] = useState<MixRecipe | null>(null);
+    // 我的配方页：展开的文件夹
+    const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+    // 对局页：展开的文件夹
+    const [expandedSessionFolders, setExpandedSessionFolders] = useState<Set<string>>(new Set());
+    // 对局菜单（重命名 / 移动到文件夹 / 删除）
+    const [sessionMenu, setSessionMenu] = useState<MixSession | null>(null);
+    // 对局重命名
+    const [sessionRenameSheetOpen, setSessionRenameSheetOpen] = useState(false);
+    const [sessionRenameTarget, setSessionRenameTarget] = useState<MixSession | null>(null);
+    const [sessionRenameValue, setSessionRenameValue] = useState("");
+    // 对局移动到文件夹
+    const [sessionMoveFolderSheetOpen, setSessionMoveFolderSheetOpen] = useState(false);
+    const [sessionMoveFolderTarget, setSessionMoveFolderTarget] = useState<MixSession | null>(null);
+    // 对局文件夹新建/编辑
+    const [sessionFolderSheetOpen, setSessionFolderSheetOpen] = useState(false);
+    const [sessionFolderEditing, setSessionFolderEditing] = useState<MixSessionFolder | null>(null);
+    const [sessionFolderNameInput, setSessionFolderNameInput] = useState("");
     const [confirm, setConfirm] = useState<{
         title: string;
         body?: ReactNode;
@@ -131,7 +200,16 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [barEditing, setBarEditing] = useState<MixRecipe | null>(null);
     const [slotPicker, setSlotPicker] = useState<MixMaterialKind | null>(null);
     const [slotEditor, setSlotEditor] = useState<MixMaterialKind | null>(null);
+    /** 从文件库加材料：选文档 → 选槽位 → 预填材料编辑器 */
+    const [fvImportOpen, setFvImportOpen] = useState(false);
+    /**
+     * 材料编辑器保存后要不要自动进吧台：存下目标槽位。从文件库来的一律要——
+     * 用户的心智是「我要快速配一杯」，不该再让他手动去那一格找刚建好的材料。
+     */
+    const fvAutoSlotRef = useRef<MixMaterialKind | null>(null);
     const [nameSheetOpen, setNameSheetOpen] = useState(false);
+    /** 读取清单 · token 成本 面板（吧台里弹出） */
+    const [readCostOpen, setReadCostOpen] = useState(false);
     const [recipeName, setRecipeName] = useState("");
     const [openingPicker, setOpeningPicker] = useState<MixRecipe | null>(null);
     const [playing, setPlaying] = useState<string | null>(null);
@@ -163,10 +241,25 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         return () => { cancelled = true; };
     }, []);
 
+    // 账户：与对局同源 —— 快捷切换选中的全局模型所属文件夹；换模型后也要跟着换
+    useEffect(() => {
+        const sync = () => setAccountId(resolveMixAccountId());
+        sync();
+        window.addEventListener(API_ACCOUNTS_UPDATED_EVENT, sync);
+        window.addEventListener("settings-bindings-updated", sync);
+        return () => {
+            window.removeEventListener(API_ACCOUNTS_UPDATED_EVENT, sync);
+            window.removeEventListener("settings-bindings-updated", sync);
+        };
+    }, []);
+
     const refresh = useCallback(() => {
         setCabinet(loadMixCabinet());
         setRecipes(loadMixRecipes());
-        setSessions(loadMixSessions());
+        setSessions(loadMixSessions().filter((s) => !s.parentId));
+        setFavorites(loadMixFavorites());
+        setFolders(loadMixFolders());
+        setSessionFolders(loadMixSessionFolders());
     }, []);
 
     // 小卷工具直写酒柜/配方后广播这个事件——不监听的话，App 开着时
@@ -276,6 +369,199 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         refresh();
         setBarTab("mine");
         showToast(`「${name}」已入方案。`);
+    };
+
+    // ── 重命名配方 ──
+    const handleRenameConfirm = () => {
+        if (!renameTarget || !renameValue.trim()) return;
+        renameMixRecipe(renameTarget.id, renameValue.trim());
+        setRenameSheetOpen(false);
+        setRenameTarget(null);
+        refresh();
+        showToast("已重命名。");
+    };
+
+    // ── 重命名对局 ──
+    const handleSessionRenameConfirm = () => {
+        if (!sessionRenameTarget) return;
+        renameMixSession(sessionRenameTarget.id, sessionRenameValue);
+        setSessionRenameSheetOpen(false);
+        setSessionRenameTarget(null);
+        refresh();
+        showToast("已重命名。");
+    };
+
+    // ── 喜好配方 ──
+    const handleFavSave = () => {
+        if (!favSaveName.trim()) return;
+        const preset: MixFavoritePreset = {
+            id: createMixId("mixfav"),
+            name: favSaveName.trim(),
+            slots: { ...barSlots },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        saveMixFavorite(preset);
+        setFavSaveSheetOpen(false);
+        setFavSaveName("");
+        refresh();
+        showToast(`「${preset.name}」已存为喜好配方。`);
+    };
+
+    const handleFavApply = (fav: MixFavoritePreset) => {
+        // 把喜好配方里的槽位合并到吧台：有冲突的覆盖
+        setBarSlots((prev) => {
+            const next = { ...prev };
+            for (const kind of Object.keys(fav.slots) as MixMaterialKind[]) {
+                next[kind] = fav.slots[kind];
+            }
+            return next;
+        });
+        setFavPickerOpen(false);
+        showToast(`已套用「${fav.name}」。`);
+    };
+
+    // ── 文件夹管理 ──
+    const handleFolderSave = () => {
+        const name = folderNameInput.trim();
+        if (!name) return;
+        if (folderEditing) {
+            saveMixFolder({ ...folderEditing, name, updatedAt: Date.now() });
+            showToast("文件夹已更新。");
+        } else {
+            const now = Date.now();
+            const newFolder: MixRecipeFolder = {
+                id: createMixId("mixfld"),
+                name,
+                recipeIds: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            saveMixFolder(newFolder);
+            showToast(`「${name}」文件夹已创建。`);
+        }
+        setFolderSheetOpen(false);
+        setFolderEditing(null);
+        setFolderNameInput("");
+        refresh();
+    };
+
+    // ── 对局文件夹管理 ──
+    const handleSessionFolderSave = () => {
+        const name = sessionFolderNameInput.trim();
+        if (!name) return;
+        if (sessionFolderEditing) {
+            saveMixSessionFolder({ ...sessionFolderEditing, name, updatedAt: Date.now() });
+            showToast("文件夹已更新。");
+        } else {
+            const now = Date.now();
+            const newFolder: MixSessionFolder = {
+                id: createMixId("mixsfld"),
+                name,
+                sessionIds: [],
+                createdAt: now,
+                updatedAt: now,
+            };
+            saveMixSessionFolder(newFolder);
+            showToast(`「${name}」文件夹已创建。`);
+        }
+        setSessionFolderSheetOpen(false);
+        setSessionFolderEditing(null);
+        setSessionFolderNameInput("");
+        refresh();
+    };
+
+    // ── 配方卡片渲染（我的配方列表和文件夹内共用） ──
+    const renderRecipeCard = (recipe: MixRecipe) => {
+        const recipeCardId = mixSlotFirstId(recipe.slots, "character");
+        const card = recipeCardId ? cabinet.find((m) => m.id === recipeCardId) : null;
+        const parts = MIX_SLOT_ORDER
+            .filter((k) => k !== "character")
+            .flatMap((k) => mixSlotEntries(recipe.slots, k)
+                .map((entry) => (getMixBuiltin(entry.materialId) ?? cabinet.find((m) => m.id === entry.materialId))?.name))
+            .filter(Boolean);
+        // 配方的云端徽章：自己改过搭配、或任一自有材料没上架/没同步，都算"有未上架修改"
+        const cloudBadge = (() => {
+            if (recipe.imported || !recipe.publishedId) return null;
+            const partsDirty = MIX_SLOT_ORDER.some((k) => mixSlotEntries(recipe.slots, k).some((entry) => {
+                if (isMixBuiltinId(entry.materialId)) return false;
+                const m = cabinet.find((x) => x.id === entry.materialId);
+                return Boolean(m) && !m!.imported && mixCloudState(m!) !== "synced";
+            }));
+            return mixCloudState(recipe) === "dirty" || partsDirty ? "有未上架修改" : "已上架";
+        })();
+        return (
+            <div className="mix-recipe-card" key={recipe.id}>
+                {card?.cover ? <div className="mix-recipe-bg" style={{ backgroundImage: `url(${card.cover})` }} /> : null}
+                <div className="mix-recipe-main">
+                    <div className="mix-recipe-name">
+                        {recipe.name}
+                        {cloudBadge ? <span className="mix-cloud-badge" data-dirty={cloudBadge === "已上架" ? undefined : "true"}>{cloudBadge}</span> : null}
+                    </div>
+                    <div className="mix-recipe-parts">
+                        {card ? card.name : "（角色卡缺失）"}
+                        {parts.length ? ` · ${parts.join(" · ")}` : " · 素杯"}
+                    </div>
+                </div>
+                <div className="mix-recipe-actions">
+                    <button
+                        type="button"
+                        className="mix-round-btn"
+                        data-tone="gold"
+                        onClick={() => handleStartRecipe(recipe)}
+                        aria-label="开始对局"
+                        title="开始"
+                    >
+                        <Play size={17} fill="currentColor" />
+                    </button>
+                    <button
+                        type="button"
+                        className="mix-round-btn"
+                        onClick={() => setRecipeMenu(recipe)}
+                        aria-label="更多操作"
+                        title="更多"
+                    >
+                        <MoreHorizontal size={18} />
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    /** 对局展示名：玩家改过名就用改的，否则按「角色名 · 配方名」兜底 */
+    const sessionDisplayName = (session: MixSession): string =>
+        session.name?.trim() || `${session.charName} · ${session.recipe.name}`;
+
+    // ── 对局行渲染（对局列表和文件夹内共用） ──
+    const renderSessionRow = (session: MixSession) => {
+        const sessionCardId = mixSlotFirstId(session.recipe.slots, "character");
+        const card = sessionCardId ? cabinet.find((m) => m.id === sessionCardId) : null;
+        return (
+            <div className="mix-session-row" key={session.id} onClick={() => setPlaying(session.id)}>
+                {card?.cover ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="mix-session-ava" src={card.cover} alt={session.charName} />
+                ) : (
+                    <div className="mix-session-ava-fallback">{session.charName.slice(0, 1)}</div>
+                )}
+                <div className="mix-session-info">
+                    <div className="mix-session-name">{sessionDisplayName(session)}</div>
+                    <div className="mix-session-sub">{mixRoundCount(session.turns)} 轮 · {formatMixTime(session.updatedAt)}</div>
+                </div>
+                <button
+                    type="button"
+                    className="mix-icon-btn"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setSessionMenu(session);
+                    }}
+                    aria-label="更多操作"
+                    title="更多"
+                >
+                    <MoreHorizontal size={18} />
+                </button>
+            </div>
+        );
     };
 
     const handleStartRecipe = (recipe: MixRecipe) => {
@@ -620,6 +906,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         </button>
                         <button type="button" className="mix-icon-btn" onClick={() => setConnectorsOpen(true)} aria-label="连接器" title="连接器：给机括用的外部接口"><Plug size={17} /></button>
                         <button type="button" className="mix-icon-btn" onClick={() => importFileRef.current?.click()} aria-label="导入材料" title="从文件导入"><Upload size={17} /></button>
+                        <button type="button" className="mix-icon-btn" onClick={() => setFvImportOpen(true)} aria-label="从文件库加材料" title="从文件库加材料：挑一篇文档一键变成材料"><FileText size={17} /></button>
                     </>
                 ) : null}
                 {tab === "menu" || tab === "hall" ? (
@@ -640,6 +927,11 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         </button>
                     </>
                 ) : null}
+                <MixBalanceChip
+                    accountId={accountId || undefined}
+                    onClick={() => setAccountOpen(true)}
+                    title={`${accountLabel(accountId)}：点开看余额明细、记一笔`}
+                />
             </div>
 
             {/* TAG 行在滚动容器之外：真固定，橡皮筋回弹只作用下面的内容区 */}
@@ -760,6 +1052,47 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         <button type="button" className="mix-brew-btn" onClick={handleBrew} disabled={!mixSlotEntries(barSlots, "character").length}>
                             <Martini size={17} />调 配
                         </button>
+                        <div className="mix-bar-quick-actions">
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => {
+                                    const filledKinds = Object.keys(barSlots).filter((k) => mixSlotEntries(barSlots, k as MixMaterialKind).length > 0);
+                                    if (filledKinds.length === 0) {
+                                        showToast("吧台还空着，先配几味。");
+                                        return;
+                                    }
+                                    setFavSaveName(filledKinds.slice(0, 2).map((k) => MIX_KIND_LABELS[k as MixMaterialKind]).join("+") + " 组合");
+                                    setFavSaveSheetOpen(true);
+                                }}
+                                disabled={Object.keys(barSlots).filter((k) => mixSlotEntries(barSlots, k as MixMaterialKind).length > 0).length === 0}
+                            >
+                                <Bookmark size={14} />存为喜好
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => setFavPickerOpen(true)}
+                            >
+                                <SlidersHorizontal size={14} />喜好配方
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => setReadCostOpen(true)}
+                                disabled={Object.keys(barSlots).filter((k) => mixSlotEntries(barSlots, k as MixMaterialKind).length > 0).length === 0}
+                            >
+                                <Receipt size={14} />读取清单
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-pill-btn"
+                                onClick={() => setFvImportOpen(true)}
+                                title="从文件库挑一篇世界观 / 人设材料，一键变成材料并放进对应槽位"
+                            >
+                                <FileText size={14} />从文件库加材料
+                            </button>
+                        </div>
                     </div>
                     ) : recipes.length === 0 ? (
                             <div className="mix-empty" style={{ paddingTop: 70 }}>
@@ -769,61 +1102,91 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 去「创建配方」配齐材料，按下「调配」。
                             </div>
                         ) : (
-                            recipes.map((recipe) => {
-                                const recipeCardId = mixSlotFirstId(recipe.slots, "character");
-                                const card = recipeCardId ? cabinet.find((m) => m.id === recipeCardId) : null;
-                                const parts = MIX_SLOT_ORDER
-                                    .filter((k) => k !== "character")
-                                    .flatMap((k) => mixSlotEntries(recipe.slots, k)
-                                        .map((entry) => (getMixBuiltin(entry.materialId) ?? cabinet.find((m) => m.id === entry.materialId))?.name))
-                                    .filter(Boolean);
-                                // 配方的云端徽章：自己改过搭配、或任一自有材料没上架/没同步，都算"有未上架修改"
-                                const cloudBadge = (() => {
-                                    if (recipe.imported || !recipe.publishedId) return null;
-                                    const partsDirty = MIX_SLOT_ORDER.some((k) => mixSlotEntries(recipe.slots, k).some((entry) => {
-                                        if (isMixBuiltinId(entry.materialId)) return false;
-                                        const m = cabinet.find((x) => x.id === entry.materialId);
-                                        return Boolean(m) && !m!.imported && mixCloudState(m!) !== "synced";
-                                    }));
-                                    return mixCloudState(recipe) === "dirty" || partsDirty ? "有未上架修改" : "已上架";
-                                })();
-                                return (
-                                    <div className="mix-recipe-card" key={recipe.id}>
-                                        {card?.cover ? <div className="mix-recipe-bg" style={{ backgroundImage: `url(${card.cover})` }} /> : null}
-                                        <div className="mix-recipe-main">
-                                            <div className="mix-recipe-name">
-                                                {recipe.name}
-                                                {cloudBadge ? <span className="mix-cloud-badge" data-dirty={cloudBadge === "已上架" ? undefined : "true"}>{cloudBadge}</span> : null}
-                                            </div>
-                                            <div className="mix-recipe-parts">
-                                                {card ? card.name : "（角色卡缺失）"}
-                                                {parts.length ? ` · ${parts.join(" · ")}` : " · 素杯"}
-                                            </div>
-                                        </div>
-                                        <div className="mix-recipe-actions">
+                            <>
+                                {/* 文件夹管理栏 */}
+                                <div className="mix-folder-bar">
+                                    <button
+                                        type="button"
+                                        className="mix-pill-btn"
+                                        onClick={() => {
+                                            setFolderEditing(null);
+                                            setFolderNameInput("");
+                                            setFolderSheetOpen(true);
+                                        }}
+                                    >
+                                        <FolderPlus size={14} />新建文件夹
+                                    </button>
+                                </div>
+
+                                {/* 按文件夹分组的配方列表 */}
+                                {folders.length > 0 ? folders.map((folder) => {
+                                    const folderRecipes = folder.recipeIds
+                                        .map((rid: string) => recipes.find((r: MixRecipe) => r.id === rid))
+                                        .filter((r): r is MixRecipe => Boolean(r));
+                                    const expanded = expandedFolders.has(folder.id);
+                                    return (
+                                        <div className="mix-folder-group" key={folder.id}>
                                             <button
                                                 type="button"
-                                                className="mix-round-btn"
-                                                data-tone="gold"
-                                                onClick={() => handleStartRecipe(recipe)}
-                                                aria-label="开始对局"
-                                                title="开始"
+                                                className="mix-folder-header"
+                                                onClick={() => {
+                                                    setExpandedFolders((prev) => {
+                                                        const next = new Set(prev);
+                                                        if (next.has(folder.id)) next.delete(folder.id);
+                                                        else next.add(folder.id);
+                                                        return next;
+                                                    });
+                                                }}
                                             >
-                                                <Play size={17} fill="currentColor" />
+                                                <Folder size={18} />
+                                                <span className="mix-folder-name">{folder.name}</span>
+                                                <span className="mix-folder-count">{folderRecipes.length} 杯</span>
+                                                <ChevronLeft size={16} className={`mix-folder-chevron ${expanded ? "is-down" : ""}`} />
+                                                <button
+                                                    type="button"
+                                                    className="mix-icon-btn mix-folder-edit-btn"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setFolderEditing(folder);
+                                                        setFolderNameInput(folder.name);
+                                                        setFolderSheetOpen(true);
+                                                    }}
+                                                    aria-label="编辑文件夹"
+                                                    title="编辑"
+                                                >
+                                                    <Pencil size={14} />
+                                                </button>
                                             </button>
-                                            <button
-                                                type="button"
-                                                className="mix-round-btn"
-                                                onClick={() => setRecipeMenu(recipe)}
-                                                aria-label="更多操作"
-                                                title="更多"
-                                            >
-                                                <MoreHorizontal size={18} />
-                                            </button>
+                                            {expanded ? (
+                                                folderRecipes.length === 0 ? (
+                                                    <div className="mix-folder-empty">这个文件夹是空的</div>
+                                                ) : (
+                                                    folderRecipes.map((recipe) => renderRecipeCard(recipe))
+                                                )
+                                            ) : null}
                                         </div>
-                                    </div>
-                                );
-                            })
+                                    );
+                                }) : null}
+
+                                {/* 未分类的配方 */}
+                                {(() => {
+                                    const uncategorized = recipes.filter((r) => !findRecipeFolderId(r.id));
+                                    if (uncategorized.length === 0 && folders.length === 0) {
+                                        return recipes.map((recipe) => renderRecipeCard(recipe));
+                                    }
+                                    if (uncategorized.length === 0) return null;
+                                    return (
+                                        <div className="mix-folder-group">
+                                            <div className="mix-folder-header" data-uncategorized>
+                                                <Archive size={18} />
+                                                <span className="mix-folder-name">未分类</span>
+                                                <span className="mix-folder-count">{uncategorized.length} 杯</span>
+                                            </div>
+                                            {uncategorized.map((recipe) => renderRecipeCard(recipe))}
+                                        </div>
+                                    );
+                                })()}
+                            </>
                         )}
                     </>
                 ) : null}
@@ -873,41 +1236,91 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 去吧台调一杯，按「开始」。
                             </div>
                         ) : (
-                            sessions.map((session) => {
-                                const sessionCardId = mixSlotFirstId(session.recipe.slots, "character");
-                                const card = sessionCardId ? cabinet.find((m) => m.id === sessionCardId) : null;
-                                return (
-                                    <div className="mix-session-row" key={session.id} onClick={() => setPlaying(session.id)}>
-                                        {card?.cover ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img className="mix-session-ava" src={card.cover} alt={session.charName} />
-                                        ) : (
-                                            <div className="mix-session-ava-fallback">{session.charName.slice(0, 1)}</div>
-                                        )}
-                                        <div className="mix-session-info">
-                                            <div className="mix-session-name">{session.charName} · {session.recipe.name}</div>
-                                            <div className="mix-session-sub">{mixRoundCount(session.turns)} 轮 · {formatMixTime(session.updatedAt)}</div>
+                            <>
+                                {/* 文件夹管理栏 */}
+                                <div className="mix-folder-bar">
+                                    <button
+                                        type="button"
+                                        className="mix-pill-btn"
+                                        onClick={() => {
+                                            setSessionFolderEditing(null);
+                                            setSessionFolderNameInput("");
+                                            setSessionFolderSheetOpen(true);
+                                        }}
+                                    >
+                                        <FolderPlus size={14} />新建文件夹
+                                    </button>
+                                </div>
+
+                                {/* 按文件夹分组的对局列表 */}
+                                {sessionFolders.length > 0 ? sessionFolders.map((folder) => {
+                                    const folderSessions = folder.sessionIds
+                                        .map((sid: string) => sessions.find((s: MixSession) => s.id === sid))
+                                        .filter((s): s is MixSession => Boolean(s));
+                                    const expanded = expandedSessionFolders.has(folder.id);
+                                    return (
+                                        <div className="mix-folder-group" key={folder.id}>
+                                            <button
+                                                type="button"
+                                                className="mix-folder-header"
+                                                onClick={() => {
+                                                    setExpandedSessionFolders((prev) => {
+                                                        const next = new Set(prev);
+                                                        if (next.has(folder.id)) next.delete(folder.id);
+                                                        else next.add(folder.id);
+                                                        return next;
+                                                    });
+                                                }}
+                                            >
+                                                <Folder size={18} />
+                                                <span className="mix-folder-name">{folder.name}</span>
+                                                <span className="mix-folder-count">{folderSessions.length} 场</span>
+                                                <ChevronLeft size={16} className={`mix-folder-chevron ${expanded ? "is-down" : ""}`} />
+                                                <button
+                                                    type="button"
+                                                    className="mix-icon-btn mix-folder-edit-btn"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSessionFolderEditing(folder);
+                                                        setSessionFolderNameInput(folder.name);
+                                                        setSessionFolderSheetOpen(true);
+                                                    }}
+                                                    aria-label="编辑文件夹"
+                                                    title="编辑"
+                                                >
+                                                    <Pencil size={14} />
+                                                </button>
+                                            </button>
+                                            {expanded ? (
+                                                folderSessions.length === 0 ? (
+                                                    <div className="mix-folder-empty">这个文件夹是空的</div>
+                                                ) : (
+                                                    folderSessions.map((session) => renderSessionRow(session))
+                                                )
+                                            ) : null}
                                         </div>
-                                        <button
-                                            type="button"
-                                            className="mix-icon-btn"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setConfirm({
-                                                    title: "删除这场酒局？",
-                                                    body: <>「{session.charName} · {session.recipe.name}」的 {mixRoundCount(session.turns)} 轮对话会一起消失，无法找回。</>,
-                                                    confirmText: "删除",
-                                                    tone: "danger",
-                                                    run: () => { deleteMixSession(session.id); refresh(); },
-                                                });
-                                            }}
-                                            aria-label="删除对局"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                );
-                            })
+                                    );
+                                }) : null}
+
+                                {/* 未分类的对局 */}
+                                {(() => {
+                                    const uncategorized = sessions.filter((s) => !findSessionFolderId(s.id));
+                                    if (uncategorized.length === 0 && sessionFolders.length === 0) {
+                                        return sessions.map((session) => renderSessionRow(session));
+                                    }
+                                    if (uncategorized.length === 0) return null;
+                                    return (
+                                        <div className="mix-folder-group">
+                                            <div className="mix-folder-header" data-uncategorized>
+                                                <Archive size={18} />
+                                                <span className="mix-folder-name">未分类</span>
+                                                <span className="mix-folder-count">{uncategorized.length} 场</span>
+                                            </div>
+                                            {uncategorized.map((session) => renderSessionRow(session))}
+                                        </div>
+                                    );
+                                })()}
+                            </>
                         )}
                     </>
                 ) : null}
@@ -1231,11 +1644,54 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                     if (material.kind === "mechanism") disposeMixSandboxesForMaterial(material.id);
                                     setEditor(null);
                                     refresh();
+                                    // 从文件库来的：存完直接放进吧台对应槽位，一步到位
+                                    if (fvAutoSlotRef.current === material.kind) {
+                                        fvAutoSlotRef.current = null;
+                                        setBarSlots((prev) => {
+                                            const current = mixSlotEntries(prev, material.kind);
+                                            const next = MIX_SLOT_STACK[material.kind] === "first"
+                                                ? [{ materialId: material.id }]
+                                                // 已经在这一格里就不重复加
+                                                : (current.some((e) => e.materialId === material.id)
+                                                    ? current
+                                                    : [...current, { materialId: material.id }]);
+                                            return { ...prev, [material.kind]: next };
+                                        });
+                                        setTab("bar");
+                                        setBarTab("create");
+                                        showToast(`「${material.name}」已入柜，并放进吧台的${MIX_KIND_LABELS[material.kind]}槽。`);
+                                        return;
+                                    }
+                                    fvAutoSlotRef.current = null;
                                     showToast(`「${material.name}」已入柜。`);
                                 }}
                                 onCancel={() => setEditor(null)}
                             />
                         </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 从文件库加材料：选文档 → 选槽位 → 预填编辑器 */}
+            <MixFileVaultImport
+                open={fvImportOpen}
+                onClose={() => setFvImportOpen(false)}
+                onNotice={showToast}
+                onCreate={(material) => {
+                    fvAutoSlotRef.current = material.kind;
+                    setEditor({ kind: material.kind, initial: material });
+                }}
+            />
+
+            {accountOpen ? (
+                <div className="mix-account-overlay" onClick={() => setAccountOpen(false)}>
+                    <div className="mix-account-sheet" onClick={(event) => event.stopPropagation()}>
+                        <ApiAccountPanel
+                            accountId={accountId}
+                            onClose={() => setAccountOpen(false)}
+                            title={accountLabel(accountId)}
+                            onNotice={showToast}
+                        />
                     </div>
                 </div>
             ) : null}
@@ -1353,6 +1809,24 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 <button type="button" className="mix-ghost-btn" onClick={() => setNameSheetOpen(false)}>再想想</button>
                                 <button type="button" className="mix-brew-btn" onClick={handleSaveRecipe}>存入方案</button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 读取清单 · token 成本 */}
+            {readCostOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setReadCostOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "88%" }}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">读取清单 · token 成本</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setReadCostOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <MixReadCostPanel
+                                slots={barSlots}
+                                resolve={(id) => getMixBuiltin(id) ?? cabinet.find((m) => m.id === id) ?? null}
+                            />
                         </div>
                     </div>
                 </div>
@@ -1480,6 +1954,31 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                             <button
                                 type="button"
                                 className="mix-action-row"
+                                onClick={() => {
+                                    setRenameTarget(recipeMenu);
+                                    setRenameValue(recipeMenu.name);
+                                    setRecipeMenu(null);
+                                    setRenameSheetOpen(true);
+                                }}
+                            >
+                                <Edit3 size={17} />
+                                <span>重命名<i>给这杯特调换个名字</i></span>
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    setMoveFolderTarget(recipeMenu);
+                                    setRecipeMenu(null);
+                                    setMoveFolderSheetOpen(true);
+                                }}
+                            >
+                                <Folder size={17} />
+                                <span>移动到文件夹<i>把配方收纳进指定文件夹</i></span>
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-action-row"
                                 data-tone="danger"
                                 onClick={() => {
                                     const target = recipeMenu;
@@ -1500,6 +1999,468 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 <Trash2 size={17} />
                                 <span>删除这杯<i>材料还在酒柜里，只删配方本身</i></span>
                             </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 重命名配方 */}
+            {renameSheetOpen && renameTarget ? (
+                <div className="mix-sheet-mask" onClick={() => setRenameSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">重命名</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setRenameSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">配方新名字</div>
+                            <input
+                                className="mix-input"
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleRenameConfirm(); }}
+                                placeholder="给这杯特调起个新名字"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                className="mix-brew-btn"
+                                onClick={() => void handleRenameConfirm()}
+                                disabled={!renameValue.trim()}
+                            >
+                                确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 移动到文件夹 */}
+            {moveFolderSheetOpen && moveFolderTarget ? (
+                <div className="mix-sheet-mask" onClick={() => setMoveFolderSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">移动到文件夹</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setMoveFolderSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">选择目标文件夹</div>
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                data-active={findRecipeFolderId(moveFolderTarget.id) === null}
+                                onClick={() => {
+                                    removeRecipeFromFolder(moveFolderTarget.id);
+                                    refresh();
+                                    setMoveFolderSheetOpen(false);
+                                    showToast("已移出文件夹，回到未分类。");
+                                }}
+                            >
+                                <Archive size={17} />
+                                <span>未分类<i>不放进任何文件夹</i></span>
+                            </button>
+                            {folders.map((folder) => (
+                                <button
+                                    type="button"
+                                    key={folder.id}
+                                    className="mix-action-row"
+                                    data-active={findRecipeFolderId(moveFolderTarget.id) === folder.id}
+                                    onClick={() => {
+                                        addRecipeToFolder(moveFolderTarget.id, folder.id);
+                                        refresh();
+                                        setMoveFolderSheetOpen(false);
+                                        showToast(`已移到「${folder.name}」。`);
+                                    }}
+                                >
+                                    <Folder size={17} />
+                                    <span>{folder.name}<i>{folder.recipeIds.length} 杯配方</i></span>
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    setMoveFolderSheetOpen(false);
+                                    setFolderEditing(null);
+                                    setFolderNameInput("");
+                                    setFolderSheetOpen(true);
+                                }}
+                            >
+                                <FolderPlus size={17} />
+                                <span>新建文件夹<i>创建一个新的收纳夹</i></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 新建/编辑文件夹 */}
+            {folderSheetOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setFolderSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">{folderEditing ? "编辑文件夹" : "新建文件夹"}</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setFolderSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">文件夹名字</div>
+                            <input
+                                className="mix-input"
+                                value={folderNameInput}
+                                onChange={(e) => setFolderNameInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleFolderSave(); }}
+                                placeholder="给收纳夹起个名字"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                className="mix-brew-btn"
+                                onClick={() => void handleFolderSave()}
+                                disabled={!folderNameInput.trim()}
+                            >
+                                {folderEditing ? "保存" : "创建"}
+                            </button>
+                            {folderEditing ? (
+                                <button
+                                    type="button"
+                                    className="mix-action-row"
+                                    data-tone="danger"
+                                    style={{ marginTop: 8 }}
+                                    onClick={() => {
+                                        setConfirm({
+                                            title: "删除这个文件夹？",
+                                            body: <>「{folderEditing.name}」会被删掉，里面的配方回到未分类，不会被删除。</>,
+                                            confirmText: "删除",
+                                            tone: "danger",
+                                            run: () => {
+                                                deleteMixFolder(folderEditing!.id);
+                                                refresh();
+                                                setFolderSheetOpen(false);
+                                                showToast("文件夹已删除。");
+                                            },
+                                        });
+                                    }}
+                                >
+                                    <Trash2 size={17} />
+                                    <span>删除文件夹<i>里面的配方回到未分类</i></span>
+                                </button>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 对局菜单（重命名 / 移动到文件夹 / 删除） */}
+            {sessionMenu ? (
+                <div className="mix-sheet-mask" onClick={() => setSessionMenu(null)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">{sessionDisplayName(sessionMenu)}</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setSessionMenu(null)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    setSessionRenameTarget(sessionMenu);
+                                    setSessionRenameValue(sessionMenu.name || "");
+                                    setSessionMenu(null);
+                                    setSessionRenameSheetOpen(true);
+                                }}
+                            >
+                                <Edit3 size={17} />
+                                <span>重命名<i>给这场对局起个名字方便区分</i></span>
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    setSessionMoveFolderTarget(sessionMenu);
+                                    setSessionMenu(null);
+                                    setSessionMoveFolderSheetOpen(true);
+                                }}
+                            >
+                                <Folder size={17} />
+                                <span>移动到文件夹<i>把对局收纳进指定文件夹</i></span>
+                            </button>
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                data-tone="danger"
+                                onClick={() => {
+                                    const target = sessionMenu;
+                                    setSessionMenu(null);
+                                    setConfirm({
+                                        title: "删除这场酒局？",
+                                        body: <>{sessionDisplayName(target)} 的 {mixRoundCount(target.turns)} 轮对话会一起消失，无法找回。</>,
+                                        confirmText: "删除",
+                                        tone: "danger",
+                                        run: () => {
+                                            deleteMixSession(target.id);
+                                            refresh();
+                                        },
+                                    });
+                                }}
+                            >
+                                <Trash2 size={17} />
+                                <span>删除这场<i>对话无法找回</i></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 重命名对局 */}
+            {sessionRenameSheetOpen && sessionRenameTarget ? (
+                <div className="mix-sheet-mask" onClick={() => setSessionRenameSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">重命名对局</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setSessionRenameSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">对局新名字</div>
+                            <input
+                                className="mix-input"
+                                value={sessionRenameValue}
+                                onChange={(e) => setSessionRenameValue(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleSessionRenameConfirm(); }}
+                                placeholder="给这场对局起个名字"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                className="mix-brew-btn"
+                                onClick={() => void handleSessionRenameConfirm()}
+                                disabled={!sessionRenameValue.trim()}
+                            >
+                                确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 对局移动到文件夹 */}
+            {sessionMoveFolderSheetOpen && sessionMoveFolderTarget ? (
+                <div className="mix-sheet-mask" onClick={() => setSessionMoveFolderSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">移动到文件夹</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setSessionMoveFolderSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">选择目标文件夹</div>
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                data-active={findSessionFolderId(sessionMoveFolderTarget.id) === null}
+                                onClick={() => {
+                                    removeSessionFromFolder(sessionMoveFolderTarget.id);
+                                    refresh();
+                                    setSessionMoveFolderSheetOpen(false);
+                                    showToast("已移出文件夹，回到未分类。");
+                                }}
+                            >
+                                <Archive size={17} />
+                                <span>未分类<i>不放进任何文件夹</i></span>
+                            </button>
+                            {sessionFolders.map((folder) => (
+                                <button
+                                    type="button"
+                                    key={folder.id}
+                                    className="mix-action-row"
+                                    data-active={findSessionFolderId(sessionMoveFolderTarget.id) === folder.id}
+                                    onClick={() => {
+                                        addSessionToFolder(sessionMoveFolderTarget.id, folder.id);
+                                        refresh();
+                                        setSessionMoveFolderSheetOpen(false);
+                                        showToast(`已移到「${folder.name}」。`);
+                                    }}
+                                >
+                                    <Folder size={17} />
+                                    <span>{folder.name}<i>{folder.sessionIds.length} 场对局</i></span>
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    setSessionMoveFolderSheetOpen(false);
+                                    setSessionFolderEditing(null);
+                                    setSessionFolderNameInput("");
+                                    setSessionFolderSheetOpen(true);
+                                }}
+                            >
+                                <FolderPlus size={17} />
+                                <span>新建文件夹<i>创建一个新的收纳夹</i></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 对局文件夹新建/编辑 */}
+            {sessionFolderSheetOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setSessionFolderSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">{sessionFolderEditing ? "编辑文件夹" : "新建文件夹"}</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setSessionFolderSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">文件夹名字</div>
+                            <input
+                                className="mix-input"
+                                value={sessionFolderNameInput}
+                                onChange={(e) => setSessionFolderNameInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleSessionFolderSave(); }}
+                                placeholder="给收纳夹起个名字"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                className="mix-brew-btn"
+                                onClick={() => void handleSessionFolderSave()}
+                                disabled={!sessionFolderNameInput.trim()}
+                            >
+                                {sessionFolderEditing ? "保存" : "创建"}
+                            </button>
+                            {sessionFolderEditing ? (
+                                <button
+                                    type="button"
+                                    className="mix-action-row"
+                                    data-tone="danger"
+                                    style={{ marginTop: 8 }}
+                                    onClick={() => {
+                                        setConfirm({
+                                            title: "删除这个文件夹？",
+                                            body: <>「{sessionFolderEditing.name}」会被删掉，里面的对局回到未分类，不会被删除。</>,
+                                            confirmText: "删除",
+                                            tone: "danger",
+                                            run: () => {
+                                                deleteMixSessionFolder(sessionFolderEditing!.id);
+                                                refresh();
+                                                setSessionFolderSheetOpen(false);
+                                                showToast("文件夹已删除。");
+                                            },
+                                        });
+                                    }}
+                                >
+                                    <Trash2 size={17} />
+                                    <span>删除文件夹<i>里面的对局回到未分类</i></span>
+                                </button>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 保存喜好配方 */}
+            {favSaveSheetOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setFavSaveSheetOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">保存为喜好配方</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setFavSaveSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">给这套搭配起个名字</div>
+                            <input
+                                className="mix-input"
+                                value={favSaveName}
+                                onChange={(e) => setFavSaveName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleFavSave(); }}
+                                placeholder="比如：经典苦精组合"
+                                autoFocus
+                            />
+                            <div className="mix-detail-label" style={{ marginTop: 12 }}>将保存的槽位</div>
+                            <div className="mix-fav-kinds">
+                                {Object.keys(barSlots).filter((k) => mixSlotEntries(barSlots, k as MixMaterialKind).length > 0).map((kind) => (
+                                    <span className="mix-fav-kind-tag" key={kind}>
+                                        {MIX_KIND_LABELS[kind as MixMaterialKind]}
+                                    </span>
+                                ))}
+                            </div>
+                            <button
+                                type="button"
+                                className="mix-brew-btn"
+                                onClick={() => void handleFavSave()}
+                                disabled={!favSaveName.trim() || Object.keys(barSlots).length === 0}
+                            >
+                                <Bookmark size={16} />保存
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 应用喜好配方选择器 */}
+            {favPickerOpen ? (
+                <div className="mix-sheet-mask" onClick={() => setFavPickerOpen(false)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">喜好配方</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setFavPickerOpen(false)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            {favorites.length === 0 ? (
+                                <div className="mix-empty" style={{ paddingTop: 30 }}>
+                                    <Bookmark size={28} strokeWidth={1.4} />
+                                    还没有保存过喜好配方——
+                                    <br />
+                                    在吧台配好常用的苦精、杯型等，
+                                    <br />
+                                    点「存为喜好」就能一键复用。
+                                </div>
+                            ) : (
+                                favorites.map((fav) => (
+                                    <div className="mix-fav-item" key={fav.id}>
+                                        <div className="mix-fav-item-main">
+                                            <div className="mix-fav-item-name">{fav.name}</div>
+                                            <div className="mix-fav-item-kinds">
+                                                {Object.keys(fav.slots).map((kind) => (
+                                                    <span className="mix-fav-kind-tag" key={kind}>
+                                                        {MIX_KIND_LABELS[kind as MixMaterialKind]}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="mix-fav-item-actions">
+                                            <button
+                                                type="button"
+                                                className="mix-round-btn"
+                                                data-tone="gold"
+                                                onClick={() => handleFavApply(fav)}
+                                                title="套用"
+                                            >
+                                                <Play size={15} fill="currentColor" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="mix-round-btn"
+                                                onClick={() => {
+                                                    setConfirm({
+                                                        title: "删除这个喜好配方？",
+                                                        body: <>「{fav.name}」会被删掉。</>,
+                                                        confirmText: "删除",
+                                                        tone: "danger",
+                                                        run: () => {
+                                                            deleteMixFavorite(fav.id);
+                                                            refresh();
+                                                            showToast("已删除。");
+                                                        },
+                                                    });
+                                                }}
+                                                title="删除"
+                                            >
+                                                <Trash2 size={15} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 </div>

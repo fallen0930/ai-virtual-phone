@@ -6,10 +6,13 @@
 @import "../styles/phone-shell.css";
 @import "../styles/widgets.css";
 @import "../styles/chat.css";
+@import "../styles/chat-doc-import.css";
 @import "../styles/character.css";
 @import "../styles/animations.css";
 @import "../styles/music.css";
 @import "../styles/mixology.css";
+@import "../styles/mix-file-vault.css";
+@import "../styles/worldbook-file-vault.css";
 @import "../styles/calendar.css";
 @import "../styles/diary.css";
 @import "../styles/story.css";
@@ -23,9 +26,11 @@
 @import "../styles/xiaohongshu.css";
 @import "../styles/world-builder.css";
 @import "../styles/interview-magazine.css";
-@import "../styles/storage-cleaner.css";
 @import "../styles/cocreate.css";
 @import "../styles/qa.css";
+@import "../styles/api-groups.css";
+@import "../styles/api-accounts.css";
+@import "../styles/quick-note-float.css";
 
 @theme {
   /* 间距 (4px 基准) */

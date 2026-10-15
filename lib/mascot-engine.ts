@@ -24,6 +24,19 @@ import {
     type LlmToolCall,
 } from "./llm-provider-adapter";
 import { sendLLMToolStreamRequest, type LLMToolRequestResult } from "./chat-engine";
+import { recordLlmSpend, type LlmUsageLike } from "./api-accounts";
+
+/**
+ * 卷宝的自建请求路径（文本协议 / 各处兜底直连）不在 chat-engine 里，
+ * 需要在这里补一笔自动扣费。失败只 warn，绝不能影响回复。
+ */
+function chargeMascotCall(config: Parameters<typeof recordLlmSpend>[0], usage?: LlmUsageLike): void {
+    try {
+        recordLlmSpend(config, usage);
+    } catch (error) {
+        console.warn("[MascotEngine] 自动扣费失败（不影响本次回复）", error);
+    }
+}
 
 function requireMascotApiConfig() {
     const apiConfig = resolveAuxiliaryApiConfig("mascotApiConfigId");
@@ -163,6 +176,33 @@ function historyToTextRequestMessages(history: MascotMsg[]): LlmRequestMessage[]
         role: message.role === "assistant" ? "assistant" : "user",
         content: message.content,
     }));
+}
+
+/**
+ * 长任务必须把「最初的任务指令」钉在上下文里。
+ *
+ * 原因：`historyToTextMessages` 只取最近 40 条（`history.slice(-40)`），而 agent 每轮都会往里追加
+ * assistant 动作 + 工具结果，多轮任务跑到一半时**最早的用户指令就被挤出窗口了**。
+ * 模型失去目标后不再输出动作、只回一段文本，循环据此判定「没有动作 = 结束」——
+ * 用户看到的就是「创建了一半就不干活了」。
+ */
+function appendTaskReminder(messages: LlmRequestMessage[], history: MascotMsg[]): void {
+    if (history.length < 16) return;
+    let instruction = "";
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+        const msg = history[i];
+        if (msg.role === "user" && !msg.hidden && typeof msg.text === "string" && msg.text.trim()) {
+            instruction = msg.text.trim();
+            break;
+        }
+    }
+    if (!instruction) return;
+    // 超长指令只留前 300 字，免得这条提醒本身把窗口又撑爆
+    const brief = instruction.length > 300 ? `${instruction.slice(0, 300)}…` : instruction;
+    messages.push({
+        role: "user",
+        content: `（任务目标回顾，不要回复本段）你正在执行的任务是：「${brief}」。请继续用动作完成它；全部做完后再只回复：已完成。`,
+    });
 }
 
 /** 把 media-store:// ref 加载成 data URL（image_url part 用） */
@@ -538,8 +578,11 @@ async function callMascotText(
         { role: "system", content: systemPrompt },
         ...(hasImages ? await historyToTextMessagesMultipart(history) : historyToTextRequestMessages(history)),
     ];
+    appendTaskReminder(messages, history);
 
     let raw = "";
+    /** 只有兜底的非流式路径能拿到用量；流式路径没解析（按次计价照样扣） */
+    let fallbackUsage: LlmUsageLike;
     const displayFilter = createMascotTextDisplayFilter(
         options?.callbacks?.onAssistantDelta,
         options?.callbacks?.onToolCallStart,
@@ -575,11 +618,14 @@ async function callMascotText(
         const data = await response.json();
         const parsed = parseProviderResponse(request.providerKind, data);
         raw = parsed.content || "";
+        fallbackUsage = parsed.usage;
     }
 
     if (!raw) {
         throw new Error("LLM 返回了空内容");
     }
+
+    chargeMascotCall(apiConfig, fallbackUsage);
 
     const parsedText = buildMascotTextResponse(raw);
 
@@ -610,9 +656,12 @@ async function callMascotNative(
         { role: "system", content: systemPrompt },
         ...(await historyToNativeMessages(history)),
     ];
+    appendTaskReminder(messages, history);
 
     try {
         let result: LLMToolRequestResult;
+        /** 主路径（sendLLMToolStreamRequest）已在 chat-engine 记过账；走兜底直连时才在这里补记 */
+        let chargeHere = false;
         const streamingEnabled = apiConfig.enableStreaming !== false;
         if (streamingEnabled) {
             try {
@@ -649,6 +698,8 @@ async function callMascotNative(
                 if (options?.signal?.aborted) throw streamError;
                 await options?.callbacks?.onStreamFallback?.(formatErrorMessage(streamError));
 
+                // 兜底直连不经过 chat-engine，扣费要在这里补一次
+                chargeHere = true;
                 const fallbackRequest = buildProviderRequest(apiConfig, null, messages, { tools });
                 const response = await fetch(fallbackRequest.url, {
                     method: "POST",
@@ -670,6 +721,7 @@ async function callMascotNative(
                 };
             }
         } else {
+            chargeHere = true;
             const fallbackRequest = buildProviderRequest(apiConfig, null, messages, { tools });
             const response = await fetch(fallbackRequest.url, {
                 method: "POST",
@@ -690,6 +742,8 @@ async function callMascotNative(
                 usage: parsed.usage,
             };
         }
+
+        if (chargeHere) chargeMascotCall(apiConfig, result.usage);
 
         const { toolFetches: nativeToolFetches, toolCalls: nativeToolCalls } = mapMascotNativeCalls(result.toolCalls, nameMap);
         const parsedText = buildMascotTextResponse(result.content || "");

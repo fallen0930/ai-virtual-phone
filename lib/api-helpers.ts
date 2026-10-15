@@ -4,8 +4,18 @@
 
 import type { ApiConfig } from "./settings-types";
 import { pushApiLog } from "./api-log-store";
+import { recordLlmSpend, type LlmUsageLike } from "./api-accounts";
 
 const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
+
+/** 后台辅助调用（记忆总结 / 朋友圈 / 日历等）同样按单价扣所属账户；失败不影响主流程 */
+function chargeSimpleCall(config: ApiConfig, usage?: LlmUsageLike): void {
+    try {
+        recordLlmSpend(config, usage);
+    } catch (error) {
+        console.warn("[api-helpers] 自动扣费失败（不影响本次调用）", error);
+    }
+}
 
 /**
  * Resolve the base URL for an API config.
@@ -194,6 +204,8 @@ export async function simpleLLMCall(
                 "Full:", JSON.stringify(data).slice(0, 500));
             return { content: null, error: describeEmptyLLMResponse(data, finishReason, wasTruncated, config), finishReason, wasTruncated };
         }
+
+        chargeSimpleCall(config, extractUsage(data));
 
         return { content, finishReason, wasTruncated };
     } catch (err) {

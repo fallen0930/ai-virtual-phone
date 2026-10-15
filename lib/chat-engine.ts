@@ -25,6 +25,7 @@ import {
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
 import type { CustomAppPromptProfile } from "./custom-app-types";
+import { recordLlmSpend, type LlmUsageLike } from "./api-accounts";
 import {
     resolveBinding,
     loadBindingConfig,
@@ -667,6 +668,19 @@ export type ChatCompletionStreamCallbacks = {
     onToolCallStart?: (info: { id: string; name: string; index: number }) => void | Promise<void>;
 };
 
+/**
+ * 一次调用成功后的自动扣费：按该 API 配置的单价，从它所属账户（= 所在文件夹）扣一笔。
+ * 记账绝不该影响聊天主流程，所以整段吞异常，只在控制台留一行。
+ * 注意：这里必须保持「每次真实调用只记一次」——各 sendLLM* 是并列出口，互相不调用。
+ */
+function chargeForLlmCall(config: ApiConfig, usage?: LlmUsageLike): void {
+    try {
+        recordLlmSpend(config, usage);
+    } catch (error) {
+        console.warn("[ChatEngine] 自动扣费失败（不影响本次调用）", error);
+    }
+}
+
 function attachExternalAbort(internal: AbortController, external?: AbortSignal): () => void {
     if (!external) return () => {};
     if (external.aborted) {
@@ -871,6 +885,7 @@ export async function sendLLMStreamRequest(
             rawResponse: rawOutput,
             reasoning: streamedReasoning.trim() || undefined,
         });
+        chargeForLlmCall(config, streamedUsage);
 
         if (!options?.skipOutputRegex) {
             const macroEngine = new MacroEngine(meta?.characterName ?? "", meta?.userName ?? "用户");
@@ -1006,6 +1021,7 @@ export async function sendLLMRequest(
             // 思维链只经 onReasoning 回调透传，之前没进日志；这里单独存一份原文
             reasoning: parsed.reasoning || undefined,
         });
+        chargeForLlmCall(config, parsed.usage);
 
         if (options?.skipOutputRegex) {
             return rawOutput;
@@ -1222,6 +1238,8 @@ export async function sendLLMToolStreamRequest(
             rawResponse: logEntryRaw,
             reasoning: reasoning || undefined,
         });
+        // 原生工具流式这条链路没有解析 usage：按次计价的配置照扣，按量计价的会跳过（避免瞎估）
+        chargeForLlmCall(config, undefined);
 
         if (!content && toolCalls.length === 0 && truncatedNames.length === 0) {
             throw new ChatEngineError("原生动作流式响应没有解析到文本或动作。");
@@ -1324,6 +1342,7 @@ export async function sendLLMToolRequest(
             rawResponse,
             usage: parsed.usage,
         });
+        chargeForLlmCall(config, parsed.usage);
 
         if (!options?.skipOutputRegex && rawOutput) {
             const macroEngine = new MacroEngine(meta?.characterName ?? "", meta?.userName ?? "用户");

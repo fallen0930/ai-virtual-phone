@@ -545,6 +545,54 @@ export async function inspectPdfFile(source: PdfSource, fileName?: string): Prom
     }
 }
 
+/**
+ * 把整份 PDF 抽成纯文本（按页分隔）。给「把文档导进对话框 / 存进材料库」这类
+ * 一次性要全文的场景用：不分章、不保坐标，只要可读文本 + 页标记。
+ */
+export async function extractPdfPlainText(
+    source: PdfSource,
+    options: { onProgress?: (ratio: number) => void; maxPages?: number } = {},
+): Promise<{ text: string; totalPages: number; pagesRead: number }> {
+    const { pdf, dispose } = await openPdfDocument(source);
+    try {
+        const totalPages: number = pdf.numPages;
+        const limit = Math.max(1, Math.min(totalPages, options.maxPages ?? totalPages));
+        const pages: string[] = [];
+        for (let i = 1; i <= limit; i += 1) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            const lines: string[] = [];
+            let currentLine = "";
+            let currentY: number | null = null;
+            for (const raw of content.items as Array<{ str?: string; transform?: number[] }>) {
+                const text = raw.str ?? "";
+                const y = raw.transform ? raw.transform[5] : null;
+                if (currentY !== null && y !== null && Math.abs(y - currentY) > 3) {
+                    if (currentLine.trim()) lines.push(currentLine.trim());
+                    currentLine = "";
+                }
+                currentLine += text;
+                if (y !== null) currentY = y;
+            }
+            if (currentLine.trim()) lines.push(currentLine.trim());
+            const body = lines.join("\n").replace(/[ \t]{2,}/g, " ").trim();
+            if (body) pages.push(`—— 第 ${i} 页 ——\n${body}`);
+            page.cleanup?.();
+            options.onProgress?.(i / limit);
+            // 大文件别把主线程焊死
+            if (i % 10 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+        return { text: pages.join("\n\n").trim(), totalPages, pagesRead: limit };
+    } finally {
+        try {
+            await pdf.destroy?.();
+        } catch {
+            // Ignore cleanup failures from PDF.js.
+        }
+        await dispose();
+    }
+}
+
 export async function parsePdfPageRange(
     source: PdfSource,
     options: { startPage: number; endPage: number; fileName?: string },

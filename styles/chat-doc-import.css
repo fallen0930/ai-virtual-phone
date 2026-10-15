@@ -1,0 +1,345 @@
+/* styles/chat-doc-import.css
+   聊天室「文件导入」：待发文件卡条 + 导入弹层。
+   弹层外壳复用 styles/components.css 里的 .modal-overlay/.modal-sheet，
+   这里只补内部结构与输入区上方的托盘。 */
+
+/* ── 输入框上方的待发文件卡条 ── */
+.chat-docimp-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 10px 3px;
+}
+
+.chat-docimp-tray-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 6px 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-text) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-text) 12%, transparent);
+  color: var(--c-text);
+}
+
+.chat-docimp-tray-label {
+  font-size: 11.5px;
+  line-height: 1.4;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-icon-active);
+  cursor: pointer;
+}
+
+.chat-docimp-tray-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--c-icon);
+}
+
+.chat-docimp-tray-x:active { background: color-mix(in srgb, var(--c-text) 14%, transparent); }
+
+/* ── 弹层 ── */
+.chat-docimp-panel {
+  max-height: 88%;
+}
+
+.chat-docimp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-text) 10%, transparent);
+}
+
+.chat-docimp-head-main { min-width: 0; flex: 1; }
+
+.chat-docimp-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text-title, var(--c-text));
+  word-break: break-word;
+}
+
+.chat-docimp-sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--c-icon);
+  line-height: 1.5;
+}
+
+.chat-docimp-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c-text) 8%, transparent);
+  color: var(--c-icon);
+}
+
+.chat-docimp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-docimp-error {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #a4382f;
+  background: color-mix(in srgb, #ff3b30 10%, transparent);
+  border: 1px solid color-mix(in srgb, #ff3b30 22%, transparent);
+}
+
+.chat-docimp-loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--c-text);
+  padding: 10px 2px;
+}
+
+.chat-docimp-spin { animation: chatDocImpSpin 0.9s linear infinite; }
+@keyframes chatDocImpSpin { to { transform: rotate(360deg); } }
+
+.chat-docimp-progress {
+  flex: 1 0 100%;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--c-text) 12%, transparent);
+}
+
+.chat-docimp-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--c-icon-blue, #5b8fb9);
+  transition: width 0.2s ease;
+}
+
+/* tabs */
+.chat-docimp-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--c-text) 7%, transparent);
+  margin-bottom: 12px;
+}
+
+.chat-docimp-tab {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--c-icon);
+}
+
+.chat-docimp-tab[data-active] {
+  background: var(--c-panel);
+  color: var(--c-text-title, var(--c-text));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+}
+
+/* 选文件 */
+.chat-docimp-filebox { display: flex; flex-direction: column; gap: 10px; }
+
+.chat-docimp-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 12px;
+  border-radius: 12px;
+  border: 1.5px dashed color-mix(in srgb, var(--c-text) 24%, transparent);
+  color: var(--c-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--c-text) 4%, transparent);
+}
+
+.chat-docimp-pick:active { background: color-mix(in srgb, var(--c-text) 9%, transparent); }
+
+.chat-docimp-hint {
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--c-icon);
+}
+
+/* 文件库 */
+.chat-docimp-library { display: flex; flex-direction: column; gap: 9px; }
+
+.chat-docimp-search {
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c-text) 16%, transparent);
+  background: color-mix(in srgb, var(--c-text) 5%, transparent);
+  font-size: 13px;
+  color: var(--c-text);
+  outline: none;
+}
+
+.chat-docimp-liblist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.chat-docimp-libitem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  text-align: left;
+  background: color-mix(in srgb, var(--c-text) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-text) 10%, transparent);
+  color: var(--c-text);
+}
+
+.chat-docimp-libitem:active { background: color-mix(in srgb, var(--c-text) 11%, transparent); }
+
+.chat-docimp-libitem-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.chat-docimp-libitem-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-title, var(--c-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-docimp-libitem-meta { font-size: 11px; color: var(--c-icon); }
+
+/* 结果分区 */
+.chat-docimp-section { margin-bottom: 14px; }
+
+.chat-docimp-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--c-text);
+  margin-bottom: 7px;
+}
+
+.chat-docimp-section-actions { display: inline-flex; gap: 10px; }
+
+.chat-docimp-section-actions > button {
+  font-size: 11.5px;
+  color: var(--c-icon-blue, #5b8fb9);
+}
+
+.chat-docimp-chapters {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 30vh;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c-text) 10%, transparent);
+}
+
+.chat-docimp-chapter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--c-text);
+}
+
+.chat-docimp-chapter + .chat-docimp-chapter {
+  border-top: 1px solid color-mix(in srgb, var(--c-text) 7%, transparent);
+}
+
+.chat-docimp-chapter-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-docimp-chapter-chars { font-size: 11px; color: var(--c-icon); white-space: nowrap; }
+
+.chat-docimp-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chat-docimp-cap {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-text) 7%, transparent);
+  border: 1px solid transparent;
+}
+
+.chat-docimp-cap[data-active] {
+  background: color-mix(in srgb, var(--c-icon-blue, #5b8fb9) 16%, transparent);
+  border-color: color-mix(in srgb, var(--c-icon-blue, #5b8fb9) 42%, transparent);
+  color: var(--c-text-title, var(--c-text));
+  font-weight: 600;
+}
+
+.chat-docimp-preview {
+  width: 100%;
+  min-height: 130px;
+  max-height: 32vh;
+  resize: vertical;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--c-text) 12%, transparent);
+  background: color-mix(in srgb, var(--c-text) 4%, transparent);
+  color: var(--c-text);
+  font-size: 11.5px;
+  line-height: 1.6;
+  outline: none;
+}
+
+/* 底部 */
+.chat-docimp-foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid color-mix(in srgb, var(--c-text) 10%, transparent);
+}
+
+.chat-docimp-btn {
+  flex: 1;
+  padding: 9px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-text) 8%, transparent);
+}
+
+.chat-docimp-btn.primary {
+  color: #fff;
+  background: var(--c-icon-blue, #5b8fb9);
+}
+
+.chat-docimp-btn:active { transform: scale(0.985); }

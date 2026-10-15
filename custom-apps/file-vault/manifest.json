@@ -1,0 +1,16 @@
+{
+  "sdkVersion": "1.0",
+  "id": "file.vault",
+  "name": "文件库",
+  "version": "1.0.1",
+  "author": "栗子",
+  "description": "世界观 / 人设 / 剧情等长篇材料的私人仓库：导入 docx・doc・txt・md・pdf 自动抽正文，支持分类、标签、备注、全文搜索，可导出单篇或整库（zip / json 备份），并给聊天室提供「从文件库导入」的数据源。",
+  "icon": "icon.svg",
+  "entry": "index.html",
+  "permissions": [
+    "app.data.read",
+    "app.data.write",
+    "app.manifest.read",
+    "ui.toast"
+  ]
+}

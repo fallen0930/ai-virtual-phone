@@ -656,10 +656,15 @@ export function previewMessagesForApi(
     }));
 }
 
+/** 流式响应里可能出现的 usage 结构（OpenAI 兼容流在开启 include_usage 时于末尾 chunk 下发） */
+export type LlmStreamUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+
 export type ChatCompletionStreamResult = {
     content: string;
     rawResponse: string;
     providerKind: LlmProviderKind;
+    /** 流式路径累计到的 usage；厂商未下发则为 undefined（按量计费会据此跳过，避免瞎估） */
+    usage?: LlmStreamUsage;
 };
 
 export type ChatCompletionStreamCallbacks = {
@@ -748,13 +753,15 @@ async function readSseStream(
     providerKind: ChatCompletionStreamResult["providerKind"],
     callbacks?: ChatCompletionStreamCallbacks,
     stripTimestamps = true,
-): Promise<{ content: string; rawResponse: string }> {
+): Promise<{ content: string; rawResponse: string; usage?: LlmStreamUsage }> {
     if (!response.body) throw new ChatEngineError("流式响应没有 body。");
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let content = "";
     let rawResponse = "";
+    // 累计 usage：厂商/中转在末尾 chunk 里给就记下来，用于按量计费与日志展示
+    let usage: LlmStreamUsage | undefined;
     // 时间戳剥离器会一直扣住流尾巴的 64 个字符等括号闭合，流结束才吐出来。
     // 要求"所见即模型所写"的调用方（独家特调）把它整个关掉：增量来一个字出一个字，
     // 否则模型在末尾写机括标记行（〔记〕这类）时，整行都压在扣留窗里，看起来像卡死。
@@ -765,6 +772,8 @@ async function readSseStream(
     // 容错解析：中转把长 JSON 行切开时做碎片重组，不再静默丢增量（见 sse-json.ts）
     const sseParser = createSseJsonParser();
     const handleParsed = async (parsed: unknown) => {
+        const chunkUsage = (parsed as { usage?: LlmStreamUsage } | null)?.usage;
+        if (chunkUsage) usage = chunkUsage;
         const parts = parseProviderStreamDelta(providerKind, parsed);
         if (parts.reasoning) {
             await callbacks?.onReasoningDelta?.(parts.reasoning);
@@ -807,7 +816,7 @@ async function readSseStream(
         content += finalContent;
         await callbacks?.onDelta?.(finalContent);
     }
-    return { content, rawResponse };
+    return { content, rawResponse, usage };
 }
 
 export async function sendLLMStreamRequest(
@@ -864,7 +873,7 @@ export async function sendLLMStreamRequest(
                 await (pluginCallbacks ?? callbacks)?.onReasoningDelta?.(text);
             },
         };
-        const { content: streamedContent, rawResponse } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
+        const { content: streamedContent, rawResponse, usage: streamedUsage } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
         if (!streamedContent.trim()) {
             throw new ChatEngineError("流式响应没有解析到文本增量。");
         }
@@ -884,6 +893,7 @@ export async function sendLLMStreamRequest(
             messages: sanitizedMessages,
             rawResponse: rawOutput,
             reasoning: streamedReasoning.trim() || undefined,
+            usage: streamedUsage,
         });
         chargeForLlmCall(config, streamedUsage);
 
@@ -895,7 +905,7 @@ export async function sendLLMStreamRequest(
             });
             rawOutput = applyOutputRegex(rawOutput, regexes, { macroEngine, activeTags });
         }
-        return { content: rawOutput, rawResponse, providerKind: request.providerKind };
+        return { content: rawOutput, rawResponse, providerKind: request.providerKind, usage: streamedUsage };
     } catch (error: unknown) {
         if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
             if (options?.signal?.aborted) throw error;

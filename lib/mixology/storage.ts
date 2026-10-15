@@ -6,10 +6,13 @@
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
 import type {
     MixConnector,
+    MixFavoritePreset,
     MixMaterial,
     MixMaterialKind,
     MixRecipe,
+    MixRecipeFolder,
     MixSession,
+    MixSessionFolder,
     MixSlotEntry,
 } from "./types";
 import { MIX_CONNECTOR_NAME_RE, MIX_SLOT_ORDER, mixSlotEntries, normalizeMixSlots } from "./types";
@@ -32,6 +35,9 @@ const SESSIONS_KEY = "mixology_sessions_v1";
 const BUILTIN_VERSION_KEY = "mixology_builtin_version_v1";
 const PROFILE_KEY = "mixology_profile_v1";
 const CONNECTORS_KEY = "mixology_connectors_v1";
+const FAVORITES_KEY = "mixology_favorites_v1";
+const FOLDERS_KEY = "mixology_folders_v1";
+const SESSION_FOLDERS_KEY = "mixology_session_folders_v1";
 
 registerKvMigration(CABINET_KEY);
 registerKvMigration(RECIPES_KEY);
@@ -39,6 +45,8 @@ registerKvMigration(SESSIONS_KEY);
 registerKvMigration(BUILTIN_VERSION_KEY);
 registerKvMigration(PROFILE_KEY);
 registerKvMigration(CONNECTORS_KEY);
+registerKvMigration(FAVORITES_KEY);
+registerKvMigration(FOLDERS_KEY);
 
 /**
  * 酒柜被外部改写（小卷工具）后的广播事件：已打开的特调 App 据此重读列表。
@@ -333,6 +341,15 @@ export function saveMixSession(session: MixSession): void {
 export function deleteMixSession(id: string): void {
     const list = readJson<MixSession[]>(SESSIONS_KEY, []);
     writeJson(SESSIONS_KEY, list.filter((s) => s.id !== id));
+    // 顺手从所有对局文件夹里摘掉这场，文件夹的 sessionIds 不会越攒越脏
+    const folders = loadMixSessionFolders();
+    let changed = false;
+    for (const f of folders) {
+        const before = f.sessionIds.length;
+        f.sessionIds = f.sessionIds.filter((sid) => sid !== id);
+        if (f.sessionIds.length !== before) { f.updatedAt = Date.now(); changed = true; }
+    }
+    if (changed) writeJson(SESSION_FOLDERS_KEY, folders);
 }
 
 /**
@@ -366,4 +383,285 @@ export function resolveMixRecipeMaterials(
         }
     }
     return { materials, entries, missing };
+}
+
+// ---------- 喜好配方（快捷搭配预设） ----------
+
+export function loadMixFavorites(): MixFavoritePreset[] {
+    const stored = readJson<MixFavoritePreset[]>(FAVORITES_KEY, []);
+    return (Array.isArray(stored) ? stored : [])
+        .filter((p): p is MixFavoritePreset => Boolean(p) && typeof p === "object" && typeof p.id === "string" && typeof p.name === "string")
+        .map((p) => ({ ...p, slots: normalizeMixSlots(p.slots) }))
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function getMixFavorite(id: string): MixFavoritePreset | null {
+    return loadMixFavorites().find((p) => p.id === id) ?? null;
+}
+
+export function saveMixFavorite(preset: MixFavoritePreset): void {
+    const list = loadMixFavorites();
+    const idx = list.findIndex((p) => p.id === preset.id);
+    const stamped = { ...preset, updatedAt: Date.now() };
+    if (idx >= 0) list[idx] = stamped;
+    else list.push(stamped);
+    writeJson(FAVORITES_KEY, list);
+}
+
+export function deleteMixFavorite(id: string): void {
+    writeJson(FAVORITES_KEY, loadMixFavorites().filter((p) => p.id !== id));
+}
+
+// ---------- 配方收纳文件夹 ----------
+
+export function loadMixFolders(): MixRecipeFolder[] {
+    const stored = readJson<MixRecipeFolder[]>(FOLDERS_KEY, []);
+    return (Array.isArray(stored) ? stored : [])
+        .filter((f): f is MixRecipeFolder => Boolean(f) && typeof f === "object" && typeof f.id === "string" && typeof f.name === "string" && Array.isArray(f.recipeIds))
+        .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export function getMixFolder(id: string): MixRecipeFolder | null {
+    return loadMixFolders().find((f) => f.id === id) ?? null;
+}
+
+export function saveMixFolder(folder: MixRecipeFolder): void {
+    const list = loadMixFolders();
+    const idx = list.findIndex((f) => f.id === folder.id);
+    const stamped = { ...folder, updatedAt: Date.now() };
+    if (idx >= 0) list[idx] = stamped;
+    else list.push(stamped);
+    writeJson(FOLDERS_KEY, list);
+}
+
+export function deleteMixFolder(id: string): void {
+    writeJson(FOLDERS_KEY, loadMixFolders().filter((f) => f.id !== id));
+}
+
+/** 把配方加入指定文件夹；如果配方已在其他文件夹里，先从旧文件夹移除 */
+export function addRecipeToFolder(recipeId: string, folderId: string): void {
+    const folders = loadMixFolders();
+    // 先从所有文件夹移除这个配方
+    for (const f of folders) {
+        f.recipeIds = f.recipeIds.filter((rid) => rid !== recipeId);
+    }
+    // 再加到目标文件夹
+    const target = folders.find((f) => f.id === folderId);
+    if (target) {
+        if (!target.recipeIds.includes(recipeId)) {
+            target.recipeIds.push(recipeId);
+        }
+        target.updatedAt = Date.now();
+    }
+    writeJson(FOLDERS_KEY, folders);
+}
+
+/** 把配方从文件夹移除（回到未分类） */
+export function removeRecipeFromFolder(recipeId: string): void {
+    const folders = loadMixFolders();
+    for (const f of folders) {
+        const before = f.recipeIds.length;
+        f.recipeIds = f.recipeIds.filter((rid) => rid !== recipeId);
+        if (f.recipeIds.length !== before) f.updatedAt = Date.now();
+    }
+    writeJson(FOLDERS_KEY, folders);
+}
+
+/** 查询配方所在的文件夹 id，不在任何文件夹则返回 null */
+export function findRecipeFolderId(recipeId: string): string | null {
+    const folders = loadMixFolders();
+    for (const f of folders) {
+        if (f.recipeIds.includes(recipeId)) return f.id;
+    }
+    return null;
+}
+
+// ---------- 对局收纳文件夹（与配方文件夹同一套范式） ----------
+
+export function loadMixSessionFolders(): MixSessionFolder[] {
+    const stored = readJson<MixSessionFolder[]>(SESSION_FOLDERS_KEY, []);
+    return (Array.isArray(stored) ? stored : [])
+        .filter((f): f is MixSessionFolder => Boolean(f) && typeof f === "object" && typeof f.id === "string" && typeof f.name === "string" && Array.isArray(f.sessionIds))
+        .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export function getMixSessionFolder(id: string): MixSessionFolder | null {
+    return loadMixSessionFolders().find((f) => f.id === id) ?? null;
+}
+
+export function saveMixSessionFolder(folder: MixSessionFolder): void {
+    const list = loadMixSessionFolders();
+    const idx = list.findIndex((f) => f.id === folder.id);
+    const stamped = { ...folder, updatedAt: Date.now() };
+    if (idx >= 0) list[idx] = stamped;
+    else list.push(stamped);
+    writeJson(SESSION_FOLDERS_KEY, list);
+}
+
+export function deleteMixSessionFolder(id: string): void {
+    writeJson(SESSION_FOLDERS_KEY, loadMixSessionFolders().filter((f) => f.id !== id));
+}
+
+/** 把对局加入指定文件夹；如果对局已在其他文件夹里，先从旧文件夹移除 */
+export function addSessionToFolder(sessionId: string, folderId: string): void {
+    const folders = loadMixSessionFolders();
+    // 先从所有文件夹移除这场对局
+    for (const f of folders) {
+        f.sessionIds = f.sessionIds.filter((sid) => sid !== sessionId);
+    }
+    // 再加到目标文件夹
+    const target = folders.find((f) => f.id === folderId);
+    if (target) {
+        if (!target.sessionIds.includes(sessionId)) {
+            target.sessionIds.push(sessionId);
+        }
+        target.updatedAt = Date.now();
+    }
+    writeJson(SESSION_FOLDERS_KEY, folders);
+}
+
+/** 把对局从文件夹移除（回到未分类） */
+export function removeSessionFromFolder(sessionId: string): void {
+    const folders = loadMixSessionFolders();
+    for (const f of folders) {
+        const before = f.sessionIds.length;
+        f.sessionIds = f.sessionIds.filter((sid) => sid !== sessionId);
+        if (f.sessionIds.length !== before) f.updatedAt = Date.now();
+    }
+    writeJson(SESSION_FOLDERS_KEY, folders);
+}
+
+/** 查询对局所在的文件夹 id，不在任何文件夹则返回 null */
+export function findSessionFolderId(sessionId: string): string | null {
+    const folders = loadMixSessionFolders();
+    for (const f of folders) {
+        if (f.sessionIds.includes(sessionId)) return f.id;
+    }
+    return null;
+}
+
+// ---------- 重命名对局 ----------
+
+/** 给一场对局改名（空串视为清除自定义名字，回到「角色名 · 配方名」兜底） */
+export function renameMixSession(id: string, newName: string): void {
+    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    const trimmed = newName.trim();
+    list[idx] = { ...list[idx], name: trimmed || undefined, updatedAt: Date.now() };
+    writeJson(SESSIONS_KEY, list);
+}
+
+// ---------- 世界树 / 支线谱系 ----------
+
+/** 支线元数据补丁：支线名、备注、树内摆放坐标、层级，按需局部更新 */
+export type MixSessionTreeMetaPatch = {
+    branchName?: string;
+    branchNote?: string;
+    treeX?: number;
+    treeY?: number;
+    depth?: number;
+};
+
+export function updateMixSessionTreeMeta(id: string, patch: MixSessionTreeMetaPatch): void {
+    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    const cur = list[idx];
+    const next: MixSession = { ...cur };
+    if (patch.branchName !== undefined) next.branchName = patch.branchName.trim() || undefined;
+    if (patch.branchNote !== undefined) next.branchNote = patch.branchNote || undefined;
+    if (patch.treeX !== undefined) next.treeX = patch.treeX;
+    if (patch.treeY !== undefined) next.treeY = patch.treeY;
+    if (patch.depth !== undefined) next.depth = patch.depth;
+    next.updatedAt = Date.now();
+    list[idx] = next;
+    writeJson(SESSIONS_KEY, list);
+}
+
+/**
+ * 删除一条支线：它的直接子支线"上提一级"挂到被删节点的父节点（根被删则子支线各自成根），
+ * 整棵子树层级随之下移一层，进度不丢、树不散。然后才真正删掉该节点。
+ */
+export function deleteMixSessionBranch(id: string): void {
+    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const node = list.find((s) => s.id === id);
+    if (!node) return;
+
+    const byId = new Map(list.map((s) => [s.id, s] as const));
+    const children = list.filter((s) => s.parentId === id);
+
+    // 递归把 subtree 重挂到 newParent（含根重置），并整体下移一层
+    const reparent = (childId: string, newParentId: string | undefined, newRootId: string, newDepth: number) => {
+        const child = byId.get(childId);
+        if (!child) return;
+        child.parentId = newParentId;
+        child.rootId = newRootId;
+        child.depth = newDepth;
+        for (const grand of list.filter((s) => s.parentId === childId)) {
+            reparent(grand.id, childId, newRootId, newDepth + 1);
+        }
+    };
+
+    const grandParentId = node.parentId;
+    const grandParent = grandParentId ? byId.get(grandParentId) : undefined;
+    for (const child of children) {
+        if (grandParent) {
+            reparent(child.id, grandParentId, child.rootId ?? child.id, (grandParent.depth ?? 0) + 1);
+        } else {
+            reparent(child.id, undefined, child.id, 0);
+        }
+    }
+
+    writeJson(SESSIONS_KEY, list);
+    deleteMixSession(id);
+}
+
+/** 树节点：环绕一场对局，挂着它的子支线 */
+export type MixSessionTreeNode = {
+    session: MixSession;
+    children: MixSessionTreeNode[];
+};
+
+/**
+ * 把扁平对局列表按 parentId 拼成森林（多棵世界树）。
+ * 根 = parentId 为空或指向了不存在的节点。返回前按 createdAt 稳定排序，
+ * 方便自动布局时同一层的兄弟顺序固定。
+ */
+export function buildMixSessionForest(sessions: MixSession[]): MixSessionTreeNode[] {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    const nodes = new Map<string, MixSessionTreeNode>();
+    for (const s of sessions) nodes.set(s.id, { session: s, children: [] });
+
+    const roots: MixSessionTreeNode[] = [];
+    for (const s of sessions) {
+        const node = nodes.get(s.id);
+        if (!node) continue;
+        if (s.parentId && byId.has(s.parentId) && nodes.has(s.parentId)) {
+            nodes.get(s.parentId)!.children.push(node);
+        } else {
+            roots.push(node);
+        }
+    }
+
+    const sortFn = (a: MixSessionTreeNode, b: MixSessionTreeNode) =>
+        (a.session.createdAt ?? 0) - (b.session.createdAt ?? 0);
+    const sortRec = (n: MixSessionTreeNode) => {
+        n.children.sort(sortFn);
+        n.children.forEach(sortRec);
+    };
+    roots.sort(sortFn);
+    roots.forEach(sortRec);
+    return roots;
+}
+
+
+// ---------- 重命名配方 ----------
+
+export function renameMixRecipe(id: string, newName: string): void {
+    const list = readJson<MixRecipe[]>(RECIPES_KEY, []);
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    list[idx] = { ...list[idx], name: newName, updatedAt: Date.now() };
+    writeJson(RECIPES_KEY, list);
 }

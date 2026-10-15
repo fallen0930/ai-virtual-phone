@@ -41,3 +41,8 @@ preview_header_fix.html
 api-folders-*.patch
 api-folders-patch-*.zip
 worldbook-file-vault-patch-*.zip
+
+# 交付/说明文档：本地材料，不参与部署与编译，不入库（只 push 代码）
+/API文件夹收纳-*
+/文件库三线适配-*
+/*.docx

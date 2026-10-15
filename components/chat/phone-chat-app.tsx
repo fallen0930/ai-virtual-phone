@@ -313,6 +313,19 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                             });
                             setActiveSession(null);
                         }}
+                        onSwitchSession={(sessionId) => {
+                            // 多会话：切换到另一条对话线程（可能是刚新建的）
+                            const s = loadChatSessions().find(x => x.id === sessionId);
+                            if (!s) return;
+                            setActiveMascot(false);
+                            setVisitedSessions(prev => {
+                                const next = new Map(prev);
+                                next.set(s.id, s);
+                                return next;
+                            });
+                            setActiveSession(s);
+                            setActiveTab("messages");
+                        }}
                     />
                 </div>
             ))}

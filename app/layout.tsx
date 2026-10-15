@@ -8,6 +8,7 @@ import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
 import { PWARegistrar } from "@/components/pwa-registrar";
 import "../styles/fonts.css";
 import "./globals.css";
+import "../styles/floating-controls.css";
 
 export const viewport: Viewport = {
   width: "device-width",

@@ -8,6 +8,8 @@ const isWslUncPath = projectRoot.startsWith("\\\\wsl$\\");
 
 function resolveDistDir() {
   // 本地验证构建可用 NEXT_DIST_DIR 指到独立目录,避免覆写正在跑的 dev server 的 .next
+  // 同步提示: scripts/restore-backdrop-filter.mjs 需要落在同一个目录,
+  // 它按 "--dir > NEXT_DIST_DIR > .next" 的优先级解析,但不复刻下面的 WSL-UNC 分支。
   if (process.env.NEXT_DIST_DIR) {
     return process.env.NEXT_DIST_DIR;
   }

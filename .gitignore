@@ -1,5 +1,7 @@
 .next
 .next/
+# 本地验证构建用 NEXT_DIST_DIR=.next-verify / .next-prod 指过来的独立产物目录
+.next-*
 node_modules
 node_modules/
 out

@@ -16,11 +16,14 @@
 // 退出码非 0 = 助手重组结果与小手机不一致。
 
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+// 注意：这里必须用 fileURLToPath，不能用 new URL(import.meta.url).pathname ——
+// 后者在 Windows 上会得到 "/D:/..."，再经 pathToFileURL 拼成 "file:///D:/D:/..."，
+// 导致下面 hooks 里解析 typescript 与 @/lib 全部 ERR_MODULE_NOT_FOUND（脚本在 Windows 上跑不起来）。
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // weixin-cloud-sync 是 TS 且依赖浏览器侧模块，注册一个即时转译 + 桩件的加载器跑起来。
 const hooks = `

@@ -4,12 +4,27 @@ import path from "node:path";
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
 const dirArgIndex = process.argv.indexOf("--dir");
-const cssRoot = path.resolve(
-  process.cwd(),
-  dirArgIndex >= 0 && process.argv[dirArgIndex + 1]
-    ? process.argv[dirArgIndex + 1]
-    : ".next/static/css"
-);
+const explicitDir = dirArgIndex >= 0 ? process.argv[dirArgIndex + 1] : "";
+
+// 目录解析优先级与 next.config.mjs 的 resolveDistDir() 对齐：
+// 显式 --dir（直接指向 CSS 目录）> NEXT_DIST_DIR（distDir，自动补 static/css）> .next/static/css。
+// 注意 next.config 还有一条 "Windows 且 projectRoot 以 \\wsl$\ 开头时落到 os.tmpdir()" 的分支，
+// 那条只在 Next 侧生效；仓库路径为 UNC 时本脚本会解析不到产物，属于可接受的差异（构建机不是 WSL UNC 路径）。
+function resolveCssRoot() {
+  if (explicitDir) {
+    return { dir: path.resolve(process.cwd(), explicitDir), source: "--dir" };
+  }
+  const distDir = process.env.NEXT_DIST_DIR;
+  if (distDir) {
+    const resolved = path.basename(path.resolve(distDir)) === "css"
+      ? path.resolve(distDir)
+      : path.resolve(distDir, "static", "css");
+    return { dir: resolved, source: `NEXT_DIST_DIR=${distDir}` };
+  }
+  return { dir: path.resolve(process.cwd(), ".next", "static", "css"), source: "default .next" };
+}
+
+const { dir: cssRoot, source: cssRootSource } = resolveCssRoot();
 
 async function listCssFiles(dir) {
   const files = [];
@@ -98,7 +113,9 @@ async function main() {
   try {
     await stat(cssRoot);
   } catch {
-    throw new Error(`CSS build directory does not exist: ${cssRoot}`);
+    throw new Error(
+      `CSS build directory does not exist: ${cssRoot} (来源: ${cssRootSource}; 目录解析优先级 --dir > NEXT_DIST_DIR > .next)`
+    );
   }
 
   const files = await listCssFiles(cssRoot);
@@ -128,7 +145,7 @@ async function main() {
   }
 
   console.log(
-    `[restore-backdrop-filter] ${dryRun ? "dry-run " : ""}scanned ${files.length} css files, ${dryRun ? "would update" : "updated"} ${touchedFiles} files, inserted ${totalInsertions} standard backdrop-filter declarations, skipped ${totalSkippedNone} none-only blocks.`
+    `[restore-backdrop-filter] ${dryRun ? "dry-run " : ""}css root: ${path.relative(process.cwd(), cssRoot) || cssRoot} (${cssRootSource}); scanned ${files.length} css files, ${dryRun ? "would update" : "updated"} ${touchedFiles} files, inserted ${totalInsertions} standard backdrop-filter declarations, skipped ${totalSkippedNone} none-only blocks.`
   );
 }
 

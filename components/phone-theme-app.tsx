@@ -445,12 +445,18 @@ export function PhoneThemeApp({
             <p className="ts-14 text-[var(--c-icon)]">{"\u300C"}{SECTION_TITLES[section]}{"\u300D\u529F\u80FD\u5F00\u53D1\u4E2D\u2026"}</p>
           </div>
         )}
-      {/* 不限定 accept：.ai-theme 是自定义后缀，iOS「文件」选择器会把
-          没有注册 UTI 的类型置灰导致选不中。放开后由 installThemePackageFile
+      {/* accept 声明必须与「设置 → 数据管理 → 导入备份」保持同一套：
+          手机浏览器（安卓 Chrome / WebView / 微信内置等）遇到「无 accept」的
+          文件框只会弹「相机 / 相册 / 文件」混合面板，用户根本进不去系统
+          「文件管理」，也就选不到 .zip —— 这正是「主题导入打不开文件管理」的根因。
+          显式声明 zip 后才会直接拉起系统文件选择器。
+          主题包导出已是标准 .zip（iOS 原生注册 UTI，不会置灰），旧版
+          .ai-theme / .aiphone 一并放行；最终仍由 installThemePackageFile
           校验包内 manifest.json，非法文件照样会被拒。 */}
       <input
         ref={importFileRef}
         type="file"
+        accept=".zip,.ai-theme,.aiphone,application/zip,application/x-zip-compressed"
         className="hidden"
         onChange={handleImportFileChange}
       />
@@ -467,6 +473,9 @@ export function PhoneThemeApp({
           <div className="flex flex-col gap-4">
             <p className="ts-13 leading-relaxed text-[var(--c-text)]">
               主题包会包含主题色、壁纸、图标、桌面组件、自定义组件，以及桌面图标和组件位置。
+            </p>
+            <p className="ts-11 leading-relaxed text-[var(--c-icon)]">
+              {"点「导入」会打开系统文件选择器，选择 .zip 主题包即可（旧的 .ai-theme / .aiphone 包同样支持）。"}
             </p>
             <div className="grid grid-cols-2 gap-8 py-1">
               <button

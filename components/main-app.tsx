@@ -21,132 +21,62 @@ const TEXT = {
   loading: "\u52A0\u8F7D\u4E2D...",
 };
 
-const BUILTIN_FONT_URLS = [
-  "/fonts/huiwen.woff2",
-  "/fonts/huiwen.woff2",
-  "/fonts/special-elite.woff2",
-  "/fonts/splash/instrument-serif-regular-400.woff2",
-  "/fonts/splash/instrument-serif-italic-400.woff2",
-  "/fonts/splash/inter-300.woff2",
-  "/fonts/splash/inter-400.woff2",
-  "/fonts/splash/inter-500.woff2",
-  "/fonts/splash/major-mono-display-400.woff2",
-  "/fonts/splash/jetbrains-mono-300.woff2",
-  "/fonts/splash/jetbrains-mono-400.woff2",
-  "/fonts/interview/noto-serif-sc.woff2",
-  "/fonts/interview/bodoni-moda.woff2",
-  "/fonts/interview/bodoni-moda-italic.woff2",
-  "/fonts/interview/eb-garamond.woff2",
-  "/fonts/interview/eb-garamond-italic.woff2",
-  "/fonts/interview/long-cang.woff2",
-  "/fonts/interview/cinzel.woff2",
-  "/fonts/interview/press-start-2p.woff2",
-  "/fonts/notewall/ximai.woff2",
-  "/fonts/notewall/xiaozhitiao.woff2",
-  "/fonts/notewall/huiwen-upload.woff2",
-  "/fonts/notewall/chen-yuluoyan-thin.woff2",
-  "/fonts/game-hall/fredoka-400.woff2",
-  "/fonts/game-hall/fredoka-500.woff2",
-  "/fonts/game-hall/fredoka-600.woff2",
-  "/fonts/game-hall/fredoka-700.woff2",
-  "/fonts/game-hall/caveat-500.woff2",
-  "/fonts/game-hall/caveat-700.woff2",
-  "/fonts/game-hall/zen-maru-gothic-500.woff2",
-  "/fonts/game-hall/zen-maru-gothic-700.woff2",
-  "/fonts/game-hall/zen-maru-gothic-900.woff2",
-  "/fonts/\u5B57\u4F53/MISANS-REGULAR.woff2",
-  "/fonts/\u5B57\u4F53/MISANS-MEDIUM.woff2",
-  "/fonts/\u5B57\u4F53/MISANS-SEMIBOLD.woff2",
-] as const;
-
-const BUILTIN_FONT_LOAD_SPECS = [
-  '400 1em "Instrument Serif"',
-  'italic 400 1em "Instrument Serif"',
+/**
+ * 首屏真正会用到的字体（开机动画用的 Inter / Instrument Serif /
+ * JetBrains Mono 等，均为本地 woff2，命中缓存后几乎零成本）。
+ *
+ * ── 背景（这次要复盘的那件事）──
+ * 这里原本有一版「把 35 个内置字体 URL 全部 fetch 预热 + 35 条
+ * document.fonts.load」的无差别预热（BUILTIN_FONT_URLS / warmBuiltinFonts）。
+ * 后来这个环节被整段摘掉了——函数体还留在文件里，但已经没有任何调用点，
+ * 也就是说开机阶段不再等字体。代价是：首屏先用系统兜底字体排版，等主题字体
+ * 到位后再整页重排一次，用户感知就是「进桌面闪一下 + 卡一下」。
+ *
+ * 现在恢复「预热」这件事本身，但只预热首屏必需的几条，并且带超时上限：
+ * 超时就直接放行，绝不拿字体拖慢开机。
+ */
+const FIRST_PAINT_FONT_SPECS = [
   '300 1em "Inter"',
   '400 1em "Inter"',
   '500 1em "Inter"',
-  '400 1em "Major Mono Display"',
+  '400 1em "Instrument Serif"',
+  'italic 400 1em "Instrument Serif"',
   '300 1em "JetBrains Mono"',
   '400 1em "JetBrains Mono"',
-  '400 1em "Huiwen"',
-  '400 1em "Noto Serif SC"',
-  '400 1em "Source Han Serif SC"',
-  '400 1em "Bodoni Moda"',
-  'italic 400 1em "Bodoni Moda"',
-  '400 1em "EB Garamond"',
-  'italic 400 1em "EB Garamond"',
-  '400 1em "Long Cang"',
-  '400 1em "Cinzel"',
-  '400 1em "Press Start 2P"',
-  '400 1em "Special Elite"',
-  '400 1em "NoteWall Ximai"',
-  '400 1em "NoteWall Xiaozhitiao"',
-  '400 1em "NoteWall Huiwen"',
-  '400 1em "Game Hall Fredoka"',
-  '500 1em "Game Hall Fredoka"',
-  '600 1em "Game Hall Fredoka"',
-  '700 1em "Game Hall Fredoka"',
-  '500 1em "Game Hall Caveat"',
-  '700 1em "Game Hall Caveat"',
-  '500 1em "Game Hall Zen Maru Gothic"',
-  '700 1em "Game Hall Zen Maru Gothic"',
-  '900 1em "Game Hall Zen Maru Gothic"',
-  '400 1em "MiSans"',
-  '500 1em "MiSans"',
-  '600 1em "MiSans"',
+  '400 1em "Major Mono Display"',
 ] as const;
 
-const FONT_CACHE_BATCH_SIZE = 3;
-const FONT_CACHE_BATCH_DELAY_MS = 80;
+/** 字体预热的最长等待时间；到点无条件放行。 */
+const FONT_WARM_TIMEOUT_MS = 1500;
 
-type IdleDeadlineLike = {
-  didTimeout: boolean;
-  timeRemaining: () => number;
-};
-
-type WindowWithIdleCallback = Window & {
-  requestIdleCallback?: (callback: (deadline: IdleDeadlineLike) => void, options?: { timeout?: number }) => number;
-  cancelIdleCallback?: (handle: number) => void;
-};
-
-function scheduleIdleTask(callback: () => void): () => void {
-  if (typeof window === "undefined") {
-    return () => { };
+async function warmFirstPaintFonts(): Promise<void> {
+  if (typeof window === "undefined" || typeof document === "undefined" || !document.fonts) {
+    return;
   }
 
-  const idleWindow = window as WindowWithIdleCallback;
-  if (typeof idleWindow.requestIdleCallback === "function") {
-    const handle = idleWindow.requestIdleCallback(() => callback(), { timeout: 2400 });
-    return () => idleWindow.cancelIdleCallback?.(handle);
+  const loads = FIRST_PAINT_FONT_SPECS.map((spec) => document.fonts.load(spec).catch(() => []));
+  const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, FONT_WARM_TIMEOUT_MS));
+
+  await Promise.race([Promise.all(loads).then(() => undefined), timeout]);
+}
+
+/** 主题自带字体（dataURL）预热：让桌面首帧直接就是最终排版。 */
+function preloadFontFace(dataUrl: string | null | undefined): Promise<void> {
+  if (!dataUrl || typeof window === "undefined") {
+    return Promise.resolve();
   }
 
-  const handle = window.setTimeout(callback, 600);
-  return () => window.clearTimeout(handle);
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function cacheFontUrl(url: string): Promise<void> {
-  const response = await fetch(url, { cache: "force-cache" });
-  if (!response.ok) return;
-  await response.arrayBuffer();
-}
-
-async function warmBuiltinFonts(shouldStop: () => boolean): Promise<void> {
-  if (typeof window === "undefined") return;
-
-  for (let index = 0; index < BUILTIN_FONT_URLS.length; index += FONT_CACHE_BATCH_SIZE) {
-    if (shouldStop()) return;
-    const batch = BUILTIN_FONT_URLS.slice(index, index + FONT_CACHE_BATCH_SIZE);
-    await Promise.all(batch.map((url) => cacheFontUrl(url).catch(() => undefined)));
-    if (shouldStop()) return;
-    await wait(FONT_CACHE_BATCH_DELAY_MS);
+  const FontFaceCtor = (window as Window & { FontFace?: typeof FontFace }).FontFace;
+  if (typeof FontFaceCtor !== "function") {
+    return Promise.resolve();
   }
 
-  if (shouldStop() || !document.fonts) return;
-  await Promise.all(BUILTIN_FONT_LOAD_SPECS.map((spec) => document.fonts.load(spec).catch(() => [])));
+  try {
+    const face = new FontFaceCtor("AIVirtualPhoneUserFont", `url(${dataUrl})`);
+    return face.load().then(() => undefined).catch(() => undefined);
+  } catch {
+    return Promise.resolve();
+  }
 }
 
 function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: () => void }) {
@@ -222,7 +152,13 @@ async function prepareDesktopThemeForFirstPaint(): Promise<PreparedDesktopTheme>
   const profile = readThemeProfile();
   const assetIds = collectFirstPaintThemeAssetIds(profile);
   const assets = assetIds.length ? await getThemeAssetMap(assetIds) : {};
-  await Promise.all(Object.values(assets).map(preloadImageDataUrl));
+  const fontDataUrl = profile.fontAssetId ? assets[profile.fontAssetId] : null;
+  // 壁纸解码与主题字体预热并行：字体先就位，桌面首帧就是最终排版，
+  // 不会再出现「先兜底字体、再整页重排」的二次布局。
+  await Promise.all([
+    ...Object.values(assets).map(preloadImageDataUrl),
+    preloadFontFace(fontDataUrl)
+  ]);
   return { profile, assets };
 }
 
@@ -241,7 +177,8 @@ export function MainApp() {
     void navigator.storage?.persist?.().catch(() => {});
 
     void (async () => {
-      await hydrateKvDb();
+      // 字体预热与 KV 水合并行：两者互不依赖，串行只会白白拉长开机等待。
+      await Promise.all([hydrateKvDb(), warmFirstPaintFonts()]);
       if (cancelled) return;
       // 水合失败绝不放行：此时所有 KV 数据（设置/绑定/线下记录等）在内存里都是
       // 空的，进入后任何一次保存都会拿空数据整包覆盖 IndexedDB 里的真实历史。

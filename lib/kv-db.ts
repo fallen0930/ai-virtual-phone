@@ -20,6 +20,17 @@ let _hydrated = false;
 let _hydratePromise: Promise<void> | null = null;
 let _hydrateError: unknown = null;
 
+/** 每片水合多少条后让出一次主线程（见 hydrateKvDb 注释）。 */
+const HYDRATE_CHUNK_SIZE = 300;
+
+/**
+ * 把控制权交还给浏览器一次，让开机动画的渲染和用户输入有机会插进来。
+ * 水合本身不能分片（读到的必须整包），但「灌进内存缓存」这一步可以切片。
+ */
+function yieldToMainThread(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // ── Migration registry ──
 const _fixedKeys: string[] = [];
 const _dynamicPrefixes: string[] = [];
@@ -121,8 +132,15 @@ export function hydrateKvDb(): Promise<void> {
     _hydratePromise = (async () => {
         // Load existing IDB data into cache
         const all = await kvDb.entries.toArray();
-        for (const { key, value } of all) {
+        // 分片灌入内存：一次性同步循环写几十 MB 字符串是一条长任务，会把开机
+        // 动画（splash 是逐帧绘制的 canvas）的帧全部顶掉，表现为「开机卡住」。
+        // 每片让出一次主线程；数据量小的时候不会触发，零成本。
+        for (let index = 0; index < all.length; index += 1) {
+            const { key, value } = all[index];
             if (!_cache.has(key)) _cache.set(key, value);
+            if ((index + 1) % HYDRATE_CHUNK_SIZE === 0 && index + 1 < all.length) {
+                await yieldToMainThread();
+            }
         }
 
         // Migrate from localStorage

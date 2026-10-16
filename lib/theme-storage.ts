@@ -222,45 +222,55 @@ async function saveAssetRecord(record: ThemeAssetRecord): Promise<void> {
   }
 }
 
-async function readAssetRecord(id: string): Promise<ThemeAssetRecord | null> {
+/**
+ * 一次连接、一个只读事务批量读取多条资产。
+ *
+ * 旧实现是「每条资产各自 open/close 一次 IndexedDB 连接」：主题资产
+ * （壁纸库 + 图标皮肤矩阵 + 图标方案）动辄几十条，开机时等于让浏览器
+ * 反复建立/关闭几十个连接，再加上每条都要把几 MB 的 base64 字符串搬进
+ * 内存，主线程会被整段占住——这正是「进桌面第一下卡死」的主因。
+ */
+async function readAssetRecords(ids: string[]): Promise<ThemeAssetRecord[]> {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
   const database = await openThemeDb();
   if (!database) {
-    return null;
+    return [];
   }
 
   try {
     const transaction = database.transaction(THEME_ASSET_STORE, "readonly");
+    // 必须先把完成回调挂上再发请求：事务可能在最后一个请求的 await 续体之前
+    // 就已提交，此时补挂的 oncomplete 永不再触发（旧写法在此处存在竞态）。
+    const done = runTransactionDone(transaction);
     const store = transaction.objectStore(THEME_ASSET_STORE);
-    const result = await runRequest(store.get(id));
-    await runTransactionDone(transaction);
-    return (result as ThemeAssetRecord | undefined) ?? null;
+    const rows = await Promise.all(uniqueIds.map((id) => runRequest(store.get(id))));
+    await done;
+    return rows.filter((row): row is ThemeAssetRecord => Boolean(row));
   } finally {
     database.close();
   }
 }
 
 export async function getThemeAssetDataUrl(id: string): Promise<string | null> {
-  const record = await readAssetRecord(id);
+  const [record] = await readAssetRecords([id]);
   return record?.dataUrl ?? null;
 }
 
 export async function getThemeAssetMap(ids: string[]): Promise<Record<string, string>> {
   const map: Record<string, string> = {};
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-  const rows = await Promise.all(uniqueIds.map((id) => readAssetRecord(id)));
+  const rows = await readAssetRecords(ids);
   rows.forEach((row) => {
-    if (!row) {
-      return;
-    }
     map[row.id] = row.dataUrl;
   });
   return map;
 }
 
 export async function readThemeAssetRecords(ids: string[]): Promise<ThemeAssetRecord[]> {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-  const rows = await Promise.all(uniqueIds.map((id) => readAssetRecord(id)));
-  return rows.filter((row): row is ThemeAssetRecord => Boolean(row));
+  return readAssetRecords(ids);
 }
 
 export async function writeThemeAssetRecords(records: ThemeAssetRecord[]): Promise<void> {
@@ -275,7 +285,27 @@ export async function writeThemeAssetRecords(records: ThemeAssetRecord[]): Promi
     });
   });
 
-  await Promise.all(Array.from(uniqueRecords.values()).map((record) => saveAssetRecord(record)));
+  const list = Array.from(uniqueRecords.values());
+  if (list.length === 0) {
+    return;
+  }
+
+  // 导入主题包 / 恢复备份时会一次写入几十条资产：单连接单事务批量落库，
+  // 避免旧实现「每条各开一次连接」带来的连接风暴。
+  const database = await openThemeDb();
+  if (!database) {
+    return;
+  }
+
+  try {
+    const transaction = database.transaction(THEME_ASSET_STORE, "readwrite");
+    const done = runTransactionDone(transaction);
+    const store = transaction.objectStore(THEME_ASSET_STORE);
+    list.forEach((record) => store.put(record));
+    await done;
+  } finally {
+    database.close();
+  }
 }
 
 export async function deleteThemeAsset(id: string): Promise<void> {

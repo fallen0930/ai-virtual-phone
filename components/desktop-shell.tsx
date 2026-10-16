@@ -650,6 +650,30 @@ function readInitialThemeProfile(): ThemeProfile {
   return readThemeProfile();
 }
 
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+/**
+ * 把「不参与首屏绘制」的工作推到首帧之后的空闲时段执行。
+ * 有 requestIdleCallback 就用它（带超时兜底，最迟 timeout 后必然执行），
+ * 否则退回 setTimeout。返回取消函数。
+ *
+ * 开机瞬间主线程本来就在忙：KV 水合、首屏样式计算、桌面首帧布局。此时再
+ * 叠一批 IndexedDB 往返和大字符串展开，用户看到的就是「进桌面卡死几秒」。
+ */
+function scheduleIdle(callback: () => void, timeout = 1200): () => void {
+  if (typeof window === "undefined") return () => {};
+  const idleWindow = window as IdleWindow;
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(callback, 120);
+  return () => window.clearTimeout(handle);
+}
+
 /** Build a boolean grid marking cells occupied by widgets on one page */
 function buildWidgetOccupancy(pageWidgets: WidgetInstance[]): boolean[][] {
   const grid: boolean[][] = Array.from({ length: GRID_ROWS }, () =>
@@ -1164,6 +1188,14 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   }, []);
 
   const [themeAssets, setThemeAssets] = useState<Record<string, string>>(() => initialThemeAssets ?? {});
+  // 已经取回（或已尝试取回）的资产 id 账本。
+  // 开机时 MainApp 已经把首屏要用的那批资产（壁纸/字体/dock 皮肤/激活图标皮肤）
+  // 读好并通过 initialThemeAssets 注入了；若这里不记账，桌面一挂载就会把同一批
+  // 资产连同整个壁纸库再全量读一遍——这就是「进入桌面第一下异常卡顿」的直接来源。
+  const loadedThemeAssetIdsRef = useRef<Set<string>>(new Set(Object.keys(initialThemeAssets ?? {})));
+  // 开机首轮的主题资产补读是否已结算：用来区分「首次开机」和「用户主动换肤」，
+  // 前者可以等到空闲期再读，后者必须立刻可见。
+  const themeAssetBootSettledRef = useRef(false);
   const [slotIconWidth, setSlotIconWidth] = useState<number | null>(null);
   const [slotIconHeight, setSlotIconHeight] = useState<number | null>(null);
   const [slotRowStep, setSlotRowStep] = useState<number | null>(null);
@@ -1994,21 +2026,46 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   }, [desktopReady]);
 
   useEffect(() => {
-    const ids = collectThemeAssetIds(draftTheme);
-    if (ids.length === 0) {
+    // 只补读「这一轮还没取回过」的资产。首屏那批已由 MainApp 预加载、并作为
+    // initialThemeAssets 注入，这里直接跳过，省掉一次全量 IndexedDB 往返。
+    const pendingIds = collectThemeAssetIds(draftTheme).filter(
+      (id) => !loadedThemeAssetIdsRef.current.has(id)
+    );
+    const isBootSync = !themeAssetBootSettledRef.current;
+    if (pendingIds.length === 0) {
+      themeAssetBootSettledRef.current = true;
       return;
     }
 
     let disposed = false;
-    void getThemeAssetMap(ids).then((map) => {
-      if (disposed) {
-        return;
-      }
-      setThemeAssets((previous) => ({ ...previous, ...map }));
-    });
+    const load = () => {
+      void getThemeAssetMap(pendingIds).then((map) => {
+        if (disposed) return;
+        // 成功后才记账：StrictMode 的「挂载-卸载-再挂载」会走到这里两次，
+        // 提前记账会让这批资产永远读不到。
+        pendingIds.forEach((id) => loadedThemeAssetIdsRef.current.add(id));
+        if (Object.keys(map).length > 0) {
+          setThemeAssets((previous) => ({ ...previous, ...map }));
+        }
+      });
+    };
 
+    // 开机首轮补读推后到首帧空闲期（这批资产不参与首屏绘制）；之后的换肤补读
+    // 必须立刻生效，用户点了就要看见。
+    if (!isBootSync) {
+      load();
+      return () => {
+        disposed = true;
+      };
+    }
+
+    themeAssetBootSettledRef.current = true;
+    const cancelIdle = scheduleIdle(load);
     return () => {
       disposed = true;
+      cancelIdle();
+      // 被取消（含 StrictMode 的模拟卸载）时回滚标记，让下一次挂载仍走空闲补读。
+      themeAssetBootSettledRef.current = false;
     };
   }, [draftTheme, themeAssetKey]);
 

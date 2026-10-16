@@ -1,6 +1,7 @@
 import Dexie from "dexie";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
 import type { VnSession, VnMessage, VnChapterMeta, VnLayoutPrefs, VnBeat, VnFrameAudio } from "./vn-types";
+import { createId as generateId } from "./id-utils";
 export type { VnSession, VnMessage, VnChapterMeta, VnLayoutPrefs, VnBeat };
 
 class VnDatabase extends Dexie {
@@ -27,10 +28,6 @@ const vnDb = new VnDatabase();
 let _hydrated = false;
 let _sessionsCache: VnSession[] = [];
 let _messagesCache: VnMessage[] = [];
-
-function generateId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function parseTime(value: string | undefined): number {
   if (!value) return 0;

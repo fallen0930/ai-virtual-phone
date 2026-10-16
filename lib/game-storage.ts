@@ -15,6 +15,7 @@ import type {
   GameTemplateSource,
 } from "./game-types";
 import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
+import { createId } from "./id-utils";
 
 const GAME_STATE_KEY = "ai_phone_game_state_v1";
 const GAME_DRAFTS_KEY = "ai_phone_game_hall_drafts_v1";
@@ -23,10 +24,6 @@ export const GAME_UPDATED_EVENT = "ai-phone-game-updated";
 
 registerKvMigration(GAME_STATE_KEY);
 registerKvMigration(GAME_DRAFTS_KEY);
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function cleanText(value: unknown, maxLength: number): string {
   return String(value ?? "").replace(/\u0000/g, "").trim().slice(0, maxLength);

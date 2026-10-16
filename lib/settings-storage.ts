@@ -44,6 +44,7 @@ import {
 } from "./settings-db";
 import { kvGet, kvSet, kvRemove, registerKvMigration } from "./kv-db";
 import { isGenerationParameterKey } from "./generation-parameters";
+import { createId as generateId } from "./id-utils";
 
 // --- Unsupported import format detection ---
 export const UNSUPPORTED_IMPORT_FORMAT = "UNSUPPORTED_IMPORT_FORMAT";
@@ -107,9 +108,6 @@ registerKvMigration(USER_IDENTITIES_KEY);
 registerKvMigration(LEGACY_OVERRIDES_KEY);
 
 // --- Helpers ---
-function generateId(prefix: string) {
-    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
 
 function getNow() {
     return Date.now();

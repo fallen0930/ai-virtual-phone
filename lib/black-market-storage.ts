@@ -19,6 +19,7 @@ import type {
   BlackMarketTransactionType,
   BlackMarketWalletState,
 } from "./black-market-types";
+import { createShortUuidId as createId } from "./id-utils";
 
 const BLACK_MARKET_STATE_KEY = "ai_phone_black_market_state_v1";
 const BLACK_MARKET_USER_ID_KEY = "ai_phone_black_market_user_id_v1";
@@ -43,13 +44,6 @@ function cleanText(value: unknown, maxLength: number): string {
 
 function normalizeArray<T>(value: unknown, guard: (item: unknown) => T | null): T[] {
   return Array.isArray(value) ? value.map(guard).filter((item): item is T => Boolean(item)) : [];
-}
-
-function createId(prefix: string): string {
-  const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
-    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  return `${prefix}_${random}`;
 }
 
 function getLocalBlackMarketUserId(): string {

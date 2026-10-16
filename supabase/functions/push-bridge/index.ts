@@ -5,6 +5,9 @@
 //      匹配规则 → 冷却/上限 → 模板/AI 加工 → 占位符替换进 prompt 快照 →
 //      生成真回复 → 写 push_outbox → 逐条推送。逻辑与 netlify 版一致。
 // 注意：自包含移植文件，改动共享逻辑时需同步。
+//      弹窗预览分条逻辑在本文件内联（见下方 splitResponseForPushPreview），
+//      内联点共 3 处：push-generate、push-bridge、screen-chat；
+//      lib/push-preview-split.ts 是 Next 侧孪生实现，当前零引用。
 
 type ProviderKind = "openai-compatible" | "anthropic" | "gemini";
 
@@ -179,6 +182,7 @@ function extractResponseText(providerKind: ProviderKind, data: unknown): string 
   return stripHallucinatedTimestamps(text);
 }
 
+// ── 内嵌：lib/push-preview-split 的弹窗预览分条 ──
 const RICH_MEDIA_NAMES = new Set(["红包", "转账", "照片", "位置", "表情包", "引用", "语音", "音乐"]);
 
 function stripStateValues(text: string): string {

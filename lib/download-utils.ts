@@ -3,9 +3,9 @@ export type DownloadFileOptions = {
     nativeShareOnly?: boolean;
 };
 
-export function isAndroidBrowser(): boolean {
-    return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
-}
+// isAndroidBrowser 的单一实现已收到 lib/browser-platform.ts，这里保留 re-export
+// （components/settings/api-settings.tsx 与 data-management.tsx 一直从本模块取它）。
+export { isAndroidBrowser } from "./browser-platform";
 
 export function isIOSBrowser(): boolean {
     if (typeof navigator === "undefined") return false;

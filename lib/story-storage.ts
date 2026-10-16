@@ -1,5 +1,6 @@
 import Dexie from "dexie";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
+import { createId as generateId } from "./id-utils";
 
 export type StoryUiPrefs = {
   hideBubble?: boolean;
@@ -59,10 +60,6 @@ const storyDb = new StoryDatabase();
 let _hydrated = false;
 let _sessionsCache: StorySession[] = [];
 let _messagesCache: StoryMessage[] = [];
-
-function generateId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function parseTime(value: string | undefined): number {
   if (!value) return 0;

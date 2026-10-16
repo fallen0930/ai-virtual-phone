@@ -86,17 +86,10 @@ function getSelectedModules(moduleIds?: DataModuleId[]) {
   return DATA_MODULES.filter((module) => selected.has(module.id));
 }
 
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-}
+// 单一实现已收到 lib/format-bytes.ts，这里保留 re-export：
+// components/settings/data-management.tsx 与 components/storage-cleaner/storage-cleaner-app.tsx
+// 一直从本模块取 formatBytes，路径不必跟着改。
+export { formatBytes } from "../format-bytes";
 
 export async function inspectData(): Promise<DataSnapshot> {
   const moduleStats: ModuleStats[] = [];

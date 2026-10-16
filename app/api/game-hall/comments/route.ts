@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import type { GameComment } from "@/lib/game-types";
+import { createId } from "@/lib/id-utils";
 
 const COMMENT_COLUMNS = "id,game_id,parent_id,author_id,author_name,author_avatar,content,created_at";
 
@@ -26,10 +27,6 @@ function cleanText(value: unknown, maxLength: number): string {
 
 function encodeFilter(value: string): string {
   return encodeURIComponent(value);
-}
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function formatSupabaseError(err: unknown): string {

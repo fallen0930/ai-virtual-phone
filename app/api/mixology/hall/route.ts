@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import { getMixologySupabaseConfig, mixologyRestFetch, uploadMixologyCoverToStorage } from "@/lib/server/mixology-supabase";
 import { normalizeRecipeParts as normalizeParts, validateMechanismPayload, type RecipePartRef } from "@/lib/mixology/hall-parts";
+import { createId } from "@/lib/id-utils";
 
 // 独家特调 · 酒材/配方 API：材料（mixology_items）与配方（mixology_recipes）共用一套路由，
 // type=material|recipe 区分。全部经 service key 直连 Supabase REST，anon 无直读。
@@ -70,10 +71,6 @@ function normalizeTags(value: unknown): string[] {
 
 function encodeFilter(value: string): string {
   return encodeURIComponent(value);
-}
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function formatSupabaseError(err: unknown): string {

@@ -8,6 +8,7 @@ import {
   type DiaryEntryTodoItem,
   type DiaryEntryTrigger,
 } from "./diary-entry-types";
+import { createUuidId as generateId } from "./id-utils";
 
 const ENTRIES_KEY = "ai_phone_diary_entries_v1";
 const TIMER_KEY = "ai_phone_diary_entry_timer_settings_v1";
@@ -18,11 +19,6 @@ registerKvMigration(ENTRIES_KEY);
 registerKvMigration(TIMER_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_ASSET_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_SCALE_KEY);
-
-function generateId(prefix: string): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function cleanText(value: unknown, maxLength: number): string {
   return String(value ?? "")

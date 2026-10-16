@@ -10,6 +10,7 @@ import type {
   CoCreateToolArtifact,
   CoCreateToolArtifactType,
 } from "./cocreate-types";
+import { createId } from "./id-utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -176,10 +177,6 @@ export function coCreateNativeToolCallToTextCall(call: LlmToolCall): CoCreateToo
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function cleanText(value: unknown, maxLength: number): string {

@@ -15,6 +15,7 @@ import {
     dbDeleteComment,
     dbDeleteCommentsByPost,
 } from "./moments-db";
+import { createId as generateId } from "./id-utils";
 
 const AI_SCHEDULE_KEY = "ai_phone_moments_ai_schedule_v1";
 const PENDING_REACTIONS_KEY = "ai_phone_moments_pending_reactions_v1";
@@ -49,10 +50,6 @@ export function hydrateMomentsStorage(): Promise<void> {
 
 function isBrowser(): boolean {
     return typeof window !== "undefined";
-}
-
-function generateId(prefix: string): string {
-    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // ── Posts CRUD ──

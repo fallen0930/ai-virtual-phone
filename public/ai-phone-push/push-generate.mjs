@@ -5,6 +5,8 @@
 //      分条推送（800ms 节奏）→ 标记完成。逻辑与 netlify 版一致。
 // 注意：本文件为自包含移植，若改动 lib/llm-provider-adapter 的解析或
 //      lib/push-preview-split 的分条规则，需同步更新这里。
+//      分条逻辑的内联点共 3 处：push-generate、push-bridge、screen-chat
+//      （screen-chat 里叫 popupTextFromReply，返回拼好的单串；空白口径已统一为 \s+）。
 
 type ProviderKind = "openai-compatible" | "anthropic" | "gemini";
 

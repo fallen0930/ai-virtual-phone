@@ -7,6 +7,10 @@
 //      以角色在小手机中的唯一 sessionId 为准，只暂存尚未回端的文字增量 → 每轮原子写
 //      push_outbox(kind=bridge)，小手机打开时合并进原聊天记录。不持久化截图。
 // 注意：自包含移植文件，改动共享逻辑时需同步 push-bridge / push-generate。
+//      分条逻辑在本文件内联为 popupTextFromReply（返回拼好的单串，非数组）。
+//      空白口径已在 2026-10-16 统一到 \s+（段内换行压成空格），与 push-generate /
+//      push-bridge 一致；本文件原先用 [ \t]+ 保留段内换行，是两处实现的漂移。
+//      若快捷指令弹窗需要保留换行，改回 [ \t]+ 时务必同步另两处并更新部署包。
 
 type ProviderKind = "openai-compatible" | "anthropic" | "gemini";
 
@@ -98,7 +102,7 @@ function popupTextFromReply(rawText: string): string {
   const parts = text
     .split(/\n\n+/)
     .map(segment => humanizeSegment(segment.trim()))
-    .map(segment => segment.replace(/[ \t]+/g, " ").trim())
+    .map(segment => segment.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   return (parts.join("\n") || "……").slice(0, 1200);
 }

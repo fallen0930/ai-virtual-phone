@@ -29,6 +29,7 @@ import {
   type InterviewUserSnapshot,
   type InterviewWorldBookSnapshot,
 } from "./interview-magazine-types";
+import { createId } from "./id-utils";
 
 type InterviewGuestContext = {
   character: Character;
@@ -64,10 +65,6 @@ type HostQuestionResult = {
   targetGuest?: string;
   targetCharacterId?: string;
 };
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
 
 function cleanText(value: unknown, maxLength: number): string {
   return String(value ?? "")

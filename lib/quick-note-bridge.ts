@@ -9,6 +9,7 @@
 
 import { loadInstalledCustomApps, readCustomAppCollection, writeCustomAppCollection } from "./custom-app-storage";
 import type { InstalledCustomApp } from "./custom-app-types";
+import { createId } from "./id-utils";
 
 export const QUICK_NOTES_MANIFEST_ID = "quick.notes";
 export const QUICK_NOTES_COLLECTION = "notes";
@@ -31,10 +32,6 @@ export type QuickNote = {
     updatedAt: string;
 };
 
-function uid(): string {
-    return `note_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function normalizeStatus(value: unknown): QuickNoteStatus {
     return value === "sorted" || value === "archived" ? value : "inbox";
 }
@@ -42,7 +39,7 @@ function normalizeStatus(value: unknown): QuickNoteStatus {
 function normalize(raw: Record<string, unknown>): QuickNote {
     const createdAt = String(raw.createdAt || new Date().toISOString());
     return {
-        id: String(raw.id || uid()),
+        id: String(raw.id || createId("note")),
         title: String(raw.title || ""),
         text: String(raw.text || ""),
         category: String(raw.category || ""),
@@ -96,7 +93,7 @@ export function addHostQuickNote(input: NewQuickNote): QuickNote | null {
     const text = String(input.text || "").replace(/\u0000/g, "").slice(0, 20000);
     const now = new Date().toISOString();
     const note: QuickNote = {
-        id: uid(),
+        id: createId("note"),
         title: String(input.title || "").trim().slice(0, 120),
         text,
         category: String(input.category || "").trim().slice(0, 40),

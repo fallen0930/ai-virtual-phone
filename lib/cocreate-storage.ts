@@ -12,6 +12,7 @@ import type {
   CoCreateMode,
   CoCreateToolArtifact,
 } from "./cocreate-types";
+import { createId } from "./id-utils";
 
 const COCREATE_LEGACY_SESSION_KEY = "ai_phone_cocreate_session_v1";
 const COCREATE_LIBRARY_KEY = "ai_phone_cocreate_library_v1";
@@ -71,10 +72,6 @@ function normalizeSettings(value: unknown): CoCreateSettings {
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function normalizeMode(value: unknown): CoCreateMode | "chapter" {

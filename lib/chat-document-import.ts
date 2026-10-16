@@ -19,6 +19,7 @@ import {
     readCustomAppCollection,
 } from "./custom-app-storage";
 import type { InstalledCustomApp } from "./custom-app-types";
+import { createId as uid } from "./id-utils";
 
 /** 「文件库」自定义应用的 manifest.id，聊天室靠它找到材料库 */
 export const FILE_VAULT_MANIFEST_ID = "file.vault";
@@ -76,10 +77,6 @@ export type ChatDocAttachment = {
 };
 
 // ── 通用小工具 ──────────────────────────────────────────
-
-function uid(prefix: string): string {
-    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 export function countDocChars(text: string): number {
     return String(text || "").replace(/\s/g, "").length;

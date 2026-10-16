@@ -20,6 +20,7 @@ import {
 } from "./builtin-phone-workflows";
 import { MacroEngine, postProcessTrim } from "./macro-engine";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { createId as generateId } from "./id-utils";
 
 const REST_TOOLS_KEY = "ai_phone_rest_tools_v1";
 const REST_TOOL_PACKAGES_KEY = "ai_phone_rest_tool_packages_v1";
@@ -37,10 +38,6 @@ const LEGACY_AUTO_REST_PACKAGE_IDS = new Set([
     "rest_package_builtin",
     "rest_package_ai_default",
 ]);
-
-function generateId(prefix: string) {
-    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
 
 // ── REST Tools ────────────────────────────────
 

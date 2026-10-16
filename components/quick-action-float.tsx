@@ -295,7 +295,7 @@ export function QuickActionFloat() {
     const currentAccountId = accountIdForConfig(currentApiConfig);
     const currentAccount = useMemo<ApiAccount>(() => {
         const found = apiAccounts.find(item => item.id === currentAccountId);
-        return found || { id: currentAccountId, balance: 0, rate: 220 };
+        return found || { id: currentAccountId, balance: 0 };
     }, [apiAccounts, currentAccountId]);
     const balanceOf = useCallback((accountId: string): number | null => {
         const found = apiAccounts.find(item => item.id === accountId);

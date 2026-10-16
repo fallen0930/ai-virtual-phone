@@ -689,12 +689,10 @@ export function saveApiGroups(groups: ApiGroup[]): void {
 
 function normalizeApiAccount(raw: Partial<ApiAccount> | undefined): ApiAccount {
     const balance = Number(raw?.balance);
-    const rate = Number(raw?.rate);
     const lowThreshold = Number(raw?.lowThreshold);
     return {
         id: typeof raw?.id === "string" ? raw.id : "",
         balance: Number.isFinite(balance) ? balance : 0,
-        rate: Number.isFinite(rate) && rate > 0 ? rate : 220,
         lowThreshold: Number.isFinite(lowThreshold) && lowThreshold > 0 ? lowThreshold : undefined,
         note: typeof raw?.note === "string" && raw.note.trim() ? raw.note : undefined,
         autoCharge: raw?.autoCharge === false ? false : true,

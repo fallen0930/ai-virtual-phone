@@ -22,8 +22,6 @@ import {
 
 /** 未分组账户 id（与 ApiConfig.groupId 的空值对齐） */
 export const API_UNGROUPED_ACCOUNT_ID = "";
-/** 默认充值汇率：1 元 = 220 额度 */
-export const DEFAULT_API_ACCOUNT_RATE = 220;
 /** 流水保留上限（超出裁掉最旧的） */
 export const API_LEDGER_LIMIT = 500;
 /** 账户/流水变更广播事件名 */
@@ -74,7 +72,6 @@ export function emptyApiAccount(id: string = API_UNGROUPED_ACCOUNT_ID): ApiAccou
     return {
         id,
         balance: 0,
-        rate: DEFAULT_API_ACCOUNT_RATE,
         autoCharge: true,
         billingMode: "per_call",
         updatedAt: Date.now(),
@@ -151,12 +148,6 @@ export function pricingModeLabel(mode: ApiPricingMode): string {
     return "按次";
 }
 
-/** 折合人民币 */
-export function toCny(amount: number, rate?: number): number {
-    const r = Number.isFinite(rate) && (rate as number) > 0 ? (rate as number) : DEFAULT_API_ACCOUNT_RATE;
-    return amount / r;
-}
-
 export function isAccountLow(account: ApiAccount): boolean {
     const threshold = Number(account.lowThreshold);
     return Number.isFinite(threshold) && threshold > 0 && account.balance <= threshold;
@@ -214,17 +205,15 @@ export function spendFromAccount(input: ApiAccountSpend): { account: ApiAccount;
     return { account, entry };
 }
 
-/** 改账户设置（汇率 / 阈值 / 备注 / 自动扣费开关 / 记账口径） */
+/** 改账户设置（阈值 / 备注 / 自动扣费开关 / 记账口径） */
 export function updateAccountSettings(
     accountId: string,
-    patch: { rate?: number; lowThreshold?: number; note?: string; autoCharge?: boolean; billingMode?: "per_call" | "per_task" }
+    patch: { lowThreshold?: number; note?: string; autoCharge?: boolean; billingMode?: "per_call" | "per_task" }
 ): ApiAccount {
     const current = getApiAccount(accountId);
-    const rate = Number(patch.rate);
     const threshold = Number(patch.lowThreshold);
     return writeAccount({
         ...current,
-        rate: Number.isFinite(rate) && rate > 0 ? rate : current.rate,
         lowThreshold: Number.isFinite(threshold) && threshold > 0 ? threshold : undefined,
         note: typeof patch.note === "string" ? (patch.note.trim() || undefined) : current.note,
         autoCharge: typeof patch.autoCharge === "boolean" ? patch.autoCharge : current.autoCharge,
@@ -269,18 +258,6 @@ export function spentToday(accountId?: string): number {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     return spentSince(accountId, start.getTime());
-}
-
-/** 全部账户余额合计（含未分组账户） */
-export function totalBalance(accounts?: ApiAccount[]): { balance: number; cny: number } {
-    const list = accounts ?? loadApiAccounts();
-    let balance = 0;
-    let cny = 0;
-    for (const account of list) {
-        balance += account.balance;
-        cny += toCny(account.balance, account.rate);
-    }
-    return { balance: roundAmount(balance), cny };
 }
 
 /** 重命名/删除文件夹不会动账户，但要能列出「有余额但文件夹已不在」的孤儿账户 */

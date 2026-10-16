@@ -191,8 +191,6 @@ export type ApiAccount = {
     id: string;
     /** 剩余额度 */
     balance: number;
-    /** 充值汇率：1 元 = N 额度（默认 220） */
-    rate: number;
     /** 低额度提醒阈值（额度）；<=0 或缺省表示不提醒 */
     lowThreshold?: number;
     note?: string;

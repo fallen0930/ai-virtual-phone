@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>随想笔记</title>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   :root{
     --bg:#F1F2F6; --panel:#FFFFFF; --panel-2:#F7F8FA;
@@ -62,6 +63,8 @@
   .qn-body{flex:1; overflow:auto; padding:12px 14px calc(var(--safe-bottom) + 84px); -webkit-overflow-scrolling:touch;}
   .qn-card{background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--radius); padding:12px 13px; margin-bottom:10px; box-shadow:0 1px 2px rgba(44,52,64,.03);}
   .qn-card:active{background:var(--panel-2);}
+  .qn-card-batch{cursor:pointer; user-select:none;}
+  .qn-card-checkbox{width:18px; height:18px; margin-right:6px; flex-shrink:0; cursor:pointer;}
   .qn-card-top{display:flex; align-items:flex-start; gap:8px;}
   .qn-card-title{font-size:14.5px; font-weight:650; line-height:1.35; flex:1; word-break:break-word;}
   .qn-card-title .pin{color:var(--warn); margin-right:3px;}
@@ -81,6 +84,27 @@
   .spin{width:13px; height:13px; border:2px solid var(--ai-soft); border-top-color:var(--ai); border-radius:50%; animation:qnSpin .7s linear infinite; flex:none;}
   @keyframes qnSpin{to{transform:rotate(360deg);}}
 
+  /* ── 时间线视图 ─ */
+  .qn-timeline-section{margin-bottom:18px; transition:background .3s;}
+  .qn-timeline-header{font-size:13px; font-weight:700; color:var(--accent); margin-bottom:10px; padding-left:4px; display:flex; align-items:center; gap:6px; user-select:none;}
+  .qn-timeline-header:hover{opacity:.85;}
+  .qn-timeline-items{position:relative; padding-left:20px; overflow:hidden;}
+  .qn-timeline-items::before{content:""; position:absolute; left:6px; top:0; bottom:0; width:2px; background:linear-gradient(180deg, var(--accent-soft) 0%, transparent 100%); border-radius:1px;}
+  .qn-timeline-card{position:relative; margin-bottom:12px; background:var(--panel); border:1px solid var(--line-soft); border-radius:12px; padding:11px 12px; box-shadow:0 1px 2px rgba(44,52,64,.03); cursor:pointer; transition:.15s;}
+  .qn-timeline-card:active{background:var(--panel-2); transform:scale(.99);}
+  .qn-timeline-card::before{content:""; position:absolute; left:-17px; top:14px; width:8px; height:8px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); box-shadow:0 0 0 2px var(--accent-soft);}
+  .qn-timeline-date{font-size:11px; color:var(--muted); margin-bottom:5px;}
+  .qn-timeline-title{font-size:14px; font-weight:650; margin-bottom:5px; word-break:break-word;}
+  .qn-timeline-badges{display:flex; gap:5px; flex-wrap:wrap; margin-bottom:5px;}
+  .qn-timeline-preview{font-size:12px; color:var(--text); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word;}
+
+  /* ── 回顾视图 ─ */
+  .qn-review-header{font-size:16px; font-weight:700; color:var(--title); margin-bottom:8px;}
+  .qn-review-section{font-size:13px; font-weight:650; color:var(--accent); margin-bottom:8px; padding-left:4px;}
+  .qn-stat-card{background:var(--panel); border:1px solid var(--line-soft); border-radius:12px; padding:14px 10px; text-align:center; box-shadow:0 1px 2px rgba(44,52,64,.03);}
+  .qn-stat-num{font-size:24px; font-weight:700; color:var(--accent); margin-bottom:4px;}
+  .qn-stat-label{font-size:11px; color:var(--muted);}
+
   /* ── 底部主操作 ── */
   .qn-foot{position:fixed; left:0; right:0; bottom:0; z-index:20; padding:10px 14px calc(var(--safe-bottom) + 8px); background:linear-gradient(180deg,rgba(241,242,246,0) 0%,var(--bg) 42%); display:flex; gap:8px;}
 
@@ -90,7 +114,7 @@
   .qn-mask{position:absolute; inset:0; background:rgba(28,32,40,.34);}
   .qn-panel{position:absolute; left:0; right:0; bottom:0; max-height:94%; background:var(--bg); border-radius:20px 20px 0 0; overflow:hidden; display:flex; flex-direction:column; animation:qnUp .22s ease; box-shadow:0 -8px 30px rgba(28,32,40,.18);}
   @keyframes qnUp{from{transform:translateY(24px); opacity:.4;} to{transform:translateY(0); opacity:1;}}
-  .qn-sheet-head{padding:14px 14px 10px; background:var(--panel); border-bottom:1px solid var(--line-soft); display:flex; align-items:center; gap:9px;}
+  .qn-sheet-head{padding:24px 14px 10px; background:var(--panel); border-bottom:1px solid var(--line-soft); display:flex; align-items:center; gap:9px;}
   .qn-sheet-title{font-size:15.5px; font-weight:700;}
   .qn-sheet-sub{font-size:11.5px; color:var(--muted);}
   .qn-sheet-body{flex:1; overflow:auto; padding:14px; -webkit-overflow-scrolling:touch;}
@@ -152,6 +176,34 @@
   .qn-toggle[data-on="1"]{background:var(--accent);}
   .qn-toggle::after{content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; background:#fff; border-radius:50%; transition:.2s; box-shadow:0 1px 2px rgba(0,0,0,.12);}
   .qn-toggle[data-on="1"]::after{transform:translateX(18px);}
+
+  /* ── 分类下拉菜单 ── */
+  .qn-cat-dropdown{position:absolute; top:100%; left:0; right:0; z-index:30; background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:4px; box-shadow:0 4px 12px rgba(0,0,0,.1); max-height:200px; overflow-y:auto;}
+  .qn-cat-item{padding:9px 12px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:8px; transition:.15s;}
+  .qn-cat-item:hover{background:var(--accent-soft); color:var(--accent);}
+  .qn-cat-item .qn-cat-match{font-weight:600;}
+  .qn-cat-item .qn-cat-hint{font-size:11px; color:var(--muted); margin-left:auto;}
+  .qn-cat-item.new-cat{border-top:1px solid var(--line-soft); color:var(--accent);}
+  .qn-cat-item.new-cat::before{content:"+"; font-weight:700; margin-right:4px;}
+
+  /* ── 新顶部栏 ── */
+  .qn-topbar{position:sticky; top:0; z-index:10; background:rgba(241,242,246,.95); backdrop-filter:blur(10px); padding:10px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--line-soft);}
+  .qn-search-box{flex:1; display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:7px 10px; transition:.2s;}
+  .qn-search-box:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .qn-search-box input{flex:1; border:none; outline:none; background:transparent; font-size:13px; color:var(--title);}
+  .qn-search-icon{color:var(--muted); flex-shrink:0;}
+  .qn-topbar-actions{display:flex; gap:6px;}
+  .qn-btn-icon{width:38px; height:38px; border-radius:10px; background:var(--panel); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; transition:.2s;}
+  .qn-btn-icon:active{transform:scale(.95);}
+  .qn-btn-icon.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .qn-btn-icon.primary:active{opacity:.9;}
+
+  /* ── 筛选区 ── */
+  .qn-filters{padding:12px 14px; background:var(--bg); border-bottom:1px solid var(--line-soft);}
+  .qn-stat{font-size:11px; color:var(--muted); margin-bottom:8px;}
+  .qn-toolbar{display:flex; gap:8px; align-items:center; margin-top:9px;}
+  .qn-sort{margin-left:auto; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:4px;}
+  .qn-sort select{border:none; background:transparent; color:var(--text); font-size:12px; outline:none;}
 </style>
 </head>
 <body>
@@ -161,6 +213,8 @@
     <div class="qn-title"><span class="dot"></span>随想笔记</div>
     <div class="qn-seg">
       <button id="qnTabNotes" data-on="1">想法</button>
+      <button id="qnTabTimeline" data-on="0">时间线</button>
+      <button id="qnTabReview" data-on="0">回顾</button>
       <button id="qnTabAnas" data-on="0">分析</button>
     </div>
   </div>
@@ -173,7 +227,6 @@
   <div class="qn-toolbar">
     <button class="qn-btn ai" id="qnAiAll">AI 批量处理</button>
     <button class="qn-btn" id="qnRefresh">刷新</button>
-    <button class="qn-btn" id="qnSettings">设置</button>
     <div class="qn-sort">
       <span>排序</span>
       <select id="qnSort">
@@ -185,10 +238,25 @@
   </div>
 </header>
 
+<!-- 批量操作栏 -->
+<div id="qnBatchBar" style="display:none; padding:8px 12px; background:var(--bg); border-bottom:1px solid var(--border);">
+  <div style="display:flex; align-items:center; gap:8px;">
+    <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:4px; cursor:pointer;">
+      <input type="checkbox" id="qnBatchSelectAll" style="width:16px; height:16px;" />
+      <span>全选</span>
+    </label>
+    <span id="qnBatchCount" style="font-size:12px; color:var(--muted); margin-left:auto;"></span>
+    <button class="qn-btn primary" id="qnBatchExport" style="padding:4px 12px; font-size:12px;">🗜️ 批量导出ZIP</button>
+    <button class="qn-btn" id="qnBatchCancel" style="padding:4px 12px; font-size:12px;">取消</button>
+  </div>
+</div>
+
 <main class="qn-body" id="qnList"></main>
 
 <footer class="qn-foot">
   <button class="qn-btn primary grow" id="qnNew">＋ 记一条想法</button>
+  <button class="qn-btn ai" id="qnNewTpl" title="使用模板">📋</button>
+  <button class="qn-btn" id="qnBatchToggle" title="批量操作">☑️</button>
 </footer>
 
 <!-- 编辑 / 详情 -->
@@ -204,13 +272,21 @@
     </div>
     <div class="qn-sheet-body">
       <div class="qn-field"><div class="qn-label">标题</div><input class="qn-input" id="qnFTitle" placeholder="给这条想法起个名字（可留空）" /></div>
-      <div class="qn-field"><div class="qn-label">内容</div><textarea class="qn-textarea" id="qnFText" placeholder="随手把想法写下来，不用讲究条理……"></textarea></div>
+      <div class="qn-field">
+        <div class="qn-label">内容</div>
+        <textarea class="qn-textarea" id="qnFText" placeholder="随手把想法写下来，不用讲究条理……&#10;&#10;💡 提示：使用 [[笔记标题]] 可以引用其他笔记，形成知识关联"></textarea>
+        <button class="qn-btn" id="qnInsertLink" style="margin-top:8px; width:100%;">🔗 插入链接到笔记</button>
+      </div>
       <div class="qn-row">
-        <div class="qn-field"><div class="qn-label">分类</div><input class="qn-input" id="qnFCat" list="qnCatList" placeholder="未分类" /><datalist id="qnCatList"></datalist></div>
+        <div class="qn-field" style="position:relative">
+          <div class="qn-label">分类</div>
+          <input class="qn-input" id="qnFCat" placeholder="输入或选择分类..." autocomplete="off" />
+          <div class="qn-cat-dropdown" id="qnCatDropdown" style="display:none"></div>
+        </div>
       </div>
       <div class="qn-field"><div class="qn-label">标签（逗号分隔）</div><input class="qn-input" id="qnFTags" placeholder="如：AI, 交互, 待验证" /></div>
       <div class="qn-field">
-        <div class="qn-label">状态</div>
+        <div class="qn-label">状态 <span style="font-size:11px; color:var(--muted); font-weight:normal;">（收集箱=待处理，已整理=已完成，归档=历史存档）</span></div>
         <div class="qn-chiprow" id="qnFStatus">
           <button class="pk" data-val="inbox" data-on="1">收集箱</button>
           <button class="pk" data-val="sorted">已整理</button>
@@ -229,18 +305,25 @@
         </label>
         <input type="file" id="qnFileInput" class="qn-upload-input" accept=".doc,.docx,.zip,.txt,.md,.png,.jpg,.jpeg,image/png,image/jpeg,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" multiple />
         <div class="qn-attach-list" id="qnAttachList"></div>
-        <div class="qn-analyze-switch" id="qnAnalyzeSwitchWrap" style="display:none">
-          <span>分析附件内容</span>
-          <div class="qn-toggle" id="qnAnalyzeToggle" data-on="0"></div>
-          <span style="font-size:11px; color:var(--muted);">(仅 txt/md/图片)</span>
-        </div>
+      </div>
+      
+      <!-- 双向链接 -->
+      <div class="qn-field" id="qnLinksWrap" style="display:none;">
+        <div class="qn-label">🔗 引用的笔记</div>
+        <div id="qnLinksList" style="font-size:13px;"></div>
+      </div>
+      <div class="qn-field" id="qnBacklinksWrap" style="display:none;">
+        <div class="qn-label">↩️ 被以下笔记引用</div>
+        <div id="qnBacklinksList" style="font-size:13px;"></div>
       </div>
     </div>
-    <div class="qn-sheet-foot">
-      <button class="qn-btn grow" id="qnEditAi">AI 整理这条</button>
-      <button class="qn-btn ai" id="qnEditAsk">问角色</button>
-      <button class="qn-btn primary grow" id="qnEditSave">保存</button>
-      <button class="qn-btn danger" id="qnEditDel">删除</button>
+    <div class="qn-sheet-foot" style="flex-wrap:wrap; gap:8px;">
+      <button class="qn-btn primary grow" id="qnEditSave" style="min-width:calc(50% - 4px);">保存</button>
+      <button class="qn-btn danger" id="qnEditDel" style="min-width:calc(50% - 4px);">删除</button>
+      <button class="qn-btn" id="qnEditUseTpl" style="flex:1; min-width:30%;">模板</button>
+      <button class="qn-btn" id="qnEditExport" style="flex:1; min-width:30%;">导出</button>
+      <button class="qn-btn grow" id="qnEditAi" style="flex:2; min-width:30%;">AI整理</button>
+      <button class="qn-btn ai" id="qnEditAsk" style="flex:1; min-width:30%;">问角色</button>
     </div>
   </div>
 </div>
@@ -274,20 +357,86 @@
   </div>
 </div>
 
-<!-- 设置 -->
-<div class="qn-sheet" id="qnSetSheet">
+<!-- 导出格式选择 -->
+<div class="qn-sheet" id="qnExportSheet">
   <div class="qn-mask" data-close="1"></div>
   <div class="qn-panel">
     <div class="qn-sheet-head">
-      <div><div class="qn-sheet-title">设置</div><div class="qn-sheet-sub">分类清单与默认角色</div></div>
+      <div><div class="qn-sheet-title">导出笔记</div><div class="qn-sheet-sub">选择导出格式</div></div>
       <button class="qn-close" data-close="1">✕</button>
     </div>
     <div class="qn-sheet-body">
-      <div class="qn-field"><div class="qn-label">分类清单（每行一个）</div><textarea class="qn-textarea" id="qnSetCats" style="min-height:130px"></textarea></div>
-      <div class="qn-field"><div class="qn-label">默认角色（「问角色」直接用）</div><select class="qn-select" id="qnSetChar"></select></div>
-      <div class="qn-hintbar">提示：分类清单会影响 AI 归类的候选范围；分类留空的笔记会待在「收集箱」里等你整理。</div>
+      <div class="qn-field">
+        <div class="qn-label">选择格式</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="qn-btn grow" id="qnExportMd" style="flex:1;">📄 Markdown</button>
+          <button class="qn-btn grow" id="qnExportTxt" style="flex:1;">📝 TXT</button>
+          <button class="qn-btn grow" id="qnExportJson" style="flex:1;">📦 JSON</button>
+          <button class="qn-btn grow" id="qnExportZip" style="flex:1;">🗜️ ZIP</button>
+        </div>
+      </div>
+      <div class="qn-hintbar">📌 含附件的笔记仅支持 ZIP 导出（保留完整文件）；纯文本笔记可选 Markdown/TXT/JSON</div>
     </div>
-    <div class="qn-sheet-foot"><button class="qn-btn primary grow" id="qnSetSave">保存设置</button></div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<!-- 模板选择器 -->
+<div class="qn-sheet" id="qnTemplateSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div><div class="qn-sheet-title">快捷模板</div><div class="qn-sheet-sub">选择一个模板快速开始，或导入/生成新模板</div></div>
+      <button class="qn-close" onclick="document.getElementById('qnTemplateSheet').setAttribute('data-open','0')">✕</button>
+    </div>
+    <div class="qn-sheet-body">
+      <div class="qn-hintbar">点击模板直接应用到编辑面板，或先导入自定义模板</div>
+      
+      <!-- 操作按钮区 -->
+      <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+        <button class="qn-btn ai" id="qnTplCopyPrompt"> 复制AI提示词</button>
+        <label class="qn-btn" for="qnTplFileInput" style="cursor:pointer;">📁 导入JSON文件</label>
+        <input type="file" id="qnTplFileInput" accept=".json" style="display:none;" />
+        <button class="qn-btn" id="qnTplManualGuide">✏️ 手动创建模板</button>
+      </div>
+
+      <!-- 粘贴JSON区域 -->
+      <div class="qn-field">
+        <div class="qn-label">粘贴 AI 生成的 JSON</div>
+        <textarea class="qn-textarea" id="qnTplPasteArea" placeholder="在这里粘贴其他 AI 生成的模板 JSON..." style="min-height:100px; font-family:monospace; font-size:12px;"></textarea>
+        <button class="qn-btn primary grow" id="qnTplParseJson" style="margin-top:8px;">解析并保存为模板</button>
+      </div>
+
+      <!-- 预设模板 -->
+      <div class="qn-field">
+        <div class="qn-label">预设模板</div>
+        <div id="qnBuiltinTpls"></div>
+      </div>
+
+      <!-- 自定义模板 -->
+      <div class="qn-field" id="qnCustomTplWrap" style="display:none;">
+        <div class="qn-label">我的模板</div>
+        <div id="qnCustomTpls"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 笔记链接选择器 -->
+<div class="qn-sheet" id="qnLinkPickerSheet">
+  <div class="qn-mask" data-close="1"></div>
+  <div class="qn-panel">
+    <div class="qn-sheet-head">
+      <div><div class="qn-sheet-title">选择要链接的笔记</div><div class="qn-sheet-sub">搜索并选择笔记，会自动插入 [[标题]] 格式</div></div>
+      <button class="qn-close" onclick="document.getElementById('qnLinkPickerSheet').setAttribute('data-open','0')">✕</button>
+    </div>
+    <div class="qn-sheet-body">
+      <div class="qn-search" style="margin-bottom:12px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="qnLinkSearch" placeholder="搜索笔记标题..." />
+      </div>
+      <div id="qnLinkPickerList"></div>
+    </div>
   </div>
 </div>
 
@@ -321,6 +470,101 @@
   var DEFAULT_CATS = ["产品想法", "交互/设计", "技术实现", "待办", "参考/灵感", "其他"];
   var MAX_TITLE = 120;
   var MAX_TEXT = 20000;
+
+  /* ── 预设模板 ─ */
+  var BUILTIN_TEMPLATES = [
+    {
+      id: "bug",
+      name: "Bug 记录",
+      icon: "\uD83D\uDC1B",
+      desc: "现象、复现步骤、期望结果",
+      title: "Bug: ",
+      text: "\u3010\u73B0\u8C61\u3011\n\n\u3010\u590D\u73B0\u6B65\u9AA4\u3011\n1. \n2. \n\n\u3010\u671F\u671B\u7ED3\u679C\u3011\n\n\u3010\u53EF\u80FD\u539F\u56E0\u3011\n",
+      category: "\u6280\u672F\u95EE\u9898",
+      tags: ["bug", "\u5F85\u6392\u67E5"]
+    },
+    {
+      id: "idea",
+      name: "\u7075\u611F\u60F3\u6CD5",
+      icon: "\uD83D\uDCA1",
+      desc: "\u80CC\u666F\u3001\u6838\u5FC3\u70B9\u3001\u53EF\u80FD\u4EF7\u503C",
+      title: "\uD83D\uDCA1 ",
+      text: "\u3010\u80CC\u666F\u3011\n\n\u3010\u6838\u5FC3\u60F3\u6CD5\u3011\n\n\u3010\u53EF\u80FD\u4EF7\u503C\u3011\n\n\u3010\u4E0B\u4E00\u6B65\u884C\u52A8\u3011\n",
+      category: "",
+      tags: ["\u7075\u611F"]
+    },
+    {
+      id: "todo",
+      name: "\u5F85\u529E\u4E8B\u9879",
+      icon: "\u2705",
+      desc: "\u4EFB\u52A1\u3001\u622A\u6B62\u65F6\u95F4\u3001\u4F18\u5148\u7EA7",
+      title: "\u2705 ",
+      text: "\u3010\u4EFB\u52A1\u63CF\u8FF0\u3011\n\n\u3010\u622A\u6B62\u65F6\u95F4\u3011\n\n\u3010\u4F18\u5148\u7EA7\u3011\u9AD8/\u4E2D/\u4F4E\n\n\u3010\u5173\u8054\u9879\u76EE\u3011\n",
+      category: "\u5F85\u529E",
+      tags: ["todo"]
+    },
+    {
+      id: "reflection",
+      name: "\u53CD\u601D\u603B\u7ED3",
+      icon: "\uD83E\uDD14",
+      desc: "\u4E8B\u4EF6\u3001\u611F\u53D7\u3001\u6536\u83B7\u3001\u6539\u8FDB",
+      title: "\uD83E\uDD14 ",
+      text: "\u3010\u4E8B\u4EF6\u3011\n\n\u3010\u6211\u7684\u611F\u53D7\u3011\n\n\u3010\u5B66\u5230\u4E86\u4EC0\u4E48\u3011\n\n\u3010\u4E0B\u6B21\u53EF\u4EE5\u6539\u8FDB\u7684\u3011\n",
+      category: "\u53CD\u601D",
+      tags: ["\u590D\u76D8"]
+    },
+    {
+      id: "learning",
+      name: "\u5B66\u4E60\u7B14\u8BB0",
+      icon: "\uD83D\uDCDA",
+      desc: "\u4E3B\u9898\u3001\u5173\u952E\u6982\u5FF5\u3001\u7591\u95EE",
+      title: "\uD83D\uDCDA ",
+      text: "\u3010\u5B66\u4E60\u4E3B\u9898\u3011\n\n\u3010\u5173\u952E\u6982\u5FF5\u3011\n- \n\n\u3010\u6211\u7684\u7591\u95EE\u3011\n\n\u3010\u884C\u52A8\u8BA1\u5212\u3011\n",
+      category: "\u5B66\u4E60",
+      tags: ["\u7B14\u8BB0"]
+    }
+  ];
+
+  /* ── AI \u6A21\u677F\u751F\u6210\u63D0\u793A\u8BCD ─ */
+  var TEMPLATE_GEN_PROMPT = `你是一个笔记模板设计师。请根据用户的需求，生成一个结构化的笔记模板。
+
+输出格式（严格 JSON，不要任何解释、不要代码块）：
+{
+  "name": "模板名称",
+  "icon": "一个emoji",
+  "desc": "一句话描述用途（20字以内）",
+  "title": "默认标题前缀（可选）",
+  "text": "模板正文内容，用【部分名】标记各个段落，每个部分后换行留出填写空间",
+  "category": "默认分类（可选）",
+  "tags": ["标签1", "标签2"]
+}
+
+要求：
+1. name 必填，简洁明了
+2. icon 使用一个贴切的 emoji
+3. desc 简短说明模板用途
+4. text 是核心内容，使用【】组织不同部分，例如：
+   【背景】
+   
+   【核心想法】
+   
+   【下一步行动】
+   
+5. category 和 tags 可选
+6. 整体要实用、结构清晰
+
+示例输出：
+{"name":"会议记录","icon":"📝","desc":"记录会议要点和待办","title":"📝 ","text":"【会议主题】\\n\\n【参会人员】\\n\\n【讨论要点】\\n- \\n\\n【决定事项】\\n\\n【待办任务】\\n- [ ] \\n","category":"工作","tags":["会议","待办"]}`;
+
+  /* ── 读取文件为文本 ─ */
+  function readFileAsText(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(reader.result); };
+      reader.onerror = function() { reject(reader.error); };
+      reader.readAsText(file);
+    });
+  }
 
   var AI = (typeof window.AiPhone !== "undefined" && window.AiPhone) || null;
   var canDb = !!(AI && AI.db && AI.db.list);
@@ -360,6 +604,69 @@
     return String(raw || "").split(/[,，;；\n\t]+/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 20);
   }
   function titleOf(note) { return (note.title && note.title.trim()) || (note.text || "").trim().slice(0, 24) || "未命名想法"; }
+
+  /* ── 双向链接处理 ─ */
+  
+  // 从文本中提取 [[笔记标题]] 或 [[笔记ID]] 引用
+  function extractLinks(text) {
+    if (!text) return [];
+    var matches = text.match(/\[\[([^\]]+)\]\]/g);
+    if (!matches) return [];
+    
+    var links = [];
+    matches.forEach(function(m) {
+      var content = m.slice(2, -2).trim(); // 去掉 [[ 和 ]]
+      if (content) links.push(content);
+    });
+    return links;
+  }
+  
+  // 根据标题或ID查找笔记
+  function findNoteByTitleOrId(query) {
+    // 先尝试匹配ID
+    var byId = store.notes.filter(function(n) { return n.id === query; })[0];
+    if (byId) return byId;
+    
+    // 再尝试匹配标题（不区分大小写）
+    var q = query.toLowerCase();
+    return store.notes.filter(function(n) { 
+      return n.title && n.title.toLowerCase().indexOf(q) >= 0; 
+    })[0];
+  }
+  
+  // 解析文本中的链接，返回链接对象数组
+  function parseLinks(text) {
+    if (!text) return [];
+    var refs = extractLinks(text);
+    var links = [];
+    
+    refs.forEach(function(ref) {
+      var note = findNoteByTitleOrId(ref);
+      if (note) {
+        links.push({
+          id: note.id,
+          title: note.title || "未命名",
+          refText: ref // 原始引用文本
+        });
+      }
+    });
+    
+    return links;
+  }
+  
+  // 查找引用了指定笔记的所有笔记（反向链接）
+  function findBacklinks(noteId) {
+    return store.notes.filter(function(n) {
+      return n.links && n.links.indexOf(noteId) >= 0;
+    });
+  }
+  
+  // 更新笔记的链接字段
+  function updateNoteLinks(note) {
+    var links = parseLinks(note.text);
+    note.links = links.map(function(l) { return l.id; });
+    return note;
+  }
 
   /* ── 附件处理工具 ── */
   var MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -475,12 +782,18 @@
   var store = {
     notes: [], anas: [], chars: [],
     cats: DEFAULT_CATS.slice(),
+    customTemplates: [], // 用户自定义模板
     defaultCharId: "",
     loaded: false,
-    view: "notes",      // notes | anas
+    view: "notes",      // notes | timeline | review | anas
+    timelineGroupBy: "updated", // updated | created - 时间线分组依据
+    batchMode: false,   // 批量选择模式
+    batchSelected: [],  // 已选中的笔记ID列表
     q: "", cat: "", sort: "updated",
     editing: null,      // 正在编辑的 note（内存对象）
     editingAttachments: [], // 当前编辑中的附件列表
+    editingAttachmentsLoaded: true, // 附件完整 dataUrl 是否已按需加载
+    editingAttachmentsDirty: false, // 本次编辑是否增删了附件
     analyzeAttachments: false, // 是否分析附件
     lastAna: null
   };
@@ -492,6 +805,21 @@
   function dbCreate(coll, data) { return AI.db.create(coll, data); }
   function dbUpdate(coll, id, patch) { return AI.db.update(coll, id, patch); }
   function dbDelete(coll, id) { return AI.db.delete(coll, id); }
+  // 按需读取单条完整记录（含附件 dataUrl），用于打开编辑 / 导出 / 附件分析
+  function dbGet(coll, id) {
+    if (!canDb || !id) return Promise.resolve(null);
+    return AI.db.get(coll, id).then(function (r) { return r || null; }).catch(function () { return null; });
+  }
+  // 把附件规整为轻量元信息（去掉体积巨大的 base64 dataUrl），并补一个稳定 id 供保存时合并
+  function slimAttachment(att, i) {
+    return {
+      id: String(att.id || ("att_" + (att.uploadedAt || "") + "_" + i + "_" + (att.name || ""))),
+      name: String(att.name || ""),
+      type: String(att.type || ""),
+      size: Number(att.size) || 0,
+      uploadedAt: String(att.uploadedAt || "")
+    };
+  }
 
   function normalizeNote(row) {
     return {
@@ -504,8 +832,10 @@
       pinned: row.pinned === true,
       source: row.source === "float" ? "float" : "app",
       aiSummary: String(row.aiSummary || ""),
-      attachments: Array.isArray(row.attachments) ? row.attachments : [],
+      attachments: Array.isArray(row.attachments) ? row.attachments.map(slimAttachment) : [],
+      hasAttachmentData: Array.isArray(row.attachments) && row.attachments.some(function(a){ return !!a.dataUrl; }),
       analyzeAttachments: row.analyzeAttachments === true,
+      links: Array.isArray(row.links) ? row.links : [], // 引用的笔记ID列表
       createdAt: String(row.createdAt || nowIso()),
       updatedAt: String(row.updatedAt || row.createdAt || nowIso())
     };
@@ -531,6 +861,7 @@
       store.anas = res[1].map(normalizeAna);
       var meta = res[2][0] || {};
       if (Array.isArray(meta.categories) && meta.categories.length) store.cats = meta.categories.map(String);
+      if (Array.isArray(meta.customTemplates) && meta.customTemplates.length) store.customTemplates = meta.customTemplates;
       store.defaultCharId = String(meta.defaultCharacterId || "");
       store.loaded = true;
       return loadCharacters();
@@ -544,7 +875,13 @@
     }).catch(function () { store.chars = []; return []; });
   }
   function saveMeta() {
-    var row = { id: "config", categories: store.cats.slice(), defaultCharacterId: store.defaultCharId, updatedAt: nowIso() };
+    var row = { 
+      id: "config", 
+      categories: store.cats.slice(), 
+      customTemplates: store.customTemplates || [],
+      defaultCharacterId: store.defaultCharId, 
+      updatedAt: nowIso() 
+    };
     return dbList(COLL_META).then(function (rows) {
       if (rows && rows[0] && rows[0].id) return dbUpdate(COLL_META, rows[0].id, row);
       return dbCreate(COLL_META, row);
@@ -571,11 +908,16 @@
       return text;
     });
   }
-  function aiGenerate(characterId, instruction, body) {
+  function aiGenerate(characterId, instruction, body, extraOpts) {
     if (!canGen) return Promise.reject(new Error("当前没有可用的 AI（缺少 ai.generate 权限）"));
     // 注意：宿主只在 input 为对象时才拼进提示词，字符串正文必须并进 instruction。
     var full = String(instruction || "") + (body ? "\n\n" + body : "");
-    return AI.ai.generate({ characterId: characterId, instruction: full, historyLimit: 6 }).then(function (r) {
+    var payload = { characterId: characterId, instruction: full, historyLimit: 6 };
+    if (extraOpts && typeof extraOpts === "object") {
+      if (Array.isArray(extraOpts.worldBookIds) && extraOpts.worldBookIds.length) payload.worldBookIds = extraOpts.worldBookIds;
+      if (extraOpts.activateAllWorldBooks === true) payload.activateAllWorldBooks = true;
+    }
+    return AI.ai.generate(payload).then(function (r) {
       var text = (r && (r.text || r.content)) || "";
       if (!text) throw new Error("角色没有返回内容");
       return text;
@@ -600,42 +942,7 @@
 
   function organizeNote(note) {
     var user = "分类清单：" + store.cats.join("、") + "\n\n想法标题：" + titleOf(note) + "\n想法正文：\n" + (note.text || "(无正文)");
-    
-    // 如果需要分析附件且有可分析的附件
-    if (note.analyzeAttachments && note.attachments && note.attachments.length) {
-      var analyzableAttachments = note.attachments.filter(function(att) { return canAnalyzeFile(att.name); });
-      if (analyzableAttachments.length) {
-        user += "\n\n附件内容：";
-        var extractPromises = analyzableAttachments.map(function(att) {
-          return extractAttachmentText(att).then(function(text) {
-            return "【" + att.name + "】\n" + text;
-          }).catch(function() {
-            return "【" + att.name + "】（无法读取内容）";
-          });
-        });
-        
-        return Promise.all(extractPromises).then(function(texts) {
-          user += "\n" + texts.join("\n\n");
-          return aiChat(SYS_ORGANIZE, user, { temperature: 0.2, maxTokens: 500 }).then(function (out) {
-            var obj = parseJsonLoose(out);
-            if (obj && typeof obj === "object") {
-              var cat = String(obj.category || "").trim();
-              var tags = Array.isArray(obj.tags) ? obj.tags.map(String).filter(Boolean).slice(0, 6) : [];
-              var summary = String(obj.summary || "").trim();
-              if (cat && store.cats.length && store.cats.indexOf(cat) < 0) {
-                // 模型给了清单外的分类，保留但记下
-              }
-              return { category: cat, tags: tags, summary: summary };
-            }
-            // 退化：JSON 解析失败时，退到 classify 做分类，摘要用原文本截断
-            return aiClassify(note.text || titleOf(note), store.cats).then(function (label) {
-              return { category: label || "", tags: [], summary: String(out || "").replace(/\s+/g, " ").slice(0, 40) };
-            });
-          });
-        });
-      }
-    }
-    
+
     return aiChat(SYS_ORGANIZE, user, { temperature: 0.2, maxTokens: 500 }).then(function (out) {
       var obj = parseJsonLoose(out);
       if (obj && typeof obj === "object") {
@@ -672,14 +979,8 @@
           reject(e);
         }
       } else if (isImageFile(att.name)) {
-        // 图片：检查是否有视觉能力
-        if (AI && AI.ai && AI.ai.chat && typeof AI.ai.chat === 'function') {
-          // 尝试使用支持视觉的模型（如果配置了）
-          // 注意：这需要宿主的 AI 模型支持 vision
-          resolve("【图片附件：" + att.name + "】当前环境不支持图片识别，无法提取文字内容。");
-        } else {
-          resolve("【图片附件：" + att.name + "】无法提取文字内容。");
-        }
+        // 图片：当前环境不做 OCR，只告知存在该图片附件，不谎称读取内容
+        resolve("【图片附件：" + att.name + "（" + formatFileSize(att.size || 0) + "）】这是一张图片，当前环境未开启图片识别，无法读取其中的文字或画面内容。");
       } else {
         reject(new Error("不支持的文件类型"));
       }
@@ -699,10 +1000,19 @@
     var counts = {};
     store.notes.forEach(function (n) { var c = n.category || "未分类"; counts[c] = (counts[c] || 0) + 1; });
     var inbox = store.notes.filter(function (n) { return n.status === "inbox"; }).length;
+    var sorted = store.notes.filter(function (n) { return n.status === "sorted"; }).length;
+    var archived = store.notes.filter(function (n) { return n.status === "archived"; }).length;
     var cats = store.cats.slice();
     store.notes.forEach(function (n) { if (n.category && cats.indexOf(n.category) < 0) cats.push(n.category); });
 
-    var html = chip("", "全部", store.notes.length) + chip("inbox", "收集箱", inbox);
+    var html = chip("", "全部", store.notes.length);
+    
+    // 状态筛选 chips
+    html += chip("status:inbox", "收集箱", inbox);
+    html += chip("status:sorted", "已整理", sorted);
+    html += chip("status:archived", "归档", archived);
+    
+    // 分类 chips
     cats.forEach(function (c) { if (counts[c]) html += chip("c:" + c, c, counts[c]); });
     $("qnChips").innerHTML = html;
 
@@ -715,8 +1025,14 @@
   function filteredNotes() {
     var q = store.q.trim().toLowerCase();
     var list = store.notes.filter(function (n) {
-      if (store.cat === "inbox") { if (n.status !== "inbox") return false; }
+      // 状态筛选
+      if (store.cat === "status:inbox") { if (n.status !== "inbox") return false; }
+      else if (store.cat === "status:sorted") { if (n.status !== "sorted") return false; }
+      else if (store.cat === "status:archived") { if (n.status !== "archived") return false; }
+      // 分类筛选
       else if (store.cat.indexOf("c:") === 0) { if ((n.category || "未分类") !== store.cat.slice(2)) return false; }
+      
+      // 搜索筛选
       if (q) {
         var hay = (n.title + " " + n.text + " " + n.tags.join(" ") + " " + n.category).toLowerCase();
         if (hay.indexOf(q) < 0) return false;
@@ -735,6 +1051,8 @@
     var box = $("qnList");
     if (store.loading) { box.innerHTML = '<div class="qn-busy"><span class="spin"></span>' + escapeHtml(store.loadingText || "处理中…") + "</div>"; return; }
     if (store.view === "anas") return renderAnaList();
+    if (store.view === "timeline") return renderTimeline();
+    if (store.view === "review") return renderReview();
 
     var list = filteredNotes();
     if (!store.notes.length) {
@@ -749,16 +1067,474 @@
       if (n.status === "archived") badges += '<span class="qn-badge dim">归档</span>';
       if (n.category) badges += '<span class="qn-badge">' + escapeHtml(n.category) + "</span>";
       if (n.source === "float") badges += '<span class="qn-badge dim">速记</span>';
-      if (n.attachments && n.attachments.length) badges += '<span class="qn-badge dim">📎' + n.attachments.length + '</span>';
+      if (n.attachments && n.attachments.length) badges += '<span class="qn-badge dim">' + n.attachments.length + '</span>';
+      if (n.links && n.links.length) badges += '<span class="qn-badge dim">🔗' + n.links.length + '</span>';
       var tags = n.tags.map(function (t) { return '<span class="qn-tag">#' + escapeHtml(t) + "</span>"; }).join("");
       var summary = n.aiSummary ? '<div class="qn-card-summary">AI：' + escapeHtml(n.aiSummary) + "</div>" : "";
-      return '<article class="qn-card" data-open-note="' + escapeHtml(n.id) + '">' +
-        '<div class="qn-card-top"><div class="qn-card-title">' + (n.pinned ? '<span class="pin">★</span>' : "") + escapeHtml(titleOf(n)) + "</div>" + badges + "</div>" +
+      
+      // 批量模式下的复选框
+      var checkbox = store.batchMode 
+        ? '<input type="checkbox" class="qn-card-checkbox" data-note-id="' + escapeHtml(n.id) + '" ' + 
+          (store.batchSelected.indexOf(n.id) >= 0 ? 'checked' : '') + 
+          ' onclick="event.stopPropagation();" />' 
+        : '';
+      
+      return '<article class="qn-card' + (store.batchMode ? ' qn-card-batch' : '') + '" data-open-note="' + escapeHtml(n.id) + '">' +
+        '<div class="qn-card-top">' + checkbox + '<div class="qn-card-title">' + (n.pinned ? '<span class="pin">★</span>' : "") + escapeHtml(titleOf(n)) + "</div>" + badges + "</div>" +
         (n.text ? '<div class="qn-card-preview">' + escapeHtml(n.text.slice(0, 220)) + "</div>" : "") +
         summary +
         '<div class="qn-card-foot">' + tags + '<span class="qn-meta">' + fmtTime(n.updatedAt) + "</span></div>" +
         "</article>";
     }).join("");
+    
+    // 批量模式下绑定复选框事件
+    if (store.batchMode) {
+      bindBatchCheckboxes();
+    }
+  }
+
+  /* ── 时间线视图渲染 ─ */
+  
+  // 按时间分组笔记
+  function groupNotesByDate(notes) {
+    var groups = {
+      today: [],
+      yesterday: [],
+      thisWeek: [],
+      thisMonth: [],
+      earlier: []
+    };
+    
+    var now = new Date();
+    var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    var yesterdayStart = todayStart - 86400000;
+    var weekStart = todayStart - (now.getDay() * 86400000);
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    
+    notes.forEach(function(n) {
+      // 根据 store.timelineGroupBy 决定使用哪个时间字段
+      var timeStr = store.timelineGroupBy === "created" ? n.createdAt : n.updatedAt;
+      var noteTime = new Date(timeStr).getTime();
+      if (isNaN(noteTime)) {
+        groups.earlier.push(n);
+        return;
+      }
+      
+      if (noteTime >= todayStart) {
+        groups.today.push(n);
+      } else if (noteTime >= yesterdayStart) {
+        groups.yesterday.push(n);
+      } else if (noteTime >= weekStart) {
+        groups.thisWeek.push(n);
+      } else if (noteTime >= monthStart) {
+        groups.thisMonth.push(n);
+      } else {
+        groups.earlier.push(n);
+      }
+    });
+    
+    return groups;
+  }
+  
+  // 渲染日历热力图（最近30天）
+  function renderHeatmap(notes) {
+    var timeField = store.timelineGroupBy === "created" ? "createdAt" : "updatedAt";
+    
+    // 统计每天的笔记数量
+    var dateCounts = {};
+    notes.forEach(function(n) {
+      var dateStr = n[timeField].slice(0, 10); // YYYY-MM-DD
+      dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1;
+    });
+    
+    // 生成最近30天的日期数组
+    var days = [];
+    var now = new Date();
+    for (var i = 29; i >= 0; i--) {
+      var d = new Date(now.getTime() - i * 86400000);
+      var dateStr = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, '0') + "-" + String(d.getDate()).padStart(2, '0');
+      days.push({
+        date: dateStr,
+        count: dateCounts[dateStr] || 0,
+        day: d.getDate(),
+        month: d.getMonth() + 1
+      });
+    }
+    
+    // 计算最大数量用于颜色映射
+    var maxCount = 0;
+    days.forEach(function(d) { if (d.count > maxCount) maxCount = d.count; });
+    
+    // 生成热力图HTML
+    var html = '<div style="margin-bottom:14px;">';
+    html += '<div style="font-size:11px; color:var(--muted); margin-bottom:6px;">最近30天笔记分布（点击日期跳转）</div>';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:3px;">';
+    
+    days.forEach(function(d) {
+      var intensity = d.count === 0 ? 0 : Math.min(1, d.count / Math.max(maxCount, 1));
+      var bgColor = getHeatColor(intensity);
+      var textColor = intensity > 0.5 ? '#fff' : 'var(--text)';
+      
+      html += '<div style="width:18px; height:18px; border-radius:3px; background:' + bgColor + '; color:' + textColor + '; display:flex; align-items:center; justify-content:center; font-size:9px; cursor:pointer; transition:.15s;" title="' + d.date + ' (' + d.count + '条)" data-heatmap-date="' + d.date + '" onmouseover="this.style.transform=\'scale(1.2)\'; this.style.zIndex=\'10\'" onmouseout="this.style.transform=\'\'; this.style.zIndex=\'\'">' + d.day + '</div>';
+    });
+    
+    html += '</div></div>';
+    return html;
+  }
+  
+  // 获取热力图颜色（从浅到深）
+  function getHeatColor(intensity) {
+    if (intensity === 0) return 'var(--panel-2)';
+    // 使用主题色的不同透明度
+    var alpha = 0.1 + intensity * 0.7; // 0.1 ~ 0.8
+    return 'rgba(91,107,232,' + alpha.toFixed(2) + ')';
+  }
+  
+  // 格式化日期标签
+  function formatDateLabel(dateStr) {
+    var d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return (d.getMonth() + 1) + "月" + d.getDate() + "日";
+  }
+  
+  // 渲染时间线视图
+  function renderTimeline() {
+    var box = $("qnList");
+    var timeField = store.timelineGroupBy === "created" ? "createdAt" : "updatedAt";
+    var notes = store.notes.slice().sort(function(a, b) {
+      return String(b[timeField]).localeCompare(String(a[timeField]));
+    });
+    
+    if (!notes.length) {
+      box.innerHTML = '<div class="qn-empty"><b>还没有想法</b>点下面的「记一条想法」开始记录你的思考历程。</div>';
+      return;
+    }
+    
+    var groups = groupNotesByDate(notes);
+    var html = "";
+    
+    // 分组切换按钮 + 折叠控制 + 日期跳转
+    html += '<div style="display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">';
+    html += '<button class="qn-btn' + (store.timelineGroupBy === "updated" ? ' primary' : '') + '" id="qnTimelineByUpdated">按更新</button>';
+    html += '<button class="qn-btn' + (store.timelineGroupBy === "created" ? ' primary' : '') + '" id="qnTimelineByCreated">按创建</button>';
+    html += '<button class="qn-btn" id="qnTimelineToggleAll" style="margin-left:auto; font-size:11.5px; padding:5px 10px;">展开/收起</button>';
+    html += '<input type="text" id="qnTimelineDatePick" placeholder="YYYY-MM-DD" style="border:1px solid var(--line); border-radius:8px; padding:5px 8px; font-size:12px; background:var(--panel); color:var(--title); width:110px;" title="输入日期跳转，如：2026-10-16" />';
+    html += '</div>';
+    
+    // 日历热力图（最近30天）
+    html += renderHeatmap(notes);
+    
+    // 定义时间段配置（默认只展开今天和昨天）
+    var timeSections = [
+      { key: "today", label: "今天", icon: "📅", defaultOpen: true },
+      { key: "yesterday", label: "昨天", icon: "⏮️", defaultOpen: true },
+      { key: "thisWeek", label: "本周", icon: "📆", defaultOpen: false },
+      { key: "thisMonth", label: "本月", icon: "🗓️", defaultOpen: false },
+      { key: "earlier", label: "更早", icon: "🕰️", defaultOpen: false }
+    ];
+    
+    timeSections.forEach(function(section, idx) {
+      var items = groups[section.key];
+      if (!items || !items.length) return;
+      
+      var isOpen = section.defaultOpen;
+      var sectionId = "qnTimelineSection_" + section.key;
+      
+      html += '<div class="qn-timeline-section" id="' + sectionId + '">';
+      html += '<div class="qn-timeline-header" style="cursor:pointer;" data-toggle-section="' + section.key + '">';
+      html += '<span style="transition:transform .2s; display:inline-block; transform:' + (isOpen ? 'rotate(90deg)' : 'rotate(0deg)') + ';" id="qnTimelineArrow_' + section.key + "▶</span> ";
+      html += section.icon + ' ' + section.label + ' <span style="color:var(--muted); font-size:11px;">(' + items.length + ')</span>';
+      html += '</div>';
+      html += '<div class="qn-timeline-items" id="qnTimelineItems_' + section.key + '" style="' + (isOpen ? '' : 'display:none;') + '">';
+      
+      items.forEach(function(n) {
+        var dateLabel = formatDateLabel(store.timelineGroupBy === "created" ? n.createdAt : n.updatedAt);
+        var preview = n.text ? escapeHtml(n.text.slice(0, 80)) : "";
+        var badges = "";
+        if (n.category) badges += '<span class="qn-badge">' + escapeHtml(n.category) + "</span>";
+        if (n.links && n.links.length) badges += '<span class="qn-badge dim">' + n.links.length + '</span>';
+        
+        html += '<article class="qn-timeline-card" data-open-note="' + escapeHtml(n.id) + '">';
+        html += '<div class="qn-timeline-date"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent); margin-right:5px; vertical-align:middle;"></span>' + dateLabel + '</div>';
+        html += '<div class="qn-timeline-content">';
+        html += '<div class="qn-timeline-title">' + escapeHtml(titleOf(n)) + '</div>';
+        if (badges) html += '<div class="qn-timeline-badges">' + badges + '</div>';
+        if (preview) html += '<div class="qn-timeline-preview">' + preview + '</div>';
+        html += '</div></article>';
+      });
+      
+      html += '</div></div>';
+    });
+    
+    if (!html) {
+      html = '<div class="qn-empty">没有找到相关笔记</div>';
+    }
+    
+    box.innerHTML = html;
+    
+    // 动态绑定日期输入框事件（确保元素已存在）
+    var datePick = $("qnTimelineDatePick");
+    if (datePick) {
+      // 移除旧的事件监听器防止重复绑定
+      datePick.onkeydown = null;
+      datePick.onblur = null;
+      
+      // 回车键触发跳转
+      datePick.onkeydown = function(e) {
+        if (e.key === "Enter") {
+          handleDateJump(this);
+        }
+      };
+      
+      // 失去焦点时也尝试跳转（如果输入了有效日期）
+      datePick.onblur = function() {
+        handleDateJump(this);
+      };
+    }
+    
+    // 绑定热力图日期点击事件
+    var heatmapCells = document.querySelectorAll("[data-heatmap-date]");
+    heatmapCells.forEach(function(cell) {
+      cell.onclick = function() {
+        var dateStr = this.getAttribute("data-heatmap-date");
+        jumpToDate(dateStr);
+      };
+    });
+  }
+  
+  // 处理日期输入跳转
+  function handleDateJump(input) {
+    var val = input.value.trim();
+    if (!val) return;
+    
+    // 验证日期格式 YYYY-MM-DD
+    var match = val.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) {
+      toast("请输入正确格式：YYYY-MM-DD");
+      input.value = "";
+      return;
+    }
+    
+    var year = parseInt(match[1]);
+    var month = parseInt(match[2]);
+    var day = parseInt(match[3]);
+    
+    // 简单验证
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      toast("日期无效");
+      input.value = "";
+      return;
+    }
+    
+    var dateStr = year + "-" + String(month).padStart(2, '0') + "-" + String(day).padStart(2, '0');
+    
+    try {
+      jumpToDate(dateStr);
+    } catch(err) {
+      console.error("日期跳转失败:", err);
+      toast("跳转失败");
+    }
+    
+    input.value = "";
+  }
+  
+  // 日期跳转逻辑（独立函数，可复用）
+  function jumpToDate(dateStr) {
+    var selectedDate = new Date(dateStr + "T00:00:00");
+    var now = new Date();
+    var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    var selectedTime = selectedDate.getTime();
+    var diffDays = Math.floor((todayStart - selectedTime) / 86400000);
+    
+    // 确定目标时间段
+    var targetKey = "";
+    if (diffDays === 0) targetKey = "today";
+    else if (diffDays === 1) targetKey = "yesterday";
+    else if (diffDays >= 2 && diffDays <= 7) targetKey = "thisWeek";
+    else if (diffDays > 7 && selectedDate.getMonth() === now.getMonth()) targetKey = "thisMonth";
+    else targetKey = "earlier";
+    
+    // 检查目标时间段是否存在
+    var section = $("qnTimelineSection_" + targetKey);
+    if (!section) {
+      // 该时间段没有笔记
+      var timeLabels = {
+        today: "今天",
+        yesterday: "昨天",
+        thisWeek: "本周",
+        thisMonth: "本月",
+        earlier: "更早"
+      };
+      toast(timeLabels[targetKey] + "没有笔记");
+      return;
+    }
+    
+    // 展开目标时间段
+    var items = $("qnTimelineItems_" + targetKey);
+    var arrow = $("qnTimelineArrow_" + targetKey);
+    if (items && arrow) {
+      items.style.display = "";
+      arrow.style.transform = "rotate(90deg)";
+    }
+    
+    // 滚动到高亮
+    setTimeout(function() {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      section.style.background = "rgba(91,107,232,0.05)";
+      setTimeout(function() { section.style.background = ""; }, 1500);
+    }, 100);
+    
+    toast("已跳转到 " + dateStr);
+  }
+
+  // 渲染回顾视图
+  function renderReview() {
+    var box = $("qnList");
+    
+    if (!store.notes.length) {
+      box.innerHTML = '<div class="qn-empty"><b>还没有想法</b>先记录一些想法，再回来查看回顾报告。</div>';
+      return;
+    }
+    
+    var html = "";
+    
+    // 本周统计
+    var now = new Date();
+    var weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).getTime();
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    
+    var weekNotes = store.notes.filter(function(n) {
+      return new Date(n.updatedAt).getTime() >= weekStart;
+    });
+    
+    var monthNotes = store.notes.filter(function(n) {
+      return new Date(n.updatedAt).getTime() >= monthStart;
+    });
+    
+    // 分类统计
+    var catCounts = {};
+    weekNotes.forEach(function(n) {
+      var c = n.category || "未分类";
+      catCounts[c] = (catCounts[c] || 0) + 1;
+    });
+    
+    // 状态统计
+    var statusCounts = { inbox: 0, sorted: 0, archived: 0 };
+    weekNotes.forEach(function(n) {
+      statusCounts[n.status] = (statusCounts[n.status] || 0) + 1;
+    });
+    
+    html += '<div class="qn-review-header">本周回顾</div>';
+    html += '<div style="font-size:11px; color:var(--muted); margin-bottom:14px;">' + fmtWeekRange(weekStart) + '</div>';
+    
+    // 统计卡片
+    html += '<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:16px;">';
+    html += '<div class="qn-stat-card"><div class="qn-stat-num">' + weekNotes.length + '</div><div class="qn-stat-label">本周笔记</div></div>';
+    html += '<div class="qn-stat-card"><div class="qn-stat-num">' + monthNotes.length + '</div><div class="qn-stat-label">本月笔记</div></div>';
+    html += '<div class="qn-stat-card"><div class="qn-stat-num">' + Object.keys(catCounts).length + '</div><div class="qn-stat-label">涉及分类</div></div>';
+    html += '</div>';
+    
+    // 分类分布
+    html += '<div class="qn-review-section">分类分布</div>';
+    html += '<div style="margin-bottom:16px;">';
+    var sortedCats = Object.keys(catCounts).sort(function(a, b) { return catCounts[b] - catCounts[a]; });
+    sortedCats.forEach(function(c) {
+      var pct = Math.round(catCounts[c] / weekNotes.length * 100);
+      html += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">';
+      html += '<span style="width:70px; font-size:12px; color:var(--text); text-align:right;">' + escapeHtml(c) + '</span>';
+      html += '<div style="flex:1; height:8px; background:var(--panel-2); border-radius:4px; overflow:hidden;">';
+      html += '<div style="width:' + pct + '%; height:100%; background:var(--accent); border-radius:4px;"></div>';
+      html += '</div>';
+      html += '<span style="width:35px; font-size:11px; color:var(--muted);">' + catCounts[c] + ' (' + pct + '%)</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    
+    // 待处理提醒
+    if (statusCounts.inbox > 0) {
+      html += '<div class="qn-review-section" style="color:var(--warn);">⚠️ 有待处理的笔记</div>';
+      html += '<div style="font-size:12px; color:var(--text); margin-bottom:16px;">收集箱中有 <b>' + statusCounts.inbox + '</b> 条笔记尚未整理，建议让 AI 帮你归类。</div>';
+    }
+    
+    // AI 总结按钮
+    html += '<button class="qn-btn ai grow" id="qnReviewAiSummary" style="margin-top:8px;">🤖 AI 生成本周回顾总结</button>';
+    
+    // 本月回顾入口
+    html += '<div class="qn-review-header" style="margin-top:20px;">本月概览</div>';
+    html += '<div style="font-size:12px; color:var(--text); line-height:1.8;">';
+    html += '本月共记录 <b>' + monthNotes.length + '</b> 条想法，涉及 <b>' + getMonthCatCount(monthNotes) + '</b> 个分类。';
+    html += '</div>';
+    
+    box.innerHTML = html;
+  }
+  
+  // 格式化周范围
+  function fmtWeekRange(weekStart) {
+    var d = new Date(weekStart);
+    var end = new Date(weekStart + 6 * 86400000);
+    return (d.getMonth() + 1) + "月" + d.getDate() + "日 - " + (end.getMonth() + 1) + "月" + end.getDate() + "日";
+  }
+  
+  // 获取本月分类数
+  function getMonthCatCount(notes) {
+    var cats = {};
+    notes.forEach(function(n) {
+      var c = n.category || "未分类";
+      cats[c] = true;
+    });
+    return Object.keys(cats).length;
+  }
+  
+  // AI生成本周回顾总结
+  function generateWeeklyReview() {
+    if (!canChat) { toast("需要配置AI模型才能生成总结"); return; }
+    
+    var now = new Date();
+    var weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).getTime();
+    var weekNotes = store.notes.filter(function(n) {
+      return new Date(n.updatedAt).getTime() >= weekStart;
+    });
+    
+    if (!weekNotes.length) { toast("本周还没有笔记"); return; }
+    
+    setBusy(true, "AI 正在生成本周回顾...");
+    
+    // 构建AI提示词
+    var noteSummaries = weekNotes.map(function(n) {
+      return "- [" + (n.category || "未分类") + "] " + titleOf(n) + ": " + (n.text || "").slice(0, 100);
+    }).join("\n");
+    
+    var prompt = "你是一个思考助手。请根据用户本周的笔记记录，生成一份简洁的周回顾报告。\n\n本周笔记列表：\n" + noteSummaries + "\n\n请从以下维度总结（300-500字）：\n1. 本周主要关注的话题/领域\n2. 思维趋势或重复出现的主题\n3. 值得继续深入的方向\n4. 一个鼓励性的结语\n\n语气温暖、有洞察力，像朋友间的交流。";
+    
+    aiChat("你是一个温暖的思考伙伴，帮助用户回顾一周的思考历程。", prompt, { maxTokens: 2000 })
+      .then(function(result) {
+        setBusy(false);
+        // aiChat() 返回的是纯文本字符串，不是对象
+        if (result && typeof result === "string" && result.trim()) {
+          showReviewSummary(result);
+        } else {
+          toast("AI 返回结果为空");
+        }
+      })
+      .catch(function(err) {
+        setBusy(false);
+        toast("AI 生成失败: " + (err.message || err));
+      });
+  }
+  
+  // 显示回顾总结
+  function showReviewSummary(text) {
+    var html = '<div class="qn-aibox" style="max-height:none; margin-top:16px;">';
+    html += '<div class="who">🤖 本周回顾总结</div>';
+    html += escapeHtml(text).replace(/\n/g, "<br/>");
+    html += '</div>';
+    
+    // 插入到AI按钮后面
+    var btn = $("qnReviewAiSummary");
+    if (btn) {
+      btn.insertAdjacentHTML("afterend", html);
+      btn.style.display = "none"; // 隐藏按钮避免重复点击
+    }
   }
 
   function renderAnaList() {
@@ -782,8 +1558,17 @@
 
   function renderTabs() {
     $("qnTabNotes").setAttribute("data-on", store.view === "notes" ? "1" : "0");
+    $("qnTabTimeline").setAttribute("data-on", store.view === "timeline" ? "1" : "0");
+    $("qnTabReview").setAttribute("data-on", store.view === "review" ? "1" : "0");
     $("qnTabAnas").setAttribute("data-on", store.view === "anas" ? "1" : "0");
     $("qnAiAll").style.display = store.view === "notes" ? "" : "none";
+    // 批量按钮仅在笔记视图显示；离开笔记视图时自动退出批量模式
+    if (store.view !== "notes" && store.batchMode) {
+      store.batchMode = false;
+      store.batchSelected = [];
+      $("qnBatchBar").style.display = "none";
+    }
+    $("qnBatchToggle").style.display = store.view === "notes" ? "" : "none";
   }
 
   function setBusy(on, text) {
@@ -791,18 +1576,33 @@
     renderList();
   }
 
-  /* ══════════════════════════════════════════════════════
+  /* ═════════════════════════════════════════════════════
      4. 编辑面板
      ══════════════════════════════════════════════════════ */
-  function refreshDatalist() {
-    $("qnCatList").innerHTML = store.cats.map(function (c) { return '<option value="' + escapeHtml(c) + '"></option>'; }).join("");
-  }
 
   function openEditor(noteId) {
     var n = noteId ? store.notes.filter(function (x) { return x.id === noteId; })[0] : null;
     store.editing = n ? JSON.parse(JSON.stringify(n)) : { id: "", title: "", text: "", category: "", tags: [], status: "inbox", aiSummary: "" };
     store.editingAttachments = n && Array.isArray(n.attachments) ? JSON.parse(JSON.stringify(n.attachments)) : [];
     store.analyzeAttachments = n && n.analyzeAttachments === true;
+    // 附件懒加载：列表里的 attachments 只有元信息，打开编辑时按需取回完整 dataUrl
+    var needLoad = !!(n && store.editingAttachments.length);
+    store.editingAttachmentsLoaded = !needLoad; // 无附件视为已加载，可直接保存
+    store.editingAttachmentsDirty = false;
+    if (needLoad) {
+      dbGet(COLL_NOTES, n.id).then(function (full) {
+        if (!full || !Array.isArray(full.attachments)) { store.editingAttachmentsLoaded = true; return; }
+        var byId = {};
+        full.attachments.forEach(function (a, i) { byId[String(a.id || ("att_" + (a.uploadedAt || "") + "_" + i + "_" + (a.name || "")))] = a; });
+        store.editingAttachments = store.editingAttachments.map(function (att) {
+          var src = byId[att.id];
+          if (src && src.dataUrl) { var c = {}; for (var k in att) c[k] = att[k]; c.dataUrl = src.dataUrl; return c; }
+          return att;
+        });
+        store.editingAttachmentsLoaded = true;
+        if ($("qnEditSheet").getAttribute("data-open") === "1") { renderAttachments(); updateAnalyzeToggle(); }
+      });
+    }
     $("qnEditTitle").textContent = n ? "编辑想法" : "新建想法";
     $("qnEditSub").textContent = n ? ("创建于 " + fmtTime(n.createdAt)) : "写下来就好，整理交给 AI";
     $("qnFTitle").value = store.editing.title || "";
@@ -814,10 +1614,133 @@
     if (store.editing.aiSummary) { wrap.style.display = ""; $("qnEditAiBox").textContent = store.editing.aiSummary; }
     else wrap.style.display = "none";
     $("qnEditDel").style.display = n ? "" : "none";
-    refreshDatalist();
     renderAttachments();
     updateAnalyzeToggle();
+    initCatDropdown();
+    renderLinks(); // 渲染双向链接
     $("qnEditSheet").setAttribute("data-open", "1");
+  }
+
+  /* ── 智能分类下拉菜单 ─ */
+  var catDropdownVisible = false;
+
+  function initCatDropdown() {
+    var input = $("qnFCat");
+    if (!input) return;
+
+    // 移除旧的监听器（防止重复绑定）
+    input.removeEventListener("input", handleCatInput);
+    input.removeEventListener("focus", showCatDropdown);
+    input.removeEventListener("blur", hideCatDropdownDelayed);
+    input.removeEventListener("keydown", handleCatKeydown);
+
+    // 添加新的监听器
+    input.addEventListener("input", handleCatInput);
+    input.addEventListener("focus", showCatDropdown);
+    input.addEventListener("blur", hideCatDropdownDelayed);
+    input.addEventListener("keydown", handleCatKeydown);
+  }
+
+  function getAllCategories() {
+    // 从设置中获取 + 从已有笔记中提取
+    var cats = store.cats.slice();
+    store.notes.forEach(function(n) {
+      if (n.category && cats.indexOf(n.category) < 0) {
+        cats.push(n.category);
+      }
+    });
+    return cats.sort();
+  }
+
+  function handleCatInput() {
+    var value = this.value.trim().toLowerCase();
+    if (value) {
+      showCatDropdown.call(this);
+    } else {
+      hideCatDropdown();
+    }
+  }
+
+  function showCatDropdown() {
+    var input = $("qnFCat");
+    var dropdown = $("qnCatDropdown");
+    if (!input || !dropdown) return;
+
+    var value = input.value.trim().toLowerCase();
+    var allCats = getAllCategories();
+
+    // 过滤匹配的分类
+    var matched = allCats.filter(function(c) {
+      return c.toLowerCase().indexOf(value) >= 0;
+    });
+
+    // 如果输入不为空且没有完全匹配，显示"新建"选项
+    var showNewOption = value && allCats.indexOf(input.value.trim()) < 0;
+
+    if (matched.length === 0 && !showNewOption) {
+      hideCatDropdown();
+      return;
+    }
+
+    // 渲染下拉菜单
+    var html = matched.slice(0, 8).map(function(cat) {
+      var highlighted = highlightMatch(cat, input.value.trim());
+      var count = store.notes.filter(function(n) { return n.category === cat; }).length;
+      return '<div class="qn-cat-item" data-cat="' + escapeHtml(cat) + '">' +
+        '<span class="qn-cat-match">' + highlighted + '</span>' +
+        '<span class="qn-cat-hint">' + count + ' 条</span>' +
+        '</div>';
+    }).join("");
+
+    if (showNewOption) {
+      html += '<div class="qn-cat-item new-cat" data-cat="' + escapeHtml(input.value.trim()) + '">' +
+        escapeHtml(input.value.trim()) +
+        '<span class="qn-cat-hint">新建分类</span>' +
+        '</div>';
+    }
+
+    dropdown.innerHTML = html;
+    dropdown.style.display = "block";
+    catDropdownVisible = true;
+
+    // 绑定点击事件
+    dropdown.querySelectorAll(".qn-cat-item").forEach(function(item) {
+      item.addEventListener("mousedown", function(e) {
+        e.preventDefault(); // 防止 input blur
+        var cat = this.getAttribute("data-cat");
+        input.value = cat;
+        hideCatDropdown();
+      });
+    });
+  }
+
+  function hideCatDropdown() {
+    var dropdown = $("qnCatDropdown");
+    if (dropdown) {
+      dropdown.style.display = "none";
+    }
+    catDropdownVisible = false;
+  }
+
+  var hideTimer = null;
+  function hideCatDropdownDelayed() {
+    hideTimer = setTimeout(hideCatDropdown, 200);
+  }
+
+  function handleCatKeydown(e) {
+    if (e.key === "Escape") {
+      hideCatDropdown();
+    }
+  }
+
+  function highlightMatch(text, query) {
+    if (!query) return escapeHtml(text);
+    var idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx < 0) return escapeHtml(text);
+    var before = text.substring(0, idx);
+    var match = text.substring(idx, idx + query.length);
+    var after = text.substring(idx + query.length);
+    return escapeHtml(before) + '<strong>' + escapeHtml(match) + '</strong>' + escapeHtml(after);
   }
   function setStatusChips(val) {
     var kids = $("qnFStatus").children;
@@ -831,10 +1754,8 @@
     var wrap = $("qnAttachList");
     if (!list.length) {
       wrap.innerHTML = "";
-      $("qnAnalyzeSwitchWrap").style.display = "none";
       return;
     }
-    $("qnAnalyzeSwitchWrap").style.display = "flex";
     wrap.innerHTML = list.map(function(att, idx) {
       return '<div class="qn-attach-item" data-idx="' + idx + '">' +
         '<div class="qn-attach-icon">' + getFileIcon(att.name) + '</div>' +
@@ -845,9 +1766,7 @@
   }
 
   function updateAnalyzeToggle() {
-    var hasAnalyzable = store.editingAttachments.some(function(att) { return canAnalyzeFile(att.name); });
-    $("qnAnalyzeSwitchWrap").style.display = hasAnalyzable ? "flex" : "none";
-    $("qnAnalyzeToggle").setAttribute("data-on", store.analyzeAttachments ? "1" : "0");
+    // 附件 AI 分析能力已移除，编辑面板不再有「分析附件内容」开关；保留空函数兼容既有调用点
   }
 
   function handleFileUpload(files) {
@@ -881,7 +1800,9 @@
     });
 
     Promise.all(promises).then(function(newAttachments) {
+      newAttachments.forEach(function(a){ a.id = uid("att"); });
       store.editingAttachments = (store.editingAttachments || []).concat(newAttachments);
+      store.editingAttachmentsDirty = true;
       renderAttachments();
       updateAnalyzeToggle();
       toast("已添加 " + newAttachments.length + " 个附件");
@@ -894,16 +1815,83 @@
 
   function removeAttachment(idx) {
     store.editingAttachments.splice(idx, 1);
+    store.editingAttachmentsDirty = true;
     renderAttachments();
     updateAnalyzeToggle();
+  }
+  
+  /* ── 链接显示 ─ */
+  function renderLinks() {
+    var note = store.editing;
+    if (!note) return;
+    
+    // 渲染正向链接（当前笔记引用的其他笔记）
+    var linksWrap = $("qnLinksWrap");
+    var linksList = $("qnLinksList");
+    if (!linksWrap || !linksList) return;
+    
+    var links = parseLinks(note.text);
+    if (!links.length) {
+      linksWrap.style.display = "none";
+    } else {
+      linksWrap.style.display = "";
+      linksList.innerHTML = links.map(function(l) {
+        return '<div style="padding:4px 0;"><a href="#" data-link-id="' + escapeHtml(l.id) + '" style="color:var(--accent); text-decoration:none;">📝 ' + escapeHtml(l.title) + '</a></div>';
+      }).join("");
+      
+      // 绑定点击事件
+      linksList.querySelectorAll("a").forEach(function(a) {
+        a.addEventListener("click", function(e) {
+          e.preventDefault();
+          var id = this.getAttribute("data-link-id");
+          openEditor(id); // 打开被引用的笔记
+        });
+      });
+    }
+    
+    // 渲染反向链接（引用当前笔记的其他笔记）
+    var backlinksWrap = $("qnBacklinksWrap");
+    var backlinksList = $("qnBacklinksList");
+    if (!backlinksWrap || !backlinksList) return;
+    
+    var backlinks = findBacklinks(note.id);
+    if (!backlinks.length) {
+      backlinksWrap.style.display = "none";
+    } else {
+      backlinksWrap.style.display = "";
+      backlinksList.innerHTML = backlinks.map(function(n) {
+        return '<div style="padding:4px 0;"><a href="#" data-backlink-id="' + escapeHtml(n.id) + '" style="color:var(--ai); text-decoration:none;">↩️ ' + escapeHtml(titleOf(n)) + '</a></div>';
+      }).join("");
+      
+      // 绑定点击事件
+      backlinksList.querySelectorAll("a").forEach(function(a) {
+        a.addEventListener("click", function(e) {
+          e.preventDefault();
+          var id = this.getAttribute("data-backlink-id");
+          openEditor(id); // 打开引用了当前笔记的笔记
+        });
+      });
+    }
   }
   function collectEditor() {
     store.editing.title = clampText($("qnFTitle").value.trim(), MAX_TITLE);
     store.editing.text = clampText($("qnFText").value, MAX_TEXT);
-    store.editing.category = clampText($("qnFCat").value.trim(), 40);
+    var newCat = clampText($("qnFCat").value.trim(), 40);
+    store.editing.category = newCat;
+    
+    // 如果输入了新分类且不在列表中，自动添加
+    if (newCat && store.cats.indexOf(newCat) < 0) {
+      store.cats.push(newCat);
+      saveMeta(); // 保存到设置
+    }
+    
     store.editing.tags = parseTags($("qnFTags").value);
     store.editing.attachments = store.editingAttachments;
     store.editing.analyzeAttachments = store.analyzeAttachments;
+    
+    // 自动更新链接
+    updateNoteLinks(store.editing);
+    
     return store.editing;
   }
   function saveEditor() {
@@ -912,14 +1900,33 @@
     var payload = {
       title: e.title, text: e.text, category: e.category, tags: e.tags,
       status: e.status, pinned: !!e.pinned, source: e.source || "app", aiSummary: e.aiSummary || "",
-      attachments: e.attachments || [],
       analyzeAttachments: e.analyzeAttachments === true,
       updatedAt: nowIso()
     };
+    // 附件懒加载写入策略：
+    // - 新建：直接写入（上传的附件都带 dataUrl）
+    // - 编辑且本次增删过附件：写入完整附件；但必须确保 dataUrl 都已加载，否则覆盖会丢数据
+    // - 编辑且未动附件：不写 attachments 字段，靠 db.update 浅合并保留数据库里的原始完整附件
+    if (!e.id) {
+      payload.attachments = e.attachments || [];
+    } else if (store.editingAttachmentsDirty) {
+      if (!store.editingAttachmentsLoaded) { toast("附件加载中，请稍候再保存"); return; }
+      var missingData = (e.attachments || []).some(function (a) { return !a.dataUrl; });
+      if (missingData) { toast("附件数据未就绪，请重新打开该笔记后再保存"); return; }
+      payload.attachments = e.attachments || [];
+    }
     var p;
     if (e.id) p = dbUpdate(COLL_NOTES, e.id, payload).then(function () { return e.id; });
     else { payload.createdAt = nowIso(); p = dbCreate(COLL_NOTES, payload).then(function (row) { return (row && row.id) || payload.id; }); }
-    p.then(function () { closeSheets(); return reloadNotes(); }).then(function () { toast("已保存"); });
+    p.then(function () { 
+      closeSheets(); 
+      return reloadNotes(); 
+    }).then(function () { 
+      toast("已保存"); 
+    }).catch(function(err) {
+      showNotice("保存失败", String(err && err.message ? err.message : err));
+      console.error("[保存错误]", err);
+    });
   }
   function deleteEditor() {
     var e = store.editing;
@@ -960,6 +1967,479 @@
   }
 
   /* ══════════════════════════════════════════════════════
+     5.1 快捷模板系统
+     ══════════════════════════════════════════════════════ */
+  function openTemplatePicker() {
+    renderBuiltinTemplates();
+    renderCustomTemplates();
+    $("qnTemplateSheet").setAttribute("data-open", "1");
+  }
+
+  function renderBuiltinTemplates() {
+    var wrap = $("qnBuiltinTpls");
+    if (!wrap) return;
+    wrap.innerHTML = BUILTIN_TEMPLATES.map(function(tpl) {
+      return '<div class="qn-card" data-apply-tpl="' + escapeHtml(tpl.id) + '" style="cursor:pointer;">' +
+        '<div class="qn-card-top"><div class="qn-card-title">' + escapeHtml(tpl.icon + ' ' + tpl.name) + '</div></div>' +
+        '<div class="qn-card-preview">' + escapeHtml(tpl.desc) + '</div>' +
+        '</div>';
+    }).join("");
+  }
+
+  function renderCustomTemplates() {
+    var wrap = $("qnCustomTpls");
+    var container = $("qnCustomTplWrap");
+    if (!wrap || !container) return;
+    
+    if (!store.customTemplates || !store.customTemplates.length) {
+      container.style.display = "none";
+      return;
+    }
+    
+    container.style.display = "";
+    wrap.innerHTML = store.customTemplates.map(function(tpl, idx) {
+      return '<div class="qn-card" data-apply-custom-tpl="' + idx + '" style="cursor:pointer;">' +
+        '<div class="qn-card-top"><div class="qn-card-title">' + escapeHtml((tpl.icon || '') + ' ' + (tpl.name || '未命名')) + '</div></div>' +
+        '<div class="qn-card-preview">' + escapeHtml(tpl.desc || '') + '</div>' +
+        '</div>';
+    }).join("");
+  }
+
+  function applyTemplate(tpl) {
+    // 先关闭模板选择器
+    $("qnTemplateSheet").setAttribute("data-open", "0");
+    
+    // 延迟一小段时间再打开编辑器，避免冲突
+    setTimeout(function() {
+      // 打开编辑器（新建模式）
+      openEditor("");
+      
+      // 填充模板内容
+      if (tpl.title) $("qnFTitle").value = tpl.title || "";
+      if (tpl.text) $("qnFText").value = tpl.text || "";
+      if (tpl.category) $("qnFCat").value = tpl.category || "";
+      if (tpl.tags && tpl.tags.length) $("qnFTags").value = tpl.tags.join(", ");
+      
+      toast("已应用模板：" + tpl.name);
+    }, 150);
+  }
+
+  function copyTemplatePrompt() {
+    copyText(TEMPLATE_GEN_PROMPT).then(function() {
+      toast("提示词已复制，粘贴给其他AI生成模板");
+    });
+  }
+
+  function importJsonTemplate(file) {
+    readFileAsText(file).then(function(text) {
+      var obj;
+      try {
+        obj = JSON.parse(text);
+      } catch(e) {
+        showNotice("JSON 解析失败", "文件格式不正确，请确保是有效的 JSON 格式。");
+        return;
+      }
+      
+      // 验证必需字段
+      if (!obj.name || !obj.text) {
+        showNotice("模板格式错误", "模板必须包含 name 和 text 字段。");
+        return;
+      }
+      
+      // 添加到自定义模板
+      if (!store.customTemplates) store.customTemplates = [];
+      store.customTemplates.push({
+        id: uid("tpl"),
+        name: String(obj.name),
+        icon: String(obj.icon || ""),
+        desc: String(obj.desc || ""),
+        title: String(obj.title || ""),
+        text: String(obj.text),
+        category: String(obj.category || ""),
+        tags: Array.isArray(obj.tags) ? obj.tags : []
+      });
+      
+      // 保存到数据库
+      saveMeta().then(function() {
+        renderCustomTemplates();
+        toast("模板已导入：" + obj.name);
+      });
+    }).catch(function(err) {
+      showNotice("文件读取失败", String(err && err.message ? err.message : err));
+    });
+  }
+
+  function generateTemplateFromDoc(file) {
+    if (!canGen) {
+      showNotice("无法生成", "当前没有可用的 AI（缺少 ai.generate 权限）。");
+      return;
+    }
+    
+    // 检查文件格式
+    var ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+    if (ext === '.docx' || ext === '.doc') {
+      showNotice("暂不支持", "当前环境无法直接解析 doc/docx 文件。\n\n建议方案：\n1. 将文档另存为 .txt 或 .md 格式\n2. 或使用「📁 导入JSON模板」功能\n3. 或复制文档内容后手动创建模板");
+      return;
+    }
+    
+    setBusy(true, "AI 正在分析文档并生成模板…");
+    
+    readFileAsText(file).then(function(text) {
+      var prompt = TEMPLATE_GEN_PROMPT + "\n\n用户需求：请根据以下文档内容，提取关键信息并生成一个合适的笔记模板。\n\n文档内容：\n" + text.slice(0, 3000);
+      
+      return aiChat("你是一个笔记模板设计师。", prompt, { temperature: 0.3, maxTokens: 800 });
+    }).then(function(response) {
+      var obj = parseJsonLoose(response);
+      if (!obj || !obj.name || !obj.text) {
+        showNotice("生成失败", "AI 返回的内容不符合模板格式，请重试。");
+        return;
+      }
+      
+      // 添加到自定义模板
+      if (!store.customTemplates) store.customTemplates = [];
+      store.customTemplates.push({
+        id: uid("tpl"),
+        name: String(obj.name),
+        icon: String(obj.icon || ""),
+        desc: String(obj.desc || ""),
+        title: String(obj.title || ""),
+        text: String(obj.text),
+        category: String(obj.category || ""),
+        tags: Array.isArray(obj.tags) ? obj.tags : []
+      });
+      
+      // 保存到数据库
+      return saveMeta();
+    }).then(function() {
+      setBusy(false);
+      renderCustomTemplates();
+      toast("模板已生成，可在\"我的模板\"中查看");
+    }).catch(function(err) {
+      setBusy(false);
+      showNotice("生成失败", String(err && err.message ? err.message : err));
+    });
+  }
+
+  function parsePastedJson() {
+    var textarea = $("qnTplPasteArea");
+    if (!textarea) return;
+    
+    var text = textarea.value.trim();
+    if (!text) {
+      toast("请先粘贴 JSON 内容");
+      return;
+    }
+    
+    var obj;
+    try {
+      obj = JSON.parse(text);
+    } catch(e) {
+      showNotice("JSON 解析失败", "粘贴的内容不是有效的 JSON 格式。\n\n请确保复制了完整的 JSON 内容，包括大括号 {}。");
+      return;
+    }
+    
+    // 验证必需字段
+    if (!obj.name || !obj.text) {
+      showNotice("模板格式错误", "模板必须包含 name 和 text 字段。\n\n请参考提示词中的格式要求，让 AI 重新生成。");
+      return;
+    }
+    
+    // 添加到自定义模板
+    if (!store.customTemplates) store.customTemplates = [];
+    store.customTemplates.push({
+      id: uid("tpl"),
+      name: String(obj.name),
+      icon: String(obj.icon || ""),
+      desc: String(obj.desc || ""),
+      title: String(obj.title || ""),
+      text: String(obj.text),
+      category: String(obj.category || ""),
+      tags: Array.isArray(obj.tags) ? obj.tags : []
+    });
+    
+    // 保存到数据库
+    saveMeta().then(function() {
+      renderCustomTemplates();
+      textarea.value = ""; // 清空输入框
+      toast("模板已保存：" + obj.name);
+    }).catch(function(err) {
+      showNotice("保存失败", String(err && err.message ? err.message : err));
+    });
+  }
+
+  function showManualGuide() {
+    var guide = `【手动创建模板指南】
+
+1. 先创建一个空白笔记
+2. 按照你想要的格式编写内容结构
+3. 完成后，将内容整理成以下 JSON 格式：
+
+{
+  "name": "模板名称",
+  "icon": "📝",
+  "desc": "一句话描述",
+  "title": "标题前缀",
+  "text": "你的模板内容（用\\\\n表示换行）",
+  "category": "分类",
+  "tags": ["标签"]
+}
+
+4. 使用在线 JSON 工具格式化
+5. 在模板选择器中粘贴并解析
+
+💡 更简单的方法：
+- 复制"AI提示词"给 ChatGPT/Claude
+- 告诉它你想要什么类型的模板
+- 让它生成 JSON 格式
+- 直接粘贴回来解析`;
+    
+    showNotice("手动创建模板指南", guide);
+  }
+
+  /* ── 链接选择器 ─ */
+  function openLinkPicker() {
+    renderLinkPickerList("");
+    $("qnLinkSearch").value = "";
+    $("qnLinkPickerSheet").setAttribute("data-open", "1");
+  }
+
+  function renderLinkPickerList(query) {
+    var list = $("qnLinkPickerList");
+    if (!list) return;
+    
+    var q = (query || "").toLowerCase().trim();
+    var notes = store.notes.filter(function(n) {
+      if (!n.title) return false; // 只显示有标题的笔记
+      if (q) return n.title.toLowerCase().indexOf(q) >= 0;
+      return true;
+    }).slice(0, 50); // 最多显示50条
+    
+    if (!notes.length) {
+      list.innerHTML = '<div class="qn-empty">没有找到匹配的笔记</div>';
+      return;
+    }
+    
+    list.innerHTML = notes.map(function(n) {
+      return '<div class="qn-card" data-pick-link="' + escapeHtml(n.id) + '" style="cursor:pointer;">' +
+        '<div class="qn-card-top"><div class="qn-card-title">' + escapeHtml(titleOf(n)) + '</div></div>' +
+        (n.text ? '<div class="qn-card-preview">' + escapeHtml(n.text.slice(0, 80)) + '</div>' : '') +
+        '</div>';
+    }).join("");
+  }
+
+  function insertLinkToNote(noteId) {
+    var note = store.notes.filter(function(n) { return n.id === noteId; })[0];
+    if (!note) return;
+    
+    var textarea = $("qnFText");
+    if (!textarea) return;
+    
+    // 在光标位置插入 [[标题]]
+    var linkText = "[[" + note.title + "]]";
+    var start = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var text = textarea.value;
+    
+    textarea.value = text.substring(0, start) + linkText + text.substring(end);
+    textarea.focus();
+    textarea.setSelectionRange(start + linkText.length, start + linkText.length);
+    
+    // 关闭选择器
+    $("qnLinkPickerSheet").setAttribute("data-open", "0");
+    
+    toast("已插入链接：" + note.title);
+  }
+
+  /* ── 智能推荐 ─ */
+  
+  // 提取文本中的关键词（简单分词）
+  function extractKeywords(text) {
+    if (!text) return [];
+    // 移除标点符号和特殊字符
+    var cleaned = text.replace(/[^\w\u4e00-\u9fff\s]/g, ' ');
+    // 按空格和中文分词（简化处理）
+    var words = cleaned.split(/[\s]+/).filter(function(w) { 
+      return w.length >= 2 && !/^(的|了|是|在|有|和|与|及|等|这|那|什么|怎么|如何|可以|应该|需要|可能|因为|所以|但是|而且|或者|如果|虽然|已经|还是|只是|就是|一个|一些|这个|那个|这些|那些)$/.test(w); 
+    });
+    // 去重
+    var unique = [];
+    words.forEach(function(w) {
+      if (unique.indexOf(w) < 0) unique.push(w);
+    });
+    return unique.slice(0, 30); // 最多30个关键词
+  }
+  
+  // 计算两个笔记的相似度得分
+  function calcSimilarity(noteA, noteB) {
+    if (noteA.id === noteB.id) return 0; // 排除自己
+    
+    var score = 0;
+    var reasons = [];
+    
+    // 1. 分类相同 (+30分)
+    if (noteA.category && noteB.category && noteA.category === noteB.category) {
+      score += 30;
+      reasons.push("同分类: " + noteA.category);
+    }
+    
+    // 2. 标签重叠 (+20分/个，最多60分)
+    if (noteA.tags && noteB.tags) {
+      var commonTags = noteA.tags.filter(function(t) { return noteB.tags.indexOf(t) >= 0; });
+      if (commonTags.length) {
+        var tagScore = Math.min(commonTags.length * 20, 60);
+        score += tagScore;
+        reasons.push("共同标签: " + commonTags.join(", "));
+      }
+    }
+    
+    // 3. 关键词重叠 (+5分/个，最多50分)
+    var keywordsA = extractKeywords(noteA.text || "");
+    var keywordsB = extractKeywords(noteB.text || "");
+    if (keywordsA.length && keywordsB.length) {
+      var commonWords = keywordsA.filter(function(w) { return keywordsB.indexOf(w) >= 0; });
+      if (commonWords.length) {
+        var wordScore = Math.min(commonWords.length * 5, 50);
+        score += wordScore;
+        reasons.push("内容相关: " + commonWords.slice(0, 3).join(", "));
+      }
+    }
+    
+    // 4. 链接关系 (+40分)
+    if (noteA.links && noteA.links.indexOf(noteB.id) >= 0) {
+      score += 40;
+      reasons.push("直接引用");
+    }
+    if (noteB.links && noteB.links.indexOf(noteA.id) >= 0) {
+      score += 40;
+      reasons.push("被引用");
+    }
+    
+    // 5. 共同引用的笔记 (+15分/个，最多30分)
+    if (noteA.links && noteB.links) {
+      var commonLinks = noteA.links.filter(function(id) { return noteB.links.indexOf(id) >= 0; });
+      if (commonLinks.length) {
+        var linkScore = Math.min(commonLinks.length * 15, 30);
+        score += linkScore;
+        reasons.push("共同引用 " + commonLinks.length + " 条笔记");
+      }
+    }
+    
+    // 6. 时间接近 (+10分，7天内)
+    if (noteA.updatedAt && noteB.updatedAt) {
+      var timeDiff = Math.abs(new Date(noteA.updatedAt).getTime() - new Date(noteB.updatedAt).getTime());
+      if (timeDiff < 7 * 24 * 3600 * 1000) {
+        score += 10;
+        reasons.push("时间接近");
+      }
+    }
+    
+    return { score: score, reasons: reasons };
+  }
+  
+  // 获取推荐笔记列表
+  function getRecommendations(currentNote, limit) {
+    limit = limit || 5;
+    
+    // 新笔记或没有内容的笔记不推荐
+    if (!currentNote.id) return [];
+    
+    // 计算所有其他笔记的相似度
+    var scored = store.notes.map(function(n) {
+      var sim = calcSimilarity(currentNote, n);
+      return { note: n, score: sim.score, reasons: sim.reasons };
+    }).filter(function(item) {
+      return item.score > 0; // 只保留有相似度的
+    });
+    
+    // 如果相似度推荐的不够，补充同分类的笔记
+    if (scored.length < 3 && currentNote.category) {
+      var sameCatNotes = store.notes.filter(function(n) {
+        return n.id !== currentNote.id && 
+               n.category === currentNote.category &&
+               !scored.some(function(s) { return s.note.id === n.id; });
+      }).slice(0, 3 - scored.length);
+      
+      sameCatNotes.forEach(function(n) {
+        scored.push({
+          note: n,
+          score: 15,
+          reasons: ["同分类: " + currentNote.category]
+        });
+      });
+    }
+    
+    // 按得分排序
+    scored.sort(function(a, b) { return b.score - a.score; });
+    
+    // 返回前N个
+    return scored.slice(0, limit);
+  }
+  
+  // 渲染推荐列表
+  function renderRecommendations() {
+    var note = store.editing;
+    if (!note) return;
+    
+    var wrap = $("qnRecommendWrap");
+    var list = $("qnRecommendList");
+    var toggle = $("qnRecommendToggle");
+    var arrow = $("qnRecommendArrow");
+    var count = $("qnRecommendCount");
+    if (!wrap || !list) return;
+    
+    // 新笔记或没有内容的笔记不显示推荐
+    if (!note.id || (!note.text && !note.title && !note.category)) {
+      wrap.style.display = "none";
+      return;
+    }
+    
+    var recs = getRecommendations(note, 5);
+    
+    if (!recs.length) {
+      wrap.style.display = "none";
+      return;
+    }
+    
+    wrap.style.display = "";
+    count.textContent = "(" + recs.length + "条)";
+    
+    // 默认折叠状态
+    var isCollapsed = true;
+    arrow.style.transform = "rotate(-90deg)";
+    list.style.display = "none";
+    
+    // 点击切换展开/折叠
+    toggle.onclick = function() {
+      isCollapsed = !isCollapsed;
+      arrow.style.transform = isCollapsed ? "rotate(-90deg)" : "rotate(0deg)";
+      list.style.display = isCollapsed ? "none" : "";
+    };
+    
+    list.innerHTML = recs.map(function(r) {
+      var n = r.note;
+      var reasonText = r.reasons.slice(0, 2).join(" · "); // 最多显示2个原因
+      return '<div class="qn-card" data-rec-id="' + escapeHtml(n.id) + '" style="cursor:pointer; padding:8px 10px;">' +
+        '<div style="display:flex; align-items:center; gap:6px;">' +
+          '<span style="font-size:16px;">💡</span>' +
+          '<div style="flex:1; min-width:0;">' +
+            '<div style="font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + escapeHtml(titleOf(n)) + '</div>' +
+            '<div style="font-size:11px; color:var(--muted); margin-top:2px;">' + escapeHtml(reasonText) + ' · 得分:' + r.score + '</div>' +
+          '</div>' +
+        '</div>' +
+        '</div>';
+    }).join("");
+    
+    // 绑定点击事件
+    list.querySelectorAll("[data-rec-id]").forEach(function(card) {
+      card.addEventListener("click", function(e) {
+        e.preventDefault();
+        var id = this.getAttribute("data-rec-id");
+        openEditor(id);
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════
      5. 问角色
      ══════════════════════════════════════════════════════ */
   var askCtx = null; // { mode:"single"|"inbox", notes:[...] , onDone }
@@ -980,6 +2460,21 @@
     }).join("");
     $("qnCharSheet").setAttribute("data-open", "1");
   }
+  // 问角色前，尽力读取「用户全局人设」和「世界书」，让角色在对齐你的背景下点评
+  function gatherAskContext(characterId) {
+    var personaP = (AI && AI.user && AI.user.getPersona)
+      ? AI.user.getPersona({ characterId: characterId }).then(function (p) { return (p && p.text) ? String(p.text) : ""; }).catch(function () { return ""; })
+      : Promise.resolve("");
+    var worldP = (AI && AI.world && AI.world.list)
+      ? AI.world.list({}).then(function (res) {
+          var books = (res && Array.isArray(res.books)) ? res.books : [];
+          return books.map(function (b) { return String(b.id); }).filter(Boolean);
+        }).catch(function () { return []; })
+      : Promise.resolve([]);
+    return Promise.all([personaP, worldP]).then(function (r) {
+      return { personaText: r[0] || "", worldBookIds: r[1] || [] };
+    });
+  }
   function runAskCharacter(characterId) {
     if (!askCtx) return;
     var char = store.chars.filter(function (c) { return String(c.id) === String(characterId); })[0] || { name: "AI" };
@@ -997,7 +2492,11 @@
     closeSheets();
     setBusy(true, (char.name || "角色") + " 正在读你的想法…");
     store.view = "notes";
-    aiGenerate(characterId, instr, body).then(function (text) {
+    gatherAskContext(characterId).then(function (ctx) {
+      var fullInstr = instr;
+      if (ctx.personaText) fullInstr += "\n\n【我的背景设定（用户全局人设）】\n" + ctx.personaText;
+      return aiGenerate(characterId, fullInstr, body, { worldBookIds: ctx.worldBookIds });
+    }).then(function (text) {
       rec.text = text;
       return dbCreate(COLL_ANAS, rec);
     }).then(function () {
@@ -1092,28 +2591,379 @@
   }
 
   /* ══════════════════════════════════════════════════════
-     7. 设置
+     7. 导出功能
      ══════════════════════════════════════════════════════ */
-  function openSettings() {
-    $("qnSetCats").value = store.cats.join("\n");
-    var sel = $("qnSetChar");
-    sel.innerHTML = '<option value="">（不指定，每次手动选）</option>' + store.chars.map(function (c) {
-      return '<option value="' + escapeHtml(String(c.id)) + '"' + (String(c.id) === store.defaultCharId ? " selected" : "") + ">" + escapeHtml(c.name || c.id) + "</option>";
-    }).join("");
-    $("qnSetSheet").setAttribute("data-open", "1");
+  var exportNoteId = null; // 当前要导出的笔记ID
+
+  function formatDate(dateStr) {
+    if (!dateStr) return "";
+    var d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    var year = d.getFullYear();
+    var month = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    var hour = String(d.getHours()).padStart(2, '0');
+    var minute = String(d.getMinutes()).padStart(2, '0');
+    return year + "-" + month + "-" + day + " " + hour + ":" + minute;
   }
-  function saveSettings() {
-    var cats = $("qnSetCats").value.split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 40);
-    store.cats = cats.length ? cats : DEFAULT_CATS.slice();
-    store.defaultCharId = $("qnSetChar").value || "";
-    saveMeta().then(function () { closeSheets(); renderAll(); refreshDatalist(); toast("设置已保存"); });
+
+  function openExport(noteId) {
+    if (!noteId) { toast("请先选择要导出的笔记"); return; }
+    var note = store.notes.filter(function(n) { return n.id === noteId; })[0];
+    if (!note) { toast("笔记不存在"); return; }
+    
+    exportNoteId = noteId;
+    
+    // 检查是否有附件
+    var hasAttachments = note.attachments && note.attachments.length > 0;
+    
+    // 禁用/启用非ZIP按钮
+    $("qnExportMd").disabled = hasAttachments;
+    $("qnExportTxt").disabled = hasAttachments;
+    $("qnExportJson").disabled = hasAttachments;
+    
+    if (hasAttachments) {
+      $("qnExportMd").style.opacity = "0.4";
+      $("qnExportTxt").style.opacity = "0.4";
+      $("qnExportJson").style.opacity = "0.4";
+      $("qnExportZip").style.opacity = "1";
+    } else {
+      $("qnExportMd").style.opacity = "1";
+      $("qnExportTxt").style.opacity = "1";
+      $("qnExportJson").style.opacity = "1";
+      $("qnExportZip").style.opacity = "1";
+    }
+    
+    $("qnExportSheet").setAttribute("data-open", "1");
+  }
+
+  function generateMarkdown(note) {
+    var lines = [];
+    lines.push("# " + (note.title || "无标题"));
+    lines.push("");
+    lines.push("**分类**: " + (note.category || "未分类"));
+    lines.push("**标签**: " + (note.tags && note.tags.length ? note.tags.join(", ") : "无"));
+    lines.push("**状态**: " + (note.status === "inbox" ? "收集箱" : note.status === "sorted" ? "已整理" : "归档"));
+    lines.push("**创建时间**: " + formatDate(note.createdAt));
+    lines.push("**更新时间**: " + formatDate(note.updatedAt));
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push(note.text || "");
+    lines.push("");
+    
+    // AI总结
+    if (note.aiSummary) {
+      lines.push("---");
+      lines.push("");
+      lines.push("## 🤖 AI 总结");
+      lines.push("");
+      lines.push(note.aiSummary);
+      lines.push("");
+    }
+    
+    // 附件列表
+    if (note.attachments && note.attachments.length) {
+      lines.push("---");
+      lines.push("");
+      lines.push("## 📎 附件");
+      lines.push("");
+      note.attachments.forEach(function(att, i) {
+        lines.push((i + 1) + ". **" + att.name + "** (" + formatFileSize(att.size) + ")");
+      });
+      lines.push("");
+      lines.push("> 💡 提示：如需查看附件，请使用 ZIP 格式导出");
+      lines.push("");
+    }
+    
+    return lines.join("\n");
+  }
+
+  function generateTxt(note) {
+    var lines = [];
+    lines.push("标题: " + (note.title || "无标题"));
+    lines.push("分类: " + (note.category || "未分类"));
+    lines.push("标签: " + (note.tags && note.tags.length ? note.tags.join(", ") : "无"));
+    lines.push("状态: " + (note.status === "inbox" ? "收集箱" : note.status === "sorted" ? "已整理" : "归档"));
+    lines.push("创建时间: " + formatDate(note.createdAt));
+    lines.push("更新时间: " + formatDate(note.updatedAt));
+    lines.push("");
+    lines.push("=".repeat(60));
+    lines.push("");
+    lines.push(note.text || "");
+    lines.push("");
+    
+    if (note.aiSummary) {
+      lines.push("=".repeat(60));
+      lines.push("");
+      lines.push("AI 总结");
+      lines.push("");
+      lines.push(note.aiSummary);
+      lines.push("");
+    }
+    
+    if (note.attachments && note.attachments.length) {
+      lines.push("=".repeat(60));
+      lines.push("");
+      lines.push("附件列表");
+      lines.push("");
+      note.attachments.forEach(function(att, i) {
+        lines.push((i + 1) + ". " + att.name + " (" + formatFileSize(att.size) + ")");
+      });
+      lines.push("");
+    }
+    
+    return lines.join("\n");
+  }
+
+  function generateJson(note) {
+    return JSON.stringify(note, null, 2);
+  }
+
+  function downloadFile(content, filename, mimeType) {
+    var blob = new Blob([content], { type: mimeType });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function() {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+  }
+
+  function exportNoteAsZip(note) {
+    if (typeof JSZip === 'undefined') {
+      toast("ZIP库加载失败，请检查网络连接");
+      return;
+    }
+    
+    setEditorBusy(true, "正在打包...");
+    var zip = new JSZip();
+    
+    // 添加笔记文本文件（Markdown格式）
+    var mdContent = generateMarkdown(note);
+    zip.file((note.title || "笔记") + ".md", mdContent);
+    
+    // 添加附件文件夹
+    if (note.attachments && note.attachments.length) {
+      var attFolder = zip.folder("attachments");
+      note.attachments.forEach(function(att) {
+        try {
+          if (!att.dataUrl) {
+            console.error("[ZIP导出] 附件缺少dataUrl:", att.name);
+            return;
+          }
+          
+          // 从dataUrl提取base64数据
+          var parts = att.dataUrl.split(',');
+          if (parts.length < 2) {
+            console.error("[ZIP导出] dataUrl格式错误:", att.name);
+            return;
+          }
+          
+          var base64Data = parts[1];
+          attFolder.file(att.name, base64Data, { base64: true });
+        } catch(e) {
+          console.error("[ZIP导出] 附件打包失败:", att.name, e);
+        }
+      });
+    }
+    
+    // 生成并下载zip
+    zip.generateAsync({ type: "blob" }).then(function(content) {
+      var filename = (note.title || "笔记") + ".zip";
+      var url = URL.createObjectURL(content);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      setEditorBusy(false);
+      closeSheets();
+      toast("已导出: " + filename);
+    }).catch(function(err) {
+      setEditorBusy(false);
+      toast("ZIP打包失败: " + err.message);
+      console.error("[ZIP导出] 生成失败:", err);
+    });
+  }
+
+  function doExport(format) {
+    if (!exportNoteId) { toast("请先选择要导出的笔记"); return; }
+    var note = store.notes.filter(function(n) { return n.id === exportNoteId; })[0];
+    if (!note) { toast("笔记不存在"); return; }
+
+    // ZIP / JSON 需要完整附件 dataUrl → 按需取回单条完整记录；MD / TXT 不含图片，用轻量数据即可
+    var needsFull = (format === "zip" || format === "json") && note.attachments && note.attachments.length;
+    function runExport(fullNote) {
+      if (format === "zip") { exportNoteAsZip(fullNote); return; }
+      var content, filename, mimeType;
+      if (format === "md") {
+        content = generateMarkdown(fullNote);
+        filename = (fullNote.title || "笔记") + ".md";
+        mimeType = "text/markdown;charset=utf-8";
+      } else if (format === "txt") {
+        content = generateTxt(fullNote);
+        filename = (fullNote.title || "笔记") + ".txt";
+        mimeType = "text/plain;charset=utf-8";
+      } else if (format === "json") {
+        content = generateJson(fullNote);
+        filename = (fullNote.title || "笔记") + ".json";
+        mimeType = "application/json;charset=utf-8";
+      }
+      downloadFile(content, filename, mimeType);
+      closeSheets();
+      toast("已导出: " + filename);
+    }
+    if (needsFull) {
+      dbGet(COLL_NOTES, exportNoteId).then(function (full) { runExport(full || note); });
+    } else {
+      runExport(note);
+    }
   }
 
   /* ══════════════════════════════════════════════════════
-     8. 事件绑定
+     7.5 批量操作
+     ══════════════════════════════════════════════════════ */
+  
+  function toggleBatchMode() {
+    store.batchMode = !store.batchMode;
+    store.batchSelected = [];
+    
+    if (store.batchMode) {
+      $("qnBatchBar").style.display = "";
+      $("qnBatchSelectAll").checked = false;
+      updateBatchCount();
+    } else {
+      $("qnBatchBar").style.display = "none";
+    }
+    
+    renderList();
+  }
+  
+  function bindBatchCheckboxes() {
+    var checkboxes = document.querySelectorAll(".qn-card-checkbox");
+    checkboxes.forEach(function(cb) {
+      cb.addEventListener("change", function() {
+        var noteId = this.getAttribute("data-note-id");
+        if (this.checked) {
+          if (store.batchSelected.indexOf(noteId) < 0) {
+            store.batchSelected.push(noteId);
+          }
+        } else {
+          var idx = store.batchSelected.indexOf(noteId);
+          if (idx >= 0) store.batchSelected.splice(idx, 1);
+        }
+        updateBatchCount();
+        updateSelectAllState();
+      });
+    });
+  }
+  
+  function updateBatchCount() {
+    $("qnBatchCount").textContent = "已选 " + store.batchSelected.length + " 条";
+  }
+  
+  function updateSelectAllState() {
+    var visibleNotes = filteredNotes();
+    $("qnBatchSelectAll").checked = visibleNotes.length > 0 && store.batchSelected.length === visibleNotes.length;
+  }
+  
+  function exportBatchAsZip() {
+    if (!store.batchSelected.length) {
+      toast("请先选择要导出的笔记");
+      return;
+    }
+    
+    if (typeof JSZip === 'undefined') {
+      toast("ZIP库加载失败，请检查网络连接");
+      return;
+    }
+    
+    setBusy(true, "正在读取笔记数据…");
+
+    // 附件懒加载：批量导出前按需取回每条笔记的完整数据（含 dataUrl）
+    var ids = store.batchSelected.slice();
+    Promise.all(ids.map(function (id) {
+      return dbGet(COLL_NOTES, id).then(function (full) {
+        // 直接用原始完整记录（含 dataUrl）；不能用 normalizeNote，它会剥离 dataUrl 导致图片丢失
+        if (full) return full;
+        return store.notes.filter(function (n) { return n.id === id; })[0] || null;
+      });
+    })).then(function (loaded) {
+      var selectedNotes = loaded.filter(Boolean);
+      // 按更新时间排序，最新的在前
+      selectedNotes.sort(function (a, b) {
+        return String(b.updatedAt).localeCompare(String(a.updatedAt));
+      });
+
+      var zip = new JSZip();
+      var notesFolder = zip.folder("随想笔记_批量导出_" + new Date().toISOString().slice(0, 10));
+
+      selectedNotes.forEach(function (note, index) {
+        var num = String(index + 1).padStart(2, '0');
+        var title = note.title ? note.title.trim() : "";
+        var folderName = (num + "_" + (title || "无标题")).replace(/[\/\\:*?"<>|]/g, '_');
+        var noteFolder = notesFolder.folder(folderName);
+
+        // 添加Markdown文件
+        noteFolder.file((title || "无标题") + ".md", generateMarkdown(note));
+
+        // 添加附件（保持结构一致）
+        if (note.attachments && note.attachments.length) {
+          var attFolder = noteFolder.folder("attachments");
+          note.attachments.forEach(function (att) {
+            try {
+              if (att.dataUrl) {
+                var parts = att.dataUrl.split(',');
+                if (parts.length >= 2) attFolder.file(att.name, parts[1], { base64: true });
+              }
+            } catch (e) {
+              console.error("附件打包失败:", att.name, e);
+            }
+          });
+        }
+      });
+
+      setBusy(true, "正在打包 " + selectedNotes.length + " 条笔记...");
+      return zip.generateAsync({ type: "blob" }).then(function (content) {
+        var filename = "随想笔记_批量导出_" + new Date().toISOString().slice(0, 10) + ".zip";
+        var url = URL.createObjectURL(content);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+        setBusy(false);
+        toggleBatchMode();
+        toast("已导出 " + selectedNotes.length + " 条笔记");
+      });
+    }).catch(function (err) {
+      setBusy(false);
+      toast("ZIP打包失败: " + (err && err.message ? err.message : err));
+      console.error("[批量导出] 生成失败:", err);
+    });
+  }
+
+  /* ═════════════════════════════════════════════════════
+     8. 设置
+     ══════════════════════════════════════════════════════ */
+  /* ══════════════════════════════════════════════════════
+     9. 事件绑定
      ══════════════════════════════════════════════════════ */
   function closeSheets() {
-    ["qnEditSheet", "qnCharSheet", "qnAnaSheet", "qnSetSheet"].forEach(function (id) { $(id).setAttribute("data-open", "0"); });
+    ["qnEditSheet", "qnCharSheet", "qnAnaSheet", "qnExportSheet"].forEach(function (id) { $(id).setAttribute("data-open", "0"); });
   }
 
   function bind() {
@@ -1136,13 +2986,81 @@
     $("qnSearch").addEventListener("input", function () { store.q = this.value; renderList(); });
     $("qnSort").addEventListener("change", function () { store.sort = this.value; renderList(); });
     $("qnTabNotes").addEventListener("click", function () { store.view = "notes"; renderAll(); });
+    $("qnTabTimeline").addEventListener("click", function () { store.view = "timeline"; renderAll(); });
+    $("qnTabReview").addEventListener("click", function () { store.view = "review"; renderAll(); });
     $("qnTabAnas").addEventListener("click", function () { store.view = "anas"; renderAll(); });
+    
+    // 时间线分组切换 + 折叠控制 + 日期跳转（事件委托）
+    $("qnList").addEventListener("click", function (e) {
+      var target = e.target;
+      
+      // 分组方式切换
+      if (target.id === "qnTimelineByUpdated") {
+        store.timelineGroupBy = "updated";
+        renderTimeline();
+      } else if (target.id === "qnTimelineByCreated") {
+        store.timelineGroupBy = "created";
+        renderTimeline();
+      }
+      
+      // 全部展开/收起
+      else if (target.id === "qnTimelineToggleAll") {
+        var sections = document.querySelectorAll("[data-toggle-section]");
+        var allOpen = true;
+        sections.forEach(function(sec) {
+          var key = sec.getAttribute("data-toggle-section");
+          var items = $("qnTimelineItems_" + key);
+          if (items && items.style.display === "none") allOpen = false;
+        });
+        
+        // 切换所有时间段
+        var timeKeys = ["today", "yesterday", "thisWeek", "thisMonth", "earlier"];
+        timeKeys.forEach(function(key) {
+          var items = $("qnTimelineItems_" + key);
+          var arrow = $("qnTimelineArrow_" + key);
+          if (!items || !arrow) return;
+          
+          if (allOpen) {
+            items.style.display = "none";
+            arrow.style.transform = "rotate(0deg)";
+          } else {
+            items.style.display = "";
+            arrow.style.transform = "rotate(90deg)";
+          }
+        });
+        
+        target.textContent = allOpen ? "展开" : "收起";
+      }
+      
+      // 单个时间段折叠/展开
+      else if (target.hasAttribute && target.hasAttribute("data-toggle-section")) {
+        var key = target.getAttribute("data-toggle-section");
+        var items = $("qnTimelineItems_" + key);
+        var arrow = $("qnTimelineArrow_" + key);
+        if (!items || !arrow) return;
+        
+        if (items.style.display === "none") {
+          items.style.display = "";
+          arrow.style.transform = "rotate(90deg)";
+        } else {
+          items.style.display = "none";
+          arrow.style.transform = "rotate(0deg)";
+        }
+      }
+    });
+    
+    // 回顾AI总结按钮（事件委托到body）
+    document.body.addEventListener("click", function(e) {
+      if (e.target.id === "qnReviewAiSummary") {
+        generateWeeklyReview();
+      }
+    });
+    
     $("qnNew").addEventListener("click", function () { openEditor(""); });
     $("qnRefresh").addEventListener("click", function () {
       var p = store.view === "anas" ? reloadAnas() : reloadNotes();
       Promise.resolve(p).then(function () { toast("已刷新"); });
     });
-    $("qnSettings").addEventListener("click", openSettings);
     $("qnAiAll").addEventListener("click", function () {
       // 优先「问角色」批量点评；若没角色则退化为逐条 AI 整理
       var inbox = store.notes.filter(function (n) { return n.status === "inbox"; });
@@ -1173,9 +3091,11 @@
       var delBtn = e.target.closest ? e.target.closest("[data-del-idx]") : null;
       if (delBtn) removeAttachment(parseInt(delBtn.getAttribute("data-del-idx")));
     });
-    $("qnAnalyzeToggle").addEventListener("click", function () {
-      store.analyzeAttachments = !store.analyzeAttachments;
-      updateAnalyzeToggle();
+    $("qnEditUseTpl").addEventListener("click", function () { openTemplatePicker(); });
+    $("qnEditExport").addEventListener("click", function () { 
+      var e = collectEditor();
+      if (!e.id) { toast("请先保存笔记后再导出"); return; }
+      openExport(e.id); 
     });
     $("qnEditSave").addEventListener("click", saveEditor);
     $("qnEditDel").addEventListener("click", deleteEditor);
@@ -1203,8 +3123,97 @@
       });
     });
 
-    // 设置
-    $("qnSetSave").addEventListener("click", saveSettings);
+    // 导出格式选择
+    $("qnExportMd").addEventListener("click", function () { doExport("md"); });
+    $("qnExportTxt").addEventListener("click", function () { doExport("txt"); });
+    $("qnExportJson").addEventListener("click", function () { doExport("json"); });
+    $("qnExportZip").addEventListener("click", function () { doExport("zip"); });
+
+    // 模板选择器
+    $("qnNewTpl").addEventListener("click", function () { openTemplatePicker(); });
+    
+    // 批量操作按钮
+    $("qnBatchToggle").addEventListener("click", function() {
+      toggleBatchMode();
+    });
+    
+    // 批量操作栏事件
+    $("qnBatchSelectAll").addEventListener("change", function() {
+      var visibleNotes = filteredNotes();
+      if (this.checked) {
+        store.batchSelected = visibleNotes.map(function(n) { return n.id; });
+      } else {
+        store.batchSelected = [];
+      }
+      renderList();
+      updateBatchCount();
+    });
+    
+    $("qnBatchExport").addEventListener("click", function() {
+      exportBatchAsZip();
+    });
+    
+    $("qnBatchCancel").addEventListener("click", function() {
+      toggleBatchMode();
+    });
+    
+    // 模板操作按钮
+    document.addEventListener("click", function (e) {
+      // 复制提示词
+      if (e.target.closest && e.target.closest("#qnTplCopyPrompt")) {
+        copyTemplatePrompt();
+        return;
+      }
+      
+      // 应用预设模板
+      var tplBtn = e.target.closest ? e.target.closest("[data-apply-tpl]") : null;
+      if (tplBtn) {
+        var tplId = tplBtn.getAttribute("data-apply-tpl");
+        var tpl = BUILTIN_TEMPLATES.filter(function(t) { return t.id === tplId; })[0];
+        if (tpl) applyTemplate(tpl);
+        return;
+      }
+      
+      // 应用自定义模板
+      var customTplBtn = e.target.closest ? e.target.closest("[data-apply-custom-tpl]") : null;
+      if (customTplBtn) {
+        var idx = parseInt(customTplBtn.getAttribute("data-apply-custom-tpl"));
+        var tpl = store.customTemplates[idx];
+        if (tpl) applyTemplate(tpl);
+        return;
+      }
+    });
+    
+    // JSON模板导入
+    $("qnTplFileInput").addEventListener("change", function () {
+      if (this.files && this.files.length) {
+        importJsonTemplate(this.files[0]);
+        this.value = "";
+      }
+    });
+    
+    // 解析粘贴的JSON
+    $("qnTplParseJson").addEventListener("click", parsePastedJson);
+    
+    // 手动创建模板引导
+    $("qnTplManualGuide").addEventListener("click", showManualGuide);
+    
+    // 插入链接按钮
+    $("qnInsertLink").addEventListener("click", openLinkPicker);
+    
+    // 链接搜索
+    $("qnLinkSearch").addEventListener("input", function() {
+      renderLinkPickerList(this.value);
+    });
+    
+    // 选择链接
+    document.addEventListener("click", function(e) {
+      var linkItem = e.target.closest ? e.target.closest("[data-pick-link]") : null;
+      if (linkItem) {
+        var id = linkItem.getAttribute("data-pick-link");
+        insertLinkToNote(id);
+      }
+    });
 
     // 弹窗
     $("qnDialogOk").addEventListener("click", function () { _closeDialog(true); });
@@ -1241,7 +3250,6 @@
       store.view = "notes";
       setBusy(false);
       renderAll();
-      refreshDatalist();
     }).catch(function (err) {
       setBusy(false);
       $("qnList").innerHTML = '<div class="qn-empty">加载失败：' + escapeHtml(String(err && err.message ? err.message : err)) + "</div>";

@@ -133,6 +133,25 @@
 
   .qn-toast{position:fixed; left:50%; bottom:calc(var(--safe-bottom) + 96px); transform:translate(-50%,10px); background:rgba(30,34,42,.92); color:#fff; font-size:12.5px; padding:8px 15px; border-radius:999px; opacity:0; pointer-events:none; transition:.2s; z-index:90; max-width:78%; text-align:center;}
   .qn-toast[data-show="1"]{opacity:1; transform:translate(-50%,0);}
+
+  /* ── 附件区域 ── */
+  .qn-attachments{margin-top:10px; border:1px dashed var(--line); border-radius:10px; padding:10px; background:var(--panel-2);}
+  .qn-attach-list{display:flex; flex-direction:column; gap:6px; margin-top:6px;}
+  .qn-attach-item{display:flex; align-items:center; gap:8px; padding:7px 9px; background:var(--panel); border:1px solid var(--line-soft); border-radius:8px; font-size:12px;}
+  .qn-attach-icon{width:28px; height:28px; border-radius:6px; background:var(--accent-soft); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:14px; flex:none;}
+  .qn-attach-info{flex:1; min-width:0; overflow:hidden;}
+  .qn-attach-name{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .qn-attach-size{font-size:11px; color:var(--muted); margin-top:1px;}
+  .qn-attach-del{width:24px; height:24px; border-radius:50%; background:rgba(255,59,48,.08); color:var(--danger); font-size:13px; display:flex; align-items:center; justify-content:center;}
+  .qn-attach-del:hover{background:rgba(255,59,48,.18);}
+  .qn-upload-btn{display:inline-flex; align-items:center; gap:5px; padding:6px 11px; border-radius:8px; font-size:12px; background:var(--panel); border:1px solid var(--line); color:var(--text); cursor:pointer;}
+  .qn-upload-btn:hover{border-color:var(--accent); color:var(--accent);}
+  .qn-upload-input{display:none;}
+  .qn-analyze-switch{margin-top:8px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text);}
+  .qn-toggle{position:relative; width:40px; height:22px; background:var(--line); border-radius:11px; cursor:pointer; transition:.2s;}
+  .qn-toggle[data-on="1"]{background:var(--accent);}
+  .qn-toggle::after{content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; background:#fff; border-radius:50%; transition:.2s; box-shadow:0 1px 2px rgba(0,0,0,.12);}
+  .qn-toggle[data-on="1"]::after{transform:translateX(18px);}
 </style>
 </head>
 <body>
@@ -201,6 +220,20 @@
       <div class="qn-field" id="qnEditAiWrap" style="display:none">
         <div class="qn-label">AI 整理结果</div>
         <div class="qn-aibox" id="qnEditAiBox"></div>
+      </div>
+      <div class="qn-field">
+        <div class="qn-label">附件</div>
+        <label class="qn-upload-btn" for="qnFileInput">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          上传文件
+        </label>
+        <input type="file" id="qnFileInput" class="qn-upload-input" accept=".doc,.docx,.zip,.txt,.md,.png,.jpg,.jpeg,image/png,image/jpeg,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" multiple />
+        <div class="qn-attach-list" id="qnAttachList"></div>
+        <div class="qn-analyze-switch" id="qnAnalyzeSwitchWrap" style="display:none">
+          <span>分析附件内容</span>
+          <div class="qn-toggle" id="qnAnalyzeToggle" data-on="0"></div>
+          <span style="font-size:11px; color:var(--muted);">(仅 txt/md/图片)</span>
+        </div>
       </div>
     </div>
     <div class="qn-sheet-foot">
@@ -328,6 +361,66 @@
   }
   function titleOf(note) { return (note.title && note.title.trim()) || (note.text || "").trim().slice(0, 24) || "未命名想法"; }
 
+  /* ── 附件处理工具 ── */
+  var MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  var ALLOWED_TYPES = {
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.zip': 'application/zip',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg'
+  };
+
+  function getFileIcon(name) {
+    var ext = '.' + (name.split('.').pop() || '').toLowerCase();
+    if (['.png', '.jpg', '.jpeg'].indexOf(ext) >= 0) return '🖼️';
+    if (['.doc', '.docx'].indexOf(ext) >= 0) return '📄';
+    if (ext === '.zip') return '📦';
+    if (['.txt', '.md'].indexOf(ext) >= 0) return '📝';
+    return '📎';
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function isTextFile(name) {
+    var ext = '.' + (name.split('.').pop() || '').toLowerCase();
+    return ['.txt', '.md'].indexOf(ext) >= 0;
+  }
+
+  function isImageFile(name) {
+    var ext = '.' + (name.split('.').pop() || '').toLowerCase();
+    return ['.png', '.jpg', '.jpeg'].indexOf(ext) >= 0;
+  }
+
+  function canAnalyzeFile(name) {
+    return isTextFile(name) || isImageFile(name);
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(reader.result); };
+      reader.onerror = function() { reject(reader.error); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(reader.result); };
+      reader.onerror = function() { reject(reader.error); };
+      reader.readAsText(file);
+    });
+  }
+
   /* ── 应用内弹窗（沙盒无 allow-modals，confirm/alert/prompt 全部失效） ── */
   var _dlgResolve = null;
   function _openDialog(o) {
@@ -387,6 +480,8 @@
     view: "notes",      // notes | anas
     q: "", cat: "", sort: "updated",
     editing: null,      // 正在编辑的 note（内存对象）
+    editingAttachments: [], // 当前编辑中的附件列表
+    analyzeAttachments: false, // 是否分析附件
     lastAna: null
   };
 
@@ -409,6 +504,8 @@
       pinned: row.pinned === true,
       source: row.source === "float" ? "float" : "app",
       aiSummary: String(row.aiSummary || ""),
+      attachments: Array.isArray(row.attachments) ? row.attachments : [],
+      analyzeAttachments: row.analyzeAttachments === true,
       createdAt: String(row.createdAt || nowIso()),
       updatedAt: String(row.updatedAt || row.createdAt || nowIso())
     };
@@ -503,6 +600,42 @@
 
   function organizeNote(note) {
     var user = "分类清单：" + store.cats.join("、") + "\n\n想法标题：" + titleOf(note) + "\n想法正文：\n" + (note.text || "(无正文)");
+    
+    // 如果需要分析附件且有可分析的附件
+    if (note.analyzeAttachments && note.attachments && note.attachments.length) {
+      var analyzableAttachments = note.attachments.filter(function(att) { return canAnalyzeFile(att.name); });
+      if (analyzableAttachments.length) {
+        user += "\n\n附件内容：";
+        var extractPromises = analyzableAttachments.map(function(att) {
+          return extractAttachmentText(att).then(function(text) {
+            return "【" + att.name + "】\n" + text;
+          }).catch(function() {
+            return "【" + att.name + "】（无法读取内容）";
+          });
+        });
+        
+        return Promise.all(extractPromises).then(function(texts) {
+          user += "\n" + texts.join("\n\n");
+          return aiChat(SYS_ORGANIZE, user, { temperature: 0.2, maxTokens: 500 }).then(function (out) {
+            var obj = parseJsonLoose(out);
+            if (obj && typeof obj === "object") {
+              var cat = String(obj.category || "").trim();
+              var tags = Array.isArray(obj.tags) ? obj.tags.map(String).filter(Boolean).slice(0, 6) : [];
+              var summary = String(obj.summary || "").trim();
+              if (cat && store.cats.length && store.cats.indexOf(cat) < 0) {
+                // 模型给了清单外的分类，保留但记下
+              }
+              return { category: cat, tags: tags, summary: summary };
+            }
+            // 退化：JSON 解析失败时，退到 classify 做分类，摘要用原文本截断
+            return aiClassify(note.text || titleOf(note), store.cats).then(function (label) {
+              return { category: label || "", tags: [], summary: String(out || "").replace(/\s+/g, " ").slice(0, 40) };
+            });
+          });
+        });
+      }
+    }
+    
     return aiChat(SYS_ORGANIZE, user, { temperature: 0.2, maxTokens: 500 }).then(function (out) {
       var obj = parseJsonLoose(out);
       if (obj && typeof obj === "object") {
@@ -518,6 +651,38 @@
       return aiClassify(note.text || titleOf(note), store.cats).then(function (label) {
         return { category: label || "", tags: [], summary: String(out || "").replace(/\s+/g, " ").slice(0, 40) };
       });
+    });
+  }
+
+  function extractAttachmentText(att) {
+    return new Promise(function(resolve, reject) {
+      if (isTextFile(att.name)) {
+        // txt/md 文件：从 dataUrl 解码为文本
+        try {
+          var base64 = att.dataUrl.split(',')[1];
+          var binary = atob(base64);
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          var decoder = new TextDecoder('utf-8');
+          var text = decoder.decode(bytes);
+          resolve(text.slice(0, 5000)); // 限制长度避免 token 爆炸
+        } catch(e) {
+          reject(e);
+        }
+      } else if (isImageFile(att.name)) {
+        // 图片：检查是否有视觉能力
+        if (AI && AI.ai && AI.ai.chat && typeof AI.ai.chat === 'function') {
+          // 尝试使用支持视觉的模型（如果配置了）
+          // 注意：这需要宿主的 AI 模型支持 vision
+          resolve("【图片附件：" + att.name + "】当前环境不支持图片识别，无法提取文字内容。");
+        } else {
+          resolve("【图片附件：" + att.name + "】无法提取文字内容。");
+        }
+      } else {
+        reject(new Error("不支持的文件类型"));
+      }
     });
   }
 
@@ -584,6 +749,7 @@
       if (n.status === "archived") badges += '<span class="qn-badge dim">归档</span>';
       if (n.category) badges += '<span class="qn-badge">' + escapeHtml(n.category) + "</span>";
       if (n.source === "float") badges += '<span class="qn-badge dim">速记</span>';
+      if (n.attachments && n.attachments.length) badges += '<span class="qn-badge dim">📎' + n.attachments.length + '</span>';
       var tags = n.tags.map(function (t) { return '<span class="qn-tag">#' + escapeHtml(t) + "</span>"; }).join("");
       var summary = n.aiSummary ? '<div class="qn-card-summary">AI：' + escapeHtml(n.aiSummary) + "</div>" : "";
       return '<article class="qn-card" data-open-note="' + escapeHtml(n.id) + '">' +
@@ -635,6 +801,8 @@
   function openEditor(noteId) {
     var n = noteId ? store.notes.filter(function (x) { return x.id === noteId; })[0] : null;
     store.editing = n ? JSON.parse(JSON.stringify(n)) : { id: "", title: "", text: "", category: "", tags: [], status: "inbox", aiSummary: "" };
+    store.editingAttachments = n && Array.isArray(n.attachments) ? JSON.parse(JSON.stringify(n.attachments)) : [];
+    store.analyzeAttachments = n && n.analyzeAttachments === true;
     $("qnEditTitle").textContent = n ? "编辑想法" : "新建想法";
     $("qnEditSub").textContent = n ? ("创建于 " + fmtTime(n.createdAt)) : "写下来就好，整理交给 AI";
     $("qnFTitle").value = store.editing.title || "";
@@ -647,6 +815,8 @@
     else wrap.style.display = "none";
     $("qnEditDel").style.display = n ? "" : "none";
     refreshDatalist();
+    renderAttachments();
+    updateAnalyzeToggle();
     $("qnEditSheet").setAttribute("data-open", "1");
   }
   function setStatusChips(val) {
@@ -654,11 +824,86 @@
     for (var i = 0; i < kids.length; i++) kids[i].setAttribute("data-on", kids[i].getAttribute("data-val") === val ? "1" : "0");
     store.editing.status = val;
   }
+
+  /* ── 附件管理 ── */
+  function renderAttachments() {
+    var list = store.editingAttachments || [];
+    var wrap = $("qnAttachList");
+    if (!list.length) {
+      wrap.innerHTML = "";
+      $("qnAnalyzeSwitchWrap").style.display = "none";
+      return;
+    }
+    $("qnAnalyzeSwitchWrap").style.display = "flex";
+    wrap.innerHTML = list.map(function(att, idx) {
+      return '<div class="qn-attach-item" data-idx="' + idx + '">' +
+        '<div class="qn-attach-icon">' + getFileIcon(att.name) + '</div>' +
+        '<div class="qn-attach-info"><div class="qn-attach-name">' + escapeHtml(att.name) + '</div><div class="qn-attach-size">' + formatFileSize(att.size) + '</div></div>' +
+        '<button class="qn-attach-del" data-del-idx="' + idx + '">✕</button>' +
+        '</div>';
+    }).join("");
+  }
+
+  function updateAnalyzeToggle() {
+    var hasAnalyzable = store.editingAttachments.some(function(att) { return canAnalyzeFile(att.name); });
+    $("qnAnalyzeSwitchWrap").style.display = hasAnalyzable ? "flex" : "none";
+    $("qnAnalyzeToggle").setAttribute("data-on", store.analyzeAttachments ? "1" : "0");
+  }
+
+  function handleFileUpload(files) {
+    if (!files || !files.length) return;
+    var remaining = Array.from(files).filter(function(file) {
+      if (file.size > MAX_FILE_SIZE) {
+        toast(file.name + " 超过 5MB，已跳过");
+        return false;
+      }
+      var ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+      if (!ALLOWED_TYPES[ext]) {
+        toast(file.name + " 格式不支持，已跳过");
+        return false;
+      }
+      return true;
+    });
+
+    if (!remaining.length) return;
+
+    setEditorBusy(true, "读取文件中…");
+    var promises = remaining.map(function(file) {
+      return readFileAsBase64(file).then(function(dataUrl) {
+        return {
+          name: file.name,
+          type: file.type || ALLOWED_TYPES['.' + file.name.split('.').pop().toLowerCase()] || 'application/octet-stream',
+          size: file.size,
+          dataUrl: dataUrl,
+          uploadedAt: nowIso()
+        };
+      });
+    });
+
+    Promise.all(promises).then(function(newAttachments) {
+      store.editingAttachments = (store.editingAttachments || []).concat(newAttachments);
+      renderAttachments();
+      updateAnalyzeToggle();
+      toast("已添加 " + newAttachments.length + " 个附件");
+    }).catch(function(err) {
+      showNotice("文件读取失败", String(err && err.message ? err.message : err));
+    }).then(function() {
+      setEditorBusy(false);
+    });
+  }
+
+  function removeAttachment(idx) {
+    store.editingAttachments.splice(idx, 1);
+    renderAttachments();
+    updateAnalyzeToggle();
+  }
   function collectEditor() {
     store.editing.title = clampText($("qnFTitle").value.trim(), MAX_TITLE);
     store.editing.text = clampText($("qnFText").value, MAX_TEXT);
     store.editing.category = clampText($("qnFCat").value.trim(), 40);
     store.editing.tags = parseTags($("qnFTags").value);
+    store.editing.attachments = store.editingAttachments;
+    store.editing.analyzeAttachments = store.analyzeAttachments;
     return store.editing;
   }
   function saveEditor() {
@@ -667,6 +912,8 @@
     var payload = {
       title: e.title, text: e.text, category: e.category, tags: e.tags,
       status: e.status, pinned: !!e.pinned, source: e.source || "app", aiSummary: e.aiSummary || "",
+      attachments: e.attachments || [],
+      analyzeAttachments: e.analyzeAttachments === true,
       updatedAt: nowIso()
     };
     var p;
@@ -917,6 +1164,18 @@
     $("qnFStatus").addEventListener("click", function (e) {
       var b = e.target.closest ? e.target.closest("[data-val]") : null;
       if (b) setStatusChips(b.getAttribute("data-val"));
+    });
+    $("qnFileInput").addEventListener("change", function () {
+      handleFileUpload(this.files);
+      this.value = ""; // 清空以便重新选择同一文件
+    });
+    $("qnAttachList").addEventListener("click", function (e) {
+      var delBtn = e.target.closest ? e.target.closest("[data-del-idx]") : null;
+      if (delBtn) removeAttachment(parseInt(delBtn.getAttribute("data-del-idx")));
+    });
+    $("qnAnalyzeToggle").addEventListener("click", function () {
+      store.analyzeAttachments = !store.analyzeAttachments;
+      updateAnalyzeToggle();
     });
     $("qnEditSave").addEventListener("click", saveEditor);
     $("qnEditDel").addEventListener("click", deleteEditor);

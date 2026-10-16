@@ -2,9 +2,9 @@
   "sdkVersion": "1.0",
   "id": "quick.notes",
   "name": "随想笔记",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "栗子",
-  "description": "随手记录开发想法 / 灵感碎片的收纳盒：先扔进收集箱，再让 AI（通用模型或指定角色）帮你归类、打标签、写摘要、归纳成清单。对局界面也能用它的小窗快速速记，两边共用同一份笔记。",
+  "description": "随手记录开发想法 / 灵感碎片的收纳盒：先扔进收集箱，再让 AI（通用模型或指定角色）帮你归类、打标签、写摘要、归纳成清单。支持上传 doc/docx/zip/txt/md/png/jpg 等附件，可选择是否对附件内容进行 AI 分析。对局界面也能用它的小窗快速速记，两边共用同一份笔记。",
   "icon": "icon.svg",
   "entry": "index.html",
   "permissions": [

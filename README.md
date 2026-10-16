@@ -22,10 +22,46 @@
 - Node.js 20+（Next.js 15 要求 ≥ 18.18）
 - 任意 OpenAI 兼容的 LLM API（OpenAI / DeepSeek / 中转站等），或 Anthropic / Google Gemini 官方 API
 
+## 分支说明
+
+日常开发都在 **`dev`** 分支进行，`dev` 是本仓库的默认分支，也是功能最新版本所在地。
+
+| 分支 | 用途 |
+|---|---|
+| `dev` | **默认分支**，日常开发、最新功能都在这里 |
+| `main` | 相对稳定的一次快照，只在发版时从 `dev` 合并，通常会滞后 |
+| `test` | 兼容设备版，部分设备全屏或显示异常时使用，内容可能滞后于 `dev` |
+
+⚠️ 想跑最新版请切到 `dev`。直接 `git clone <repo-url>` 拿到的就是默认分支（`dev`），无需额外参数；如果你看到别人贴的 `-b main` 命令，请自行换成 `-b dev`。
+
+## Fork 指引
+
+1. 页面右上角点 **Fork**。GitHub 会把**所有分支**（包括 `dev`）一起复制到你名下的仓库，Fork 出来的默认分支跟随本仓库默认分支，所以你会直接落在 `dev` 上。
+2. 克隆你自己的 fork，并确认在 `dev` 分支：
+
+   ```bash
+   git clone https://github.com/<你的用户名>/ai-virtual-phone.git
+   cd ai-virtual-phone
+   git checkout dev
+   ```
+
+3. **fork 不会自动同步更新**，需要手动拉上游（建议每次开始用之前先做一次）：
+
+   ```bash
+   git remote add upstream https://github.com/fallen0930/ai-virtual-phone.git
+   git fetch upstream
+   git checkout dev
+   git merge upstream/dev    # 习惯 rebase 的话可换成 git rebase upstream/dev
+   git push origin dev
+   ```
+
+4. 想提 PR：base 分支请选 `dev`（`dev` 设为默认分支后，GitHub 会自动带上），不要往 `main` 提。
+5. Fork 后请保留 `LICENSE`、`NOTICE` 和 README 顶部的开源使用说明。
+
 ## 快速开始（本地运行）
 
 ```bash
-git clone -b main <repo-url>
+git clone -b dev <repo-url>
 cd <repo-dir>
 npm install
 cp .env.example .env.local
@@ -54,7 +90,7 @@ NEXT_PUBLIC_SELF_HOSTED_MODE=true
 
 两个平台都可以直接导入本仓库部署：
 
-1. 新建站点 / 项目，关联你 fork 或 clone 的仓库，选择 `main` 或 `test` 分支；
+1. 新建站点 / 项目，关联你 fork 或 clone 的仓库，分支选 `dev`（默认分支；设备显示异常时选 `test`）；
 2. 构建设置保持默认即可（Netlify 会自动读取仓库里的 `netlify.toml`；Vercel 自动识别 Next.js）；
 3. **在平台后台添加环境变量**（平台不会读取仓库里的 `.env.example`）：
 
@@ -237,10 +273,11 @@ npm run check:weixin      # 校验微信提示词与分发文件
 
 ## 分支选择
 
-本仓库长期保留两个设备兼容版本：
+分支的整体用途见上文[「分支说明」](#分支说明)，这里补充设备兼容性：
 
-- `main`：正常设备版
-- `test`：兼容设备版，部分设备全屏或显示异常时部署此分支
+- `dev`：默认分支，正常设备的最新版，日常开发与自部署首选
+- `test`：兼容设备版，部分设备全屏或显示异常时部署此分支（内容可能与 `dev` 不同步）
+- `main`：历史稳定快照，通常滞后于 `dev`，不建议作为日常使用分支
 
 ## 常用命令
 

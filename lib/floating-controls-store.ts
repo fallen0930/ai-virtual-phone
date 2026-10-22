@@ -19,7 +19,8 @@ export type ControlId =
     | "mix-story-rail"
     | "mix-story-compass"
     | "mix-model-badge"
-    | "mix-token";
+    | "mix-token"
+    | "narrative-writer";
 
 export type ControlScope = "global" | "mixology";
 
@@ -41,6 +42,7 @@ export const CONTROL_DEFS: ControlDef[] = [
     { id: "mix-story-rail", label: "剧情侧轨", scope: "mixology" },
     { id: "mix-story-compass", label: "溯源罗盘", scope: "mixology" },
     { id: "mix-model-badge", label: "当前模型", scope: "mixology" },
+    { id: "narrative-writer", label: "执笔", scope: "global" },
 ];
 
 export const CONTROL_LABELS: Record<ControlId, string> = CONTROL_DEFS.reduce(

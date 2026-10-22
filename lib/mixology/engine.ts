@@ -11,6 +11,7 @@ import type { ApiConfig } from "../settings-types";
 import type { MixHookSection } from "./mechanism-protocol";
 import { assembleMixPrompt, MIX_DEFAULT_USER_NAME, MIX_ENCORE_CLOSE, MIX_ENCORE_OPEN, MIX_TICKET_CLOSE, MIX_TICKET_OPEN, mixNamedOpen, type MixAssembledPrompt } from "./assembler";
 import { applyMixFilterRules, extractMixBlocks, type MixExtractedBlock } from "./prose";
+import { mixCardWorldText } from "./card-freeform";
 import {
     getMixMaterial,
     getMixSession,
@@ -27,15 +28,20 @@ import {
     type MixEncoreMaterial,
     type MixFilterRule,
     type MixMaterial,
-    type MixMechanismMaterial,
-    type MixState,
     type MixMaterialKind,
+    type MixMechanismMaterial,
     type MixRecipe,
     type MixSession,
+    type MixState,
+    type MixTextMaterial,
     type MixTicketMaterial,
     type MixTurn,
     type MixTurnBlock,
 } from "./types";
+
+// 执笔抽取引擎（特调与执笔共享记忆基础设施）
+import { hotExtractFromNarrativeBody } from "../narrative-writer/extractor";
+import { getExtractionRules, getContextHierarchy, saveContextHierarchy } from "../narrative-writer/storage";
 import {
     advanceMixState,
     buildMixConditionContext,
@@ -638,6 +644,77 @@ async function runMixGeneration(
         mechanismStorePrevTurn: turn.id,
     };
     saveMixSession(updated);
+    
+    // 特调异步抽取：攒批触发（每3-5轮或字数阈值）
+    // 不阻塞主线程，后台静默执行
+    const totalTurns = updated.turns.length;
+    const assistantTurns = updated.turns.filter(t => t.role === "assistant").length;
+    
+    // 检查是否需要触发抽取
+    const shouldExtract = async () => {
+        const rules = await getExtractionRules();
+        if (!rules.enableMemoryExtraction && !rules.enableEmotionExtraction) return false;
+        
+        // 条件1: 每4轮对话触发一次（3-5轮的中间值）
+        if (totalTurns % 4 === 0) return true;
+        
+        // 条件2: 新增字数超过阈值（约2000字）
+        const recentTextLength = updated.turns.slice(-4).reduce((sum, t) => sum + (t.text?.length || 0), 0);
+        if (recentTextLength >= 2000) return true;
+        
+        return false;
+    };
+    
+    setTimeout(async () => {
+        try {
+            if (!(await shouldExtract())) return;
+            
+            // 获取最后一轮 assistant 回复的文本
+            const lastAssistantTurn = updated.turns.filter(t => t.role === "assistant").pop();
+            if (!lastAssistantTurn?.text) return;
+            
+            // 构建完整的会话上下文
+            const recentTurns = updated.turns.slice(-8).map(t => ({
+                role: t.role,
+                text: t.text || "",
+                ticketRaw: t.ticketRaws?.[0]?.raw,
+            }));
+            
+            // 从配方中提取角色名和世界观
+            const { entries } = resolveMixRecipeMaterials(working.recipe);
+            const active = pickActiveMixMaterials(entries, buildMixConditionContext(working));
+            const character = active.character?.[0];
+            const characterName = character?.kind === "character" ? character.name : "未知角色";
+            // worldText 从角色卡中提取（不是独立材料）
+            const worldText = character?.kind === "character" ? mixCardWorldText(character) : "";
+            
+            // 热轨抽取（快速版，<3 秒）
+            await hotExtractFromNarrativeBody(
+                lastAssistantTurn.text,
+                recentTurns.map(t => t.text)
+            );
+            
+            // 验证小票状态是否正确保存
+            console.log(`[Mixology] Turn ${totalTurns} extraction completed, state preserved:`, JSON.stringify(updated.state));
+            
+            // 检查是否需要 L2/L3 压缩
+            const hierarchy = await getContextHierarchy();
+            if (hierarchy && assistantTurns > 0) {
+                const turnsSinceLastCompress = totalTurns - (hierarchy.lastCompressedAt ? 
+                    updated.turns.findIndex(t => t.createdAt >= hierarchy.lastCompressedAt) : 0);
+                
+                // 每20轮或自上次压缩以来新增≥5000字时触发 L2 摘要
+                if (turnsSinceLastCompress >= 20) {
+                    // TODO: 实际的 L2 摘要生成逻辑
+                    // 当前为占位，后续接入 LLM 调用
+                    console.log(`[Mixology] Trigger L2 summary at turn ${totalTurns}`);
+                }
+            }
+        } catch (err) {
+            console.error("[Mixology] Async extraction failed:", err);
+        }
+    }, 0);
+    
     return { session: updated, turn };
 }
 
@@ -1149,5 +1226,117 @@ export function undoMixLastRound(sessionId: string): MixSession {
     if (lastUserIdx < 0) throw new ChatEngineError("还没有可以撤回的发言。");
     const updated = withRolledBackState(current, current.turns.slice(0, lastUserIdx));
     saveMixSession(updated);
+    return updated;
+}
+
+/**
+ * 将执笔生成的正文作为 assistant turn 插入到对局中。
+ * 用于执笔插件：不经过 LLM 调用，直接将已生成的剧情写入聊天流。
+ */
+/**
+ * 插入执笔生成的剧情轮次（走完整特调流程）
+ * 
+ * 与直接插入 turn 不同，此函数会：
+ * 1. 装配提示词（包含小票契约）
+ * 2. 执行机括钩子（afterReply）
+ * 3. 更新 state（advanceMixStateWithBlocks）
+ * 4. 保存 session 并广播事件
+ */
+export async function insertNarrativeTurn(sessionId: string, narrativeBody: string, banner?: string): Promise<MixSession> {
+    const current = getMixSession(sessionId);
+    if (!current) throw new ChatEngineError("对局不存在。");
+    
+    const trimmed = narrativeBody.trim();
+    if (!trimmed) throw new ChatEngineError("正文内容为空。");
+    
+    // 如果有报幕，将其作为元数据嵌入到 rawText 中
+    const rawText = banner ? `[执笔报幕] ${banner}\n\n${trimmed}` : undefined;
+    
+    // 从配方中提取当前激活的材料（用于装配提示词和执行机括）
+    const { entries } = resolveMixRecipeMaterials(current.recipe);
+    const active = pickActiveMixMaterials(entries, buildMixConditionContext(current));
+    const character = active.character?.[0];
+    
+    // 装配提示词（包含小票契约）
+    const assembled = assembleMixPrompt({
+        character: character as any,
+        materials: active,
+        userName: current.userName,
+        openingIndex: current.openingIndex,
+        state: current.state,
+    });
+    
+    // 构建初始 turn（尚未执行机括）
+    const initialTurn: MixTurn = {
+        id: createMixId("mixturn"),
+        role: "assistant",
+        text: trimmed,
+        rawText,
+        createdAt: Date.now(),
+    };
+    
+    // 执行机括钩子（afterReply）- 让机括有机会修改正文和 state
+    const afterHook = await runMechanismHooks(
+        current,
+        "afterReply",
+        {
+            text: trimmed,
+            ticketRaws: undefined, // 执笔模式不生成小票块，但机括仍可访问契约
+            encoreRaws: undefined,
+        },
+        [], // 暂无 rosters
+    );
+    
+    // 合并最终文本和 state
+    const finalText = typeof afterHook.text === "string" ? afterHook.text : trimmed;
+    const nextState = mergeHookState(current.state ?? {}, afterHook.state);
+    
+    // 构建完整的 turn
+    const turn: MixTurn = {
+        ...initialTurn,
+        text: finalText,
+        state: nextState,
+        mechanismStore: afterHook.store,
+    };
+    
+    const updated: MixSession = {
+        ...current,
+        turns: [...current.turns, turn],
+        state: nextState,
+        mechanismStore: afterHook.store,
+        updatedAt: Date.now(),
+    };
+    
+    saveMixSession(updated);
+    
+    // 广播 session 更新事件，通知正在运行的对局页面刷新
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("mix-session-updated", { detail: { sessionId } }));
+    }
+    
+    // 执笔落库后异步触发记忆抽取（不阻塞返回）：
+    // 执笔正文不走 runMixGeneration 的攒批阈值，这里每轮都抽；
+    // 只读 updated，不写 session state（规范：异步抽取不得覆盖小票状态）
+    setTimeout(async () => {
+        try {
+            const rules = await getExtractionRules();
+            if (!rules.enableMemoryExtraction && !rules.enableEmotionExtraction) return;
+            
+            const recentTurns = updated.turns.slice(-8).map(t => ({
+                role: t.role,
+                text: t.text || "",
+                ticketRaw: t.ticketRaws?.[0]?.raw,
+            }));
+            
+            // 热轨抽取（快速版，<3 秒）
+            await hotExtractFromNarrativeBody(
+                finalText,
+                recentTurns.map(t => t.text)
+            );
+        } catch (err) {
+            console.error("[Mixology] Narrative-turn extraction failed:", err);
+        }
+    }, 0);
+    
     return updated;
 }

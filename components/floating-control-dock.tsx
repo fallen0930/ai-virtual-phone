@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { SlidersHorizontal, MessageSquare, Network, Type, Layers, LayoutGrid, ChevronRight, MoveVertical, Compass, Cpu, ArrowLeftRight, StickyNote, MoreHorizontal, Settings2, Hash } from "lucide-react";
+import { SlidersHorizontal, MessageSquare, Network, Type, Layers, LayoutGrid, ChevronRight, MoveVertical, Compass, Cpu, ArrowLeftRight, StickyNote, MoreHorizontal, Settings2, Hash, Feather } from "lucide-react";
 import {
     CONTROL_DEFS,
     CONTROL_LABELS,
@@ -33,6 +33,7 @@ const ICONS: Record<ControlId, React.ReactNode> = {
     "mix-story-rail": <MoveVertical size={21} strokeWidth={1.9} />,
     "mix-story-compass": <Compass size={21} strokeWidth={1.9} />,
     "mix-model-badge": <Cpu size={21} strokeWidth={1.9} />,
+    "narrative-writer": <Feather size={21} strokeWidth={1.9} />,
 };
 
 type Props = {

@@ -138,6 +138,7 @@ import { DebugPromptPanel } from "@/components/debug-prompt-panel";
 import { QuickActionFloat } from "@/components/quick-action-float";
 import { FloatingControlDock } from "@/components/floating-control-dock";
 import { QuickNoteFloat } from "@/components/quick-note-float";
+import { NarrativeWriterPanel } from "@/components/narrative-writer/narrative-writer-panel";
 import {
     CONTROL_DOCK_ACTIVATE_EVENT,
     getControlDockState,
@@ -5154,6 +5155,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               <QuickActionFloat />
               <FloatingControlDock activeApp={activeApp} />
               <QuickNoteFloat />
+              <NarrativeWriterPanel />
               <MascotFloat />
               {/* 预览弹窗宿主：独立于桌宠的展开/收起状态，否则桌宠收成小球时弹不出来 */}
               <MascotPreviewHost />

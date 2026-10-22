@@ -115,14 +115,51 @@ function AssistantTurn({ turn, ticketFrames, encoreFrames, filterRules, state, d
     // 一轮多块时依次上下排开，各块各自的皮各渲染各的
     // 滤网「仅显示」模式在这里生效：存储不动，渲染前替换，历史消息也即时生效
     const shownText = applyMixFilterRules(turn.text, filterRules, "display");
+    
+    // 检测是否为执笔消息（rawText 以 [执笔报幕] 开头）
+    const isNarrativeTurn = turn.rawText?.startsWith("[执笔报幕]");
+    const bannerMatch = isNarrativeTurn ? turn.rawText?.match(/^\[执笔报幕\] (.+?)\n\n/) : null;
+    const banner = bannerMatch ? bannerMatch[1] : null;
+    
     return (
         <>
+            {isNarrativeTurn && (
+                <style>{`
+                    .mix-narrative-turn {
+                        position: relative;
+                        margin: 16px -12px;
+                        padding: 16px 12px;
+                        background: linear-gradient(135deg, rgba(167, 139, 250, 0.08) 0%, rgba(124, 58, 237, 0.05) 100%);
+                        border-left: 3px solid rgba(167, 139, 250, 0.5);
+                        border-radius: 0 8px 8px 0;
+                    }
+                    .mix-narrative-banner {
+                        margin-bottom: 12px;
+                        padding: 8px 12px;
+                        background: rgba(167, 139, 250, 0.15);
+                        border-radius: 6px;
+                        font-size: 13px;
+                        color: #c4b5fd;
+                        font-style: italic;
+                        line-height: 1.5;
+                    }
+                `}</style>
+            )}
             {ticketFrames.map((frame) => (
                 <div className="mix-ticket-wrap" key={frame.key}>
                     <MixTicketFrame html={frame.html} raw={frame.raw} state={state} />
                 </div>
             ))}
-            {shownText ? <MixProseView text={shownText} dialogue={dialogue} /> : null}
+            {shownText ? (
+                <div className={isNarrativeTurn ? "mix-prose mix-narrative-turn" : undefined}>
+                    {banner && (
+                        <div className="mix-narrative-banner">
+                            {banner}
+                        </div>
+                    )}
+                    <MixProseView text={shownText} dialogue={dialogue} />
+                </div>
+            ) : null}
             {encoreFrames.map((frame) => (
                 <div className="mix-encore-turn" key={frame.key}>
                     <MixTicketFrame html={frame.html} raw={frame.raw} state={state} />
@@ -258,6 +295,24 @@ function StateBar({ state }: { state: MixState }) {
 
 export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: GameProps) {
     const [session, setSession] = useState<MixSession | null>(() => getMixSession(sessionId));
+    
+    // 记录当前打开的session ID，供执笔等外部工具读取
+    useEffect(() => {
+        try { localStorage.setItem("mixology_active_session_id", sessionId); } catch { /* ignore */ }
+    }, [sessionId]);
+    
+    // 监听外部 session 更新事件（如执笔插件插入 turn）
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { sessionId?: string } | undefined;
+            if (!detail?.sessionId || detail.sessionId === sessionId) {
+                setSession(getMixSession(sessionId));
+            }
+        };
+        window.addEventListener("mix-session-updated", handler);
+        return () => window.removeEventListener("mix-session-updated", handler);
+    }, [sessionId]);
+    
     const [input, setInput] = useState("");
     /**
      * 这局实际烧的是哪本账 = **快捷切换里选中的那个「全局模型」所属的文件夹**。

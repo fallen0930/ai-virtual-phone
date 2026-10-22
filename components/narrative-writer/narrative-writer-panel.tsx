@@ -16,6 +16,7 @@ import { loadCharacterWorldFromSession, getActiveMixSession } from "@/lib/narrat
 import { writeNarrative, generateBannerOptions, writeWithSelectedBanner, compressNarrativeMemory, extractMemoriesFromCompression, NARRATIVE_CHUNK_SIZE } from "@/lib/narrative-writer/writer";
 import { insertNarrativeTurn } from "@/lib/mixology/engine";
 import { backfillExtraction, hotExtractFromNarrativeBody, deepExtractFromNarrativeBody } from "@/lib/narrative-writer/extractor";
+import { generateSmartRecommendations, type SceneRecommendation } from "@/lib/narrative-writer/recommender";
 import {
   getMemoryCards,
   getEmotionCards,
@@ -134,6 +135,86 @@ export function NarrativeWriterPanel() {
     const ETA_ROLLING_WINDOW = 3; // 取最近 3 步的均值
     const ETA_CAP_MS = 30 * 60 * 1000; // 预估上限 30 分钟，避免吓人
 
+    // 场景推荐相关状态
+    const [sceneRecommendations, setSceneRecommendations] = useState<SceneRecommendation[]>([]);
+    const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+    const [selectedScene, setSelectedScene] = useState<string | null>(null);
+    const [editingScene, setEditingScene] = useState<SceneRecommendation | null>(null);
+    
+    // 加载场景推荐
+    const loadRecommendations = useCallback(async () => {
+        setLoadingRecommendations(true);
+        try {
+            const activeSession = getActiveMixSession();
+            if (!activeSession) return;
+            
+            const memories = await getMemoryCards({ status: "生效" });
+            const pendingMemories = await getMemoryCards({ status: "待核" });
+            const emotions = await getEmotionCards({ status: "生效" });
+            const waterLevels = await getWaterLevels();
+            const writerState = await getWriterState();
+            const hierarchy = await getContextHierarchy();
+            const context = await loadCharacterWorldFromSession(activeSession.id);
+            
+            const currentWaterLevel = waterLevels['戏内层']?.水位 || 'L0';
+            
+            const recommendations = generateSmartRecommendations({
+                memories,
+                pendingMemories,
+                emotions,
+                waterLevel: currentWaterLevel,
+                writerState,
+                hierarchy,
+                characterName: context?.characterProfile?.charName || "角色",
+                worldText: context?.characterProfile?.worldText || "",
+            });
+            
+            setSceneRecommendations(recommendations);
+        } catch (err) {
+            console.error("[NarrativeWriter] Failed to load recommendations:", err);
+        } finally {
+            setLoadingRecommendations(false);
+        }
+    }, []);
+    
+    // 打开面板时加载推荐
+    useEffect(() => {
+        if (open) {
+            loadRecommendations();
+        }
+    }, [open, loadRecommendations]);
+    
+    // 选择场景
+    const handleSelectScene = useCallback((scene: SceneRecommendation) => {
+        setSelectedScene(scene.id);
+        // 将场景参数转换为倾向文本
+        const parts = [];
+        if (scene.params.tone) parts.push(`基调:${scene.params.tone}`);
+        if (scene.params.pace) parts.push(`节奏:${scene.params.pace}`);
+        if (scene.params.focus) parts.push(`焦点:${scene.params.focus}`);
+        if (scene.params.relationship) parts.push(`关系:${scene.params.relationship}`);
+        if (scene.params.trigger) parts.push(`触发:${scene.params.trigger}`);
+        if (scene.params.theme) parts.push(`主题:${scene.params.theme}`);
+        if (scene.params.taboo) parts.push(`禁忌:${scene.params.taboo}`);
+        if (scene.params.density) parts.push(`密度:${scene.params.density}`);
+        
+        const sceneText = parts.length > 0 ? parts.join(",") : scene.name;
+        setTendency(sceneText);
+    }, []);
+    
+    // 编辑场景
+    const handleEditScene = useCallback((scene: SceneRecommendation) => {
+        setEditingScene(scene);
+    }, []);
+    
+    // 保存编辑的场景
+    const handleSaveEditedScene = useCallback(() => {
+        if (!editingScene) return;
+        // 更新倾向文本
+        handleSelectScene(editingScene);
+        setEditingScene(null);
+    }, [editingScene, handleSelectScene]);
+    
     const ref = useRef<HTMLDivElement | null>(null);
     const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
@@ -909,38 +990,76 @@ export function NarrativeWriterPanel() {
                             </button>
                         </div>
                         
-                        {/* 八维度快捷选项 */}
+                        {/* 场景推荐卡片 */}
                         <div>
-                            <label style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "6px", display: "block" }}>
-                                快速选择倾向（点击追加到下方输入框）
+                            <label style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <span>📖 接下来可以这样发展（基于记忆库）</span>
+                                <button
+                                    onClick={loadRecommendations}
+                                    disabled={loadingRecommendations}
+                                    style={{
+                                        background: "none",
+                                        border: "none",
+                                        color: "#a78bfa",
+                                        fontSize: "10px",
+                                        cursor: loadingRecommendations ? "not-allowed" : "pointer",
+                                        padding: "2px 6px",
+                                    }}
+                                >
+                                    {loadingRecommendations ? "刷新中..." : "刷新"}
+                                </button>
                             </label>
+                            
+                            {sceneRecommendations.length === 0 && !loadingRecommendations && (
+                                <div style={{ fontSize: "11px", color: "#6b7280", padding: "8px", textAlign: "center" }}>
+                                    暂无推荐，试试手动输入或让 AI 决定
+                                </div>
+                            )}
+                            
                             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                                {Object.entries(TENDENCY_PRESETS).map(([dimension, options]) => (
-                                    <div key={dimension} style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
-                                        <span style={{ fontSize: "10px", color: "#6b7280", width: "48px", flexShrink: 0 }}>{dimension}</span>
-                                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", flex: 1 }}>
-                                            {options.map((opt) => (
-                                                <button
-                                                    key={opt}
-                                                    onClick={() => {
-                                                        const prefix = tendency ? tendency + "，" : "";
-                                                        setTendency(prefix + opt);
-                                                    }}
-                                                    style={{
-                                                        padding: "3px 8px",
-                                                        background: "rgba(167, 139, 250, 0.15)",
-                                                        border: "1px solid rgba(167, 139, 250, 0.3)",
-                                                        borderRadius: "4px",
-                                                        color: "#c4b5fd",
-                                                        fontSize: "11px",
-                                                        cursor: "pointer",
-                                                        whiteSpace: "nowrap",
-                                                    }}
-                                                >
-                                                    {opt}
-                                                </button>
-                                            ))}
+                                {sceneRecommendations.map((scene) => (
+                                    <div
+                                        key={scene.id}
+                                        style={{
+                                            padding: "8px 10px",
+                                            background: selectedScene === scene.id ? "rgba(167, 139, 250, 0.2)" : "rgba(255, 255, 255, 0.03)",
+                                            border: `1px solid ${selectedScene === scene.id ? "rgba(167, 139, 250, 0.5)" : "rgba(255, 255, 255, 0.08)"}`,
+                                            borderRadius: "6px",
+                                            cursor: "pointer",
+                                        }}
+                                        onClick={() => handleSelectScene(scene)}
+                                    >
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
+                                            <div style={{ display: "flex", gap: "6px", alignItems: "center", flex: 1 }}>
+                                                <span style={{ fontSize: "16px" }}>{scene.emoji}</span>
+                                                <span style={{ fontSize: "12px", color: "#e5e7eb", fontWeight: 600 }}>{scene.name}</span>
+                                            </div>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleEditScene(scene);
+                                                }}
+                                                style={{
+                                                    background: "none",
+                                                    border: "none",
+                                                    color: "#6b7280",
+                                                    fontSize: "10px",
+                                                    cursor: "pointer",
+                                                    padding: "2px 4px",
+                                                }}
+                                                title="编辑参数"
+                                            >
+                                                ✏️
+                                            </button>
                                         </div>
+                                        <div style={{ fontSize: "10px", color: "#9ca3af", marginBottom: "2px" }}>
+                                            {scene.reason}
+                                        </div>
+                                        {scene.detail && (
+                                            <div style={{ fontSize: "10px", color: "#6b7280", fontStyle: "italic" }}>
+                                                "{scene.detail.slice(0, 40)}{scene.detail.length > 40 ? '...' : ''}"
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>

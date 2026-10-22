@@ -1,0 +1,1589 @@
+/* ========================= */
+/* PALETTE — iOS Blue        */
+/* 自包含色板，不随全局主题漂移  */
+/* ========================= */
+
+.app-market-app,
+.custom-app-runner {
+  --am-bg: #fbfcfe;
+  --am-surface: #ffffff;
+  --am-text: #1c1d22;
+  --am-text-soft: rgba(28, 29, 34, 0.56);
+  --am-text-faint: rgba(28, 29, 34, 0.42);
+  --am-text-ghost: rgba(28, 29, 34, 0.34);
+  --am-accent: #2f95ff;
+  --am-accent-deep: #007aff;
+  --am-grad: linear-gradient(135deg, #38a0ff, #0a78ff);
+  --am-tint: rgba(0, 122, 255, 0.07);
+  --am-tint-strong: rgba(0, 122, 255, 0.12);
+  --am-hairline: rgba(60, 60, 67, 0.13);
+  --am-shadow-sm: 0 2px 10px rgba(20, 30, 60, 0.05);
+  --am-shadow-md: 0 6px 22px rgba(20, 30, 60, 0.08);
+  --am-shadow-glow: 0 8px 24px rgba(0, 122, 255, 0.24);
+  --am-neutral-fill: rgba(60, 60, 67, 0.09);
+  --am-neutral-fill-active: rgba(60, 60, 67, 0.15);
+}
+
+/* ========================= */
+/* BASE                     */
+/* ========================= */
+
+.app-market-app,
+.custom-app-runner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--am-bg);
+  color: var(--am-text);
+}
+
+.custom-app-runner-embedded {
+  background: transparent;
+}
+
+.custom-app-runner-embedded .custom-app-runner-frame {
+  background: transparent;
+}
+
+.app-market-app button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.app-market-app button:disabled {
+  cursor: default;
+}
+
+/* ========================= */
+/* HEADER                   */
+/* ========================= */
+
+/* 市场页用三段式布局：标题栏 / TAB 栏固定，只有 body 滚动（runner 不受影响） */
+.app-market-app {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-market-header {
+  flex-shrink: 0;
+  height: calc(var(--page-header-safe-top, 48px) + 60px);
+  padding: calc(var(--page-header-safe-top, 48px) + 10px) 16px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(251, 252, 254, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.app-market-icon-btn {
+  width: 40px;
+  height: 40px;
+  border: 0.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--am-text);
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 2px 7px rgba(20, 30, 60, 0.07), inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  transition: background 0.15s;
+}
+
+.app-market-icon-btn:active {
+  background: rgba(228, 231, 238, 0.7);
+}
+
+.app-market-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.app-market-title strong {
+  font-size: calc(15.5px * var(--app-text-scale, 1));
+  font-weight: 500;
+  color: var(--am-text);
+  letter-spacing: 0.01em;
+}
+
+.app-market-title span {
+  margin-top: 2px;
+  color: var(--am-text-faint);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  letter-spacing: 0.02em;
+}
+
+/* ========================= */
+/* BODY                     */
+/* ========================= */
+
+.app-market-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 16px calc(36px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ========================= */
+/* TABS                     */
+/* ========================= */
+
+.app-market-tabbar {
+  flex-shrink: 0;
+  background: var(--am-bg);
+  padding: 12px 16px 10px;
+}
+
+.app-market-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  border: 0.5px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 2px 9px rgba(20, 30, 60, 0.06), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+}
+
+.app-market-tab {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--am-text-soft);
+  background: transparent;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color 0.2s, background 0.2s;
+}
+
+.app-market-tab[data-active="true"] {
+  color: var(--am-text);
+  font-weight: 600;
+  background: rgba(60, 60, 67, 0.13);
+}
+
+/* ========================= */
+/* APP ICON                 */
+/* ========================= */
+
+.app-market-app-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--am-accent-deep);
+  background: linear-gradient(150deg, rgba(0, 122, 255, 0.16), rgba(0, 122, 255, 0.07));
+}
+
+.app-market-app-icon.large {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+}
+
+.app-market-app-icon.mini {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.app-market-app-icon.grid,
+.app-market-app-icon.list {
+  width: 76px;
+  height: 76px;
+  border-radius: 18px;
+}
+
+.app-market-app-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ========================= */
+/* CARD META (LIST CARDS)   */
+/* ========================= */
+
+.am-card-meta {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.am-card-meta strong {
+  color: var(--am-text);
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.am-card-meta span {
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-card-meta em {
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-style: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* ========================= */
+/* SEARCH ROW               */
+/* ========================= */
+
+.app-market-search {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 999px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--am-text-ghost);
+  background: var(--am-surface);
+  border: 0;
+  box-shadow: var(--am-shadow-sm);
+  transition: box-shadow 0.2s;
+}
+
+.app-market-search:focus-within {
+  box-shadow: var(--am-shadow-sm), 0 0 0 3px rgba(0, 122, 255, 0.12);
+}
+
+.app-market-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--am-text);
+  font-size: calc(14.5px * var(--app-text-scale, 1));
+}
+
+.app-market-search input::placeholder {
+  color: var(--am-text-ghost);
+}
+
+/* ========================= */
+/* STORE LIST (DISCOVER)    */
+/* App Store 风格竖向列表      */
+/* ========================= */
+
+.am-store-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.am-list-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding-top: 15px;
+}
+
+.am-list-row:first-child {
+  padding-top: 3px;
+}
+
+.am-list-icon-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  align-self: center;
+  margin-bottom: 15px;
+  border-radius: 16px;
+  transition: opacity 0.14s;
+}
+
+.am-list-icon-btn:active {
+  opacity: 0.78;
+}
+
+.am-list-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-bottom: 15px;
+  border-bottom: 0.5px solid var(--am-hairline);
+}
+
+.am-list-row:last-child .am-list-col {
+  border-bottom: 0;
+}
+
+.am-list-text {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.am-list-name-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 72px;
+}
+
+.am-list-name-row strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--am-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-list-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 500;
+  color: var(--am-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-list-text em {
+  margin-top: 3px;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-style: normal;
+  color: var(--am-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-list-action {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.am-list-action small {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--am-text-ghost);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ========================= */
+/* PILL BUTTONS             */
+/* ========================= */
+
+.am-pill {
+  min-width: 68px;
+  min-height: 30px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 700;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  letter-spacing: 0.02em;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.am-pill-get,
+.am-pill-open {
+  color: var(--am-accent-deep);
+  background: var(--am-neutral-fill);
+}
+
+.am-pill-get:active:not(:disabled),
+.am-pill-open:active:not(:disabled) {
+  background: var(--am-neutral-fill-active);
+}
+
+.am-pill:disabled {
+  opacity: 0.5;
+}
+
+/* ========================= */
+/* LIST MANAGE BTN          */
+/* ========================= */
+
+.am-list-manage {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--am-text-ghost);
+  flex: 0 0 auto;
+  transition: background 0.15s, color 0.15s;
+}
+
+.am-list-manage:active {
+  background: var(--am-tint);
+  color: var(--am-accent-deep);
+}
+
+/* ========================= */
+/* CREATE ACTIONS           */
+/* ========================= */
+
+.am-create-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.am-create-action {
+  width: 100%;
+  min-height: 118px;
+  border: 0;
+  border-radius: 17px;
+  background: var(--am-tint);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 16px 10px;
+  text-align: center;
+  transition: background 0.18s, transform 0.14s;
+}
+
+.am-create-action:active:not(:disabled) {
+  background: var(--am-tint-strong);
+  transform: scale(0.985);
+}
+
+.am-create-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.am-create-action-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--am-accent-deep);
+  background: var(--am-tint-strong);
+}
+
+.am-create-action strong {
+  color: var(--am-text);
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.am-create-action em {
+  color: var(--am-text-faint);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.am-guide-btn {
+  width: 100%;
+}
+
+/* ========================= */
+/* SECTION                  */
+/* ========================= */
+
+.app-market-section {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.app-market-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.app-market-section-head h2 {
+  margin: 0;
+  color: var(--am-text);
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.app-market-section-head span {
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+}
+
+/* ========================= */
+/* EMPTY STATE              */
+/* ========================= */
+
+.app-market-empty {
+  min-height: 200px;
+  padding: 44px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--am-text-faint);
+  text-align: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.app-market-empty svg {
+  width: 28px;
+  height: 28px;
+  padding: 17px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  color: var(--am-accent-deep);
+  background: var(--am-tint);
+}
+
+.app-market-empty.compact {
+  min-height: 150px;
+  padding: 32px 24px;
+}
+
+.app-market-empty p {
+  margin: 0;
+  max-width: 230px;
+  font-size: calc(13.5px * var(--app-text-scale, 1));
+  line-height: 1.6;
+}
+
+/* ========================= */
+/* ERROR                    */
+/* ========================= */
+
+.app-market-error {
+  padding: 12px 14px;
+  border-radius: 13px;
+  background: rgba(196, 92, 110, 0.08);
+  color: #b04a5e;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1.48;
+}
+
+/* ========================= */
+/* BUTTONS                  */
+/* ========================= */
+
+.app-market-primary,
+.app-market-secondary,
+.app-market-danger {
+  min-height: 44px;
+  border: 0;
+  border-radius: 13px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.app-market-primary {
+  color: #ffffff;
+  background: var(--am-grad);
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.26);
+}
+
+.app-market-secondary {
+  color: var(--am-accent-deep);
+  background: var(--am-tint-strong);
+}
+
+.app-market-danger {
+  color: #ffffff;
+  background: #d36a7e;
+}
+
+.app-market-primary:active { opacity: 0.88; }
+.app-market-secondary:active { background: rgba(0, 122, 255, 0.2); }
+.app-market-danger:active { opacity: 0.88; }
+
+.app-market-primary:disabled,
+.app-market-secondary:disabled,
+.app-market-danger:disabled,
+.app-market-icon-btn:disabled,
+.app-market-sheet-head button:disabled {
+  opacity: 0.5;
+}
+
+.app-market-hidden-input {
+  display: none;
+}
+
+.am-spin {
+  animation: am-spin 0.8s linear infinite;
+}
+
+@keyframes am-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ========================= */
+/* CREATE FORMS              */
+/* ========================= */
+
+.am-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.am-form-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.am-form-field > span {
+  color: var(--am-text-soft);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+
+.am-form-field input,
+.am-form-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  border-radius: 13px;
+  padding: 11px 12px;
+  background: var(--am-surface);
+  color: var(--am-text);
+  box-shadow: var(--am-shadow-sm);
+  font: inherit;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1.45;
+}
+
+.am-form-field textarea {
+  resize: vertical;
+  min-height: 68px;
+}
+
+.am-form-field input:focus,
+.am-form-field textarea:focus {
+  box-shadow: var(--am-shadow-sm), 0 0 0 3px rgba(0, 122, 255, 0.12);
+}
+
+.am-file-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.am-manual-file-stack {
+  display: grid;
+  gap: 0;
+}
+
+.am-file-section {
+  display: grid;
+  gap: 10px;
+}
+
+.am-file-section + .am-file-section {
+  margin-top: 14px;
+}
+
+.am-file-section-head {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.am-file-section-head strong,
+.am-file-section-head span {
+  min-width: 0;
+}
+
+.am-file-section-head strong {
+  color: var(--am-text);
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 700;
+}
+
+.am-file-section-head span {
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  text-align: right;
+}
+
+.am-file-section-head button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--am-accent-deep);
+  background: var(--am-tint-strong);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 700;
+}
+
+.am-file-pick {
+  position: relative;
+  min-width: 0;
+  min-height: 72px;
+  border: 0.5px solid var(--am-hairline);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  background: var(--am-surface);
+  box-shadow: var(--am-shadow-sm);
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.am-file-pick[data-active="true"] {
+  border-color: rgba(0, 122, 255, 0.28);
+  background: var(--am-tint-strong);
+}
+
+.am-file-pick-wide {
+  min-height: 68px;
+}
+
+.am-file-pick > svg {
+  pointer-events: none;
+  color: var(--am-accent-deep);
+}
+
+.am-file-pick input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.am-file-pick span,
+.am-file-pick em {
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.am-file-pick span {
+  color: var(--am-text);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+
+.am-file-pick em {
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-style: normal;
+}
+
+.am-inline-actions,
+.am-publish-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.am-publish-fields {
+  margin-bottom: 14px;
+}
+
+.am-manual-builder > .app-market-primary {
+  width: 100%;
+}
+
+.app-market-manual-sheet {
+  width: 100%;
+  max-width: 100%;
+  max-height: 90%;
+  border-radius: 24px 24px 0 0;
+  padding: 22px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+}
+
+.app-market-manual-sheet .app-market-sheet-head {
+  margin: -22px -20px 4px;
+  padding: 22px 20px 12px;
+}
+
+.app-market-manual-sheet .app-market-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-market-detail-sheet .app-market-sheet-head,
+.app-market-check-sheet .app-market-sheet-head,
+.app-market-guide-sheet .app-market-sheet-head {
+  margin-left: -20px;
+  margin-right: -20px;
+  margin-bottom: 8px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.app-market-guide-sheet .app-market-sheet-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.am-list-manage.danger {
+  color: #b04a5e;
+}
+
+.am-action-chip {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--am-accent-deep);
+  background: var(--am-neutral-fill);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.am-publish-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.am-publish-actions .am-action-chip {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.am-action-chip.danger {
+  color: #b04a5e;
+  background: rgba(196, 92, 110, 0.1);
+}
+
+/* ========================= */
+/* PUBLISH STATUS BADGE     */
+/* ========================= */
+
+.am-list-status {
+  padding: 5px 11px;
+  border-radius: 999px;
+  color: #a8842c;
+  background: rgba(210, 160, 60, 0.12);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.am-list-status[data-status="approved"] {
+  color: #3f8d63;
+  background: rgba(70, 170, 110, 0.12);
+}
+
+.am-list-status[data-status="rejected"] {
+  color: #b04a5e;
+  background: rgba(196, 92, 110, 0.12);
+}
+
+/* 本地测试：未上架（没有关联的市场版） */
+.am-list-status[data-status="offline"] {
+  color: #7a8494;
+  background: rgba(120, 132, 150, 0.12);
+}
+
+/* 本地测试：关联市场版后本机改过还没提交更新（与「已上架」徽标同款同色） */
+.am-dirty-hint {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  color: #3f8d63;
+  background: rgba(70, 170, 110, 0.12);
+  font-style: normal;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.am-list-status-corner {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  max-width: 68px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ========================= */
+/* OVERLAY & SHEET          */
+/* ========================= */
+
+.app-market-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(53, 44, 61, 0.24);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.app-market-sheet {
+  width: 100%;
+  max-height: min(82%, 560px);
+  overflow: hidden;
+  border-radius: 26px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  background: var(--am-surface);
+  color: var(--am-text);
+  box-shadow: 0 -2px 40px rgba(53, 44, 61, 0.16);
+}
+
+.app-market-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-market-center-overlay {
+  align-items: center;
+}
+
+.app-market-confirm-sheet {
+  width: min(100%, 330px);
+  max-height: min(82%, 420px);
+}
+
+/* ── 已安装详情：桌面图标样式编辑 ── */
+.am-installed-icon-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.am-icon-style-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: var(--am-chip-bg, rgba(37, 99, 235, 0.08));
+  color: var(--am-accent-deep, #2563eb);
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.am-icon-style-sheet {
+  max-height: min(82%, 480px);
+}
+
+.am-icon-style-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.am-icon-style-options button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 8px 12px;
+  border: 1.5px solid rgba(120, 130, 150, 0.2);
+  border-radius: 16px;
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+}
+
+.am-icon-style-options button[data-active="true"] {
+  border-color: var(--am-accent-deep, #2563eb);
+  background: var(--am-chip-bg, rgba(37, 99, 235, 0.06));
+}
+
+.am-icon-style-options button strong {
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  color: var(--am-ink, #1f2430);
+}
+
+.am-icon-style-options button span {
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  color: var(--am-ink-dim, #7a8394);
+  line-height: 1.5;
+}
+
+.app-market-error-dialog .app-market-sheet-actions {
+  grid-template-columns: 1fr;
+}
+
+.app-market-detail-sheet,
+.app-market-check-sheet {
+  width: 100%;
+  max-width: 100%;
+  max-height: 88%;
+  border-radius: 24px 24px 0 0;
+  padding: 22px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.app-market-sheet-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -22px -22px 8px;
+  padding: 22px 22px 12px;
+  background: var(--am-surface);
+}
+
+.app-market-sheet-head strong {
+  /* 标题吃掉剩余宽度：右侧多个按钮（导出/关闭）才会贴在一起，而不是被 space-between 摊开 */
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--am-text);
+  font-size: calc(17px * var(--app-text-scale, 1));
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.app-market-sheet-head button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--am-text-soft);
+  background: var(--am-tint);
+  flex: 0 0 auto;
+}
+
+.app-market-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.app-market-preview-row div {
+  min-width: 0;
+}
+
+.app-market-preview-row strong {
+  display: block;
+  color: var(--am-text);
+  font-size: calc(17px * var(--app-text-scale, 1));
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.app-market-preview-row p,
+.app-market-preview-row span {
+  margin: 4px 0 0;
+  color: var(--am-text-soft);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1.48;
+}
+
+/* ========================= */
+/* INFO / INSPECTION GRID   */
+/* ========================= */
+
+.app-market-info-grid,
+.app-market-inspection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.app-market-info-grid div,
+.app-market-inspection-grid div {
+  min-height: 62px;
+  padding: 12px 8px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--am-tint);
+}
+
+.app-market-info-grid strong,
+.app-market-inspection-grid strong {
+  color: var(--am-text);
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.app-market-info-grid span,
+.app-market-inspection-grid span {
+  margin-top: 3px;
+  color: var(--am-text-faint);
+  font-size: calc(11px * var(--app-text-scale, 1));
+}
+
+/* ========================= */
+/* DECLARATION STRIP        */
+/* ========================= */
+
+.app-market-declaration-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0 0 14px;
+}
+
+.app-market-declaration-strip span {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--am-text-ghost);
+  background: rgba(53, 44, 61, 0.05);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+
+.app-market-declaration-strip span[data-active="true"] {
+  color: var(--am-accent-deep);
+  background: var(--am-tint-strong);
+}
+
+/* ========================= */
+/* PERMISSIONS              */
+/* ========================= */
+
+.app-market-permissions {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--am-tint);
+  margin-bottom: 2px;
+}
+
+.app-market-permissions > span {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--am-text-soft);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+
+.app-market-permissions p,
+.app-market-permissions ul {
+  margin: 0;
+  padding: 0;
+  color: var(--am-text);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1.55;
+}
+
+.app-market-permissions ul {
+  padding-left: 18px;
+}
+
+/* ========================= */
+/* MISC TEXT                */
+/* ========================= */
+
+.app-market-upload-hint {
+  margin: 14px 0 0;
+  color: var(--am-text-faint);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
+.app-market-delete-copy {
+  margin: 0;
+  color: var(--am-text-soft);
+  font-size: calc(14px * var(--app-text-scale, 1));
+  line-height: 1.62;
+}
+
+/* ========================= */
+/* GUIDE SHEET              */
+/* ========================= */
+
+.app-market-drawer-overlay {
+  padding: 0;
+}
+
+.app-market-guide-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  max-height: 90%;
+  border-radius: 24px 24px 0 0;
+  padding: 8px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.app-market-guide-sheet::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 38px;
+  height: 4px;
+  margin: 2px auto 14px;
+  border-radius: 999px;
+  background: rgba(60, 60, 67, 0.18);
+}
+
+.app-market-guide-copy {
+  margin: 0 0 14px;
+  color: var(--am-text-soft);
+  font-size: calc(14px * var(--app-text-scale, 1));
+  line-height: 1.58;
+}
+
+.app-market-guide-text {
+  width: 100%;
+  min-height: 320px;
+  max-height: 52vh;
+  flex: 1;
+  resize: vertical;
+  border: 0.5px solid var(--am-hairline);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--am-bg);
+  color: var(--am-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.65;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-market-guide-text:focus {
+  border-color: rgba(0, 122, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+}
+
+/* ========================= */
+/* SHEET ACTIONS            */
+/* ========================= */
+
+.app-market-sheet-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.app-market-sheet-actions.three {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.app-market-sheet-actions.stacked {
+  grid-template-columns: 1fr;
+}
+
+/* 详情页操作行带举报按钮：关闭/打开等宽，举报按内容收窄靠右 */
+.app-market-sheet-actions.with-report {
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.app-market-report-btn {
+  padding: 0 14px;
+}
+
+.app-market-report-sheet {
+  width: 100%;
+}
+
+/* ========================= */
+/* RESPONSIVE               */
+/* ========================= */
+
+@media (max-width: 380px) {
+  .app-market-sheet-actions.three {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========================= */
+/* CUSTOM APP RUNNER        */
+/* ========================= */
+
+.custom-app-runner {
+  background: #ffffff;
+}
+
+.custom-app-runner-capsule {
+  position: absolute;
+  z-index: 5;
+  /* 4px 而非 8px：注入给沙盒 APP 的 safe-top = 本胶囊下沿 + 间隙，这里每多 1px，
+     吃 safe-top 的存量 APP 顶部就整体下移 1px。--page-header-safe-top 本身已经
+     把胶囊推到系统状态栏/灵动岛之下，不需要再留一整段。 */
+  top: calc(var(--page-header-safe-top, 48px) + 4px);
+  right: 12px;
+  height: 30px;
+  padding: 0 2px;
+  border: 0.5px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  color: rgba(20, 20, 25, 0.6);
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 1px 6px rgba(20, 30, 60, 0.1), inset 0 0.5px 0.5px rgba(255, 255, 255, 0.7);
+}
+
+.custom-app-runner-capsule .cap-btn {
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+}
+
+.custom-app-runner-capsule .cap-btn:active {
+  opacity: 0.45;
+}
+
+.custom-app-runner-capsule .cap-divider {
+  width: 0.5px;
+  height: 15px;
+  flex: 0 0 auto;
+  background: rgba(20, 20, 25, 0.18);
+}
+
+.custom-app-runner-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #ffffff;
+}
+
+/* ========================= */
+/* CUSTOM APP FAILURE PANEL  */
+/* ========================= */
+
+/* 应用首屏空白 / 宿主 runner 崩溃时盖在 iframe 之上，给出错误摘要与出口。 */
+.custom-app-failure {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  background: var(--c-bg, #f5f5f7);
+  overflow-y: auto;
+}
+
+.custom-app-failure-dismiss {
+  position: absolute;
+  top: calc(var(--page-header-safe-top, 48px) + 4px);
+  left: 12px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-icon, rgba(20, 20, 25, 0.55));
+  background: rgba(120, 120, 130, 0.12);
+}
+
+.custom-app-failure-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 22px 20px;
+  border-radius: 18px;
+  background: var(--c-card, #ffffff);
+  box-shadow: 0 6px 24px rgba(20, 30, 60, 0.08);
+  text-align: center;
+}
+
+.custom-app-failure-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.custom-app-failure-card strong {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--c-text-title, #16161a);
+}
+
+.custom-app-failure-app {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--c-icon, rgba(20, 20, 25, 0.5));
+}
+
+.custom-app-failure-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--c-text-body, rgba(20, 20, 25, 0.75));
+}
+
+.custom-app-failure-errors {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  list-style: none;
+  text-align: left;
+  background: rgba(120, 120, 130, 0.1);
+}
+
+.custom-app-failure-errors li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-text-body, rgba(20, 20, 25, 0.8));
+  word-break: break-word;
+}
+
+.custom-app-failure-errors li + li {
+  margin-top: 6px;
+}
+
+.custom-app-failure-actions {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-app-failure-actions button {
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+
+.custom-app-failure-actions button:active {
+  opacity: 0.6;
+}
+
+.custom-app-failure-primary {
+  color: #ffffff;
+  background: var(--c-accent, #2f6bff);
+}
+
+.custom-app-failure-secondary {
+  color: var(--c-text-body, rgba(20, 20, 25, 0.78));
+  background: rgba(120, 120, 130, 0.12);
+}

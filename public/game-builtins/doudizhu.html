@@ -1,0 +1,1136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>欢乐斗地主</title>
+<style>
+  :root{
+    --felt-1:#0c5b3f;
+    --felt-2:#063b2a;
+    --gold:#f1c45a;
+    --gold-soft:#e9b94a;
+    --ink:#1c2530;
+    --cream:#fdf7e8;
+    --red:#d33b3b;
+    --safe-top: var(--ai-phone-game-safe-top, 88px);
+    --safe-bottom: var(--ai-phone-game-safe-bottom, 24px);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ width:100%; height:100%; margin:0; }
+  body{
+    overflow:hidden;
+    font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,sans-serif;
+    color:#fff;
+    background:
+      radial-gradient(120% 80% at 50% 12%, rgba(255,255,255,.06) 0, transparent 55%),
+      radial-gradient(140% 120% at 50% 38%, var(--felt-1) 0%, var(--felt-2) 62%, #042319 100%);
+    user-select:none;
+  }
+  #app{ position:relative; width:100%; height:100%; }
+  .screen{
+    position:absolute; inset:0;
+    display:none;
+    min-height:100%;
+    padding: var(--safe-top) 14px var(--safe-bottom);
+  }
+  .screen.active{ display:block; }
+
+  /* felt texture */
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 6px);
+    mix-blend-mode:overlay;
+  }
+
+  /* ---------- SETUP ---------- */
+  #setup{ display:none; }
+  #setup.active{ display:flex; flex-direction:column; }
+  .title-wrap{ text-align:center; margin: 6px 0 14px; }
+  .title-wrap h1{
+    margin:0; font-size:30px; letter-spacing:6px; font-weight:800;
+    background:linear-gradient(180deg,#fff5d6,var(--gold) 60%,#b9842b);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 2px 0 rgba(0,0,0,.25);
+  }
+  .title-wrap p{ margin:8px 0 0; font-size:13px; color:#cfe6da; letter-spacing:1px; }
+  .panel{
+    background:rgba(0,0,0,.26);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:18px; padding:16px;
+    box-shadow:0 10px 30px rgba(0,0,0,.25) inset, 0 4px 18px rgba(0,0,0,.2);
+  }
+  .panel h2{ margin:0 0 4px; font-size:15px; color:var(--gold); letter-spacing:2px; }
+  .panel .hint{ font-size:12px; color:#a9c4ba; margin:0 0 12px; line-height:1.5; }
+  .char-list{ display:flex; flex-direction:column; gap:10px; max-height:42vh; overflow:auto; -webkit-overflow-scrolling:touch; }
+  .char-card{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 12px; border-radius:14px; cursor:pointer;
+    background:rgba(255,255,255,.05); border:1.5px solid rgba(255,255,255,.07);
+    transition:transform .12s, border-color .15s, background .15s;
+  }
+  .char-card:active{ transform:scale(.98); }
+  .char-card.sel{ border-color:var(--gold); background:rgba(241,196,90,.12); }
+  .char-card .avatar{
+    width:46px; height:46px; border-radius:50%; flex:0 0 auto; object-fit:cover;
+    background:linear-gradient(135deg,#3a5a4d,#1d3329); border:1.5px solid rgba(255,255,255,.18);
+    display:flex; align-items:center; justify-content:center; font-size:18px; color:#dfe9e3;
+    overflow:hidden;
+  }
+  .char-card .meta{ flex:1; min-width:0; }
+  .char-card .meta .nm{ font-size:15px; font-weight:700; }
+  .char-card .meta .sub{ font-size:12px; color:#9fbbb0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .char-card .tick{
+    width:22px; height:22px; border-radius:50%; flex:0 0 auto;
+    border:1.5px solid rgba(255,255,255,.3);
+    display:flex; align-items:center; justify-content:center; font-size:13px;
+  }
+  .char-card.sel .tick{ background:var(--gold); border-color:var(--gold); color:#3a2a05; font-weight:900; }
+  .empty-note{ font-size:12px; color:#9fbbb0; text-align:center; padding:14px; line-height:1.6; }
+
+  .btn{
+    border:none; border-radius:999px; font-weight:800; letter-spacing:1px;
+    padding:13px 22px; font-size:15px; cursor:pointer; transition:transform .1s, filter .15s, opacity .15s;
+    color:#3a2a05;
+    background:linear-gradient(180deg,#ffe9a8,var(--gold) 55%,#cf972f);
+    box-shadow:0 6px 16px rgba(0,0,0,.3), 0 1px 0 rgba(255,255,255,.4) inset;
+  }
+  .btn:active{ transform:translateY(1px) scale(.99); }
+  .btn:disabled{ opacity:.45; filter:grayscale(.4); cursor:default; }
+  .btn.ghost{ background:rgba(255,255,255,.08); color:#eaf4ee; box-shadow:none; border:1.5px solid rgba(255,255,255,.16); }
+  .btn.danger{ background:linear-gradient(180deg,#ff8a8a,#d33b3b 60%,#9c1f1f); color:#fff; }
+  .start-row{ margin-top:auto; padding-top:16px; display:flex; gap:10px; }
+  .start-row .btn{ flex:1; }
+
+  /* ---------- GAME ---------- */
+  #game{ display:none; }
+  #game.active{ display:flex; flex-direction:column; padding-bottom:0; }
+  .topbar{
+    position:absolute; top:calc(var(--safe-top) - 30px); right:14px; z-index:30;
+    display:flex; gap:8px; align-items:center;
+  }
+  .pill{
+    background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.12);
+    border-radius:999px; padding:5px 12px; font-size:12px; letter-spacing:.5px;
+    display:flex; align-items:center; gap:6px; backdrop-filter:blur(6px);
+  }
+  .pill b{ color:var(--gold); }
+
+  .table{ position:relative; flex:1; min-height:0; }
+
+  .seat{ position:absolute; display:flex; flex-direction:column; align-items:center; gap:5px; z-index:10; }
+  .seat.top-left{ top:6px; left:8px; }
+  .seat.top-right{ top:6px; right:8px; }
+  .seat .av-wrap{ position:relative; }
+  .seat .avatar{
+    width:54px; height:54px; border-radius:50%;
+    background:linear-gradient(135deg,#3a5a4d,#1d3329);
+    border:2px solid rgba(255,255,255,.22);
+    display:flex; align-items:center; justify-content:center; font-size:20px; color:#dfe9e3;
+    overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,.35);
+  }
+  .seat .avatar img{ width:100%; height:100%; object-fit:cover; }
+  .seat .avatar.turn{ border-color:var(--gold); box-shadow:0 0 0 3px rgba(241,196,90,.35),0 0 18px rgba(241,196,90,.5); }
+  .role-badge{
+    position:absolute; bottom:-4px; left:50%; transform:translateX(-50%);
+    font-size:10px; font-weight:800; padding:1px 7px; border-radius:999px; letter-spacing:1px;
+    white-space:nowrap; box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .role-badge.dz{ background:linear-gradient(180deg,#ffdf8a,#d99a22); color:#3a2a05; }
+  .role-badge.nm{ background:linear-gradient(180deg,#bfe0ff,#5b9bd6); color:#10243a; }
+  .seat .nm-line{ font-size:12px; max-width:88px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .seat .count{
+    font-size:11px; color:#cfe6da; background:rgba(0,0,0,.35);
+    border-radius:999px; padding:1px 8px; display:flex; align-items:center; gap:4px;
+  }
+  .seat .count .mini{ width:9px; height:13px; border-radius:2px; background:linear-gradient(135deg,#c9302c,#7a1410); border:1px solid rgba(255,255,255,.3); }
+
+  /* speech bubble */
+  .bubble{
+    position:absolute; z-index:25; max-width:160px; min-width:40px;
+    background:var(--cream); color:#26303a; font-size:12.5px; line-height:1.45;
+    padding:8px 11px; border-radius:14px;
+    box-shadow:0 8px 20px rgba(0,0,0,.4);
+    opacity:0; transform:translateY(6px) scale(.9); pointer-events:none;
+    transition:opacity .18s, transform .18s;
+  }
+  .bubble.show{ opacity:1; transform:translateY(0) scale(1); }
+  .bubble::after{ content:""; position:absolute; width:0; height:0; border:7px solid transparent; }
+  .bubble.left{ top:8px; left:64px; }
+  .bubble.left::after{ left:-12px; top:14px; border-right-color:var(--cream); }
+  .bubble.right{ top:8px; right:64px; text-align:right; }
+  .bubble.right::after{ right:-12px; top:14px; border-left-color:var(--cream); }
+  .bubble .think{ display:inline-flex; gap:3px; }
+  .bubble .think i{ width:5px; height:5px; border-radius:50%; background:#9aa6b0; animation:blink 1s infinite; }
+  .bubble .think i:nth-child(2){ animation-delay:.2s; } .bubble .think i:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink{ 0%,60%,100%{opacity:.25;} 30%{opacity:1;} }
+
+  /* play zones (center table) */
+  .play-zone{ position:absolute; display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:0; z-index:8; min-height:74px; }
+  #pz-0{ left:0; right:0; bottom:6px; }
+  #pz-1{ right:6px; top:96px; max-width:46%; justify-content:flex-end; }
+  #pz-2{ left:6px; top:96px; max-width:46%; justify-content:flex-start; }
+  .pz-pass{ font-size:22px; font-weight:900; color:var(--gold); letter-spacing:2px; text-shadow:0 2px 6px rgba(0,0,0,.5); transform:rotate(-8deg); }
+
+  /* center info */
+  .center-info{ position:absolute; left:50%; top:40%; transform:translate(-50%,-50%); text-align:center; z-index:6; opacity:.9; }
+  .center-info .vs{ font-size:13px; color:#bfe0d4; letter-spacing:3px; }
+
+  /* bottom landlord cards */
+  .dipai{ position:absolute; top:8px; left:50%; transform:translateX(-50%); display:flex; gap:4px; z-index:12; }
+  .dipai .dp-label{ position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:10px; color:var(--gold); letter-spacing:2px; white-space:nowrap; }
+
+  /* CARDS */
+  .card{
+    position:relative; width:46px; height:64px; border-radius:7px;
+    background:linear-gradient(180deg,#ffffff,#f3f4f1);
+    box-shadow:0 2px 5px rgba(0,0,0,.3); border:1px solid rgba(0,0,0,.12);
+    flex:0 0 auto; color:#1c2530; font-weight:800;
+  }
+  .card.sm{ width:34px; height:48px; border-radius:5px; }
+  .card .corner{ position:absolute; top:3px; left:4px; line-height:1; text-align:center; }
+  .card .corner .r{ font-size:14px; font-weight:900; }
+  .card.sm .corner .r{ font-size:11px; }
+  .card .corner .s{ font-size:11px; margin-top:-1px; }
+  .card.sm .corner .s{ font-size:8px; }
+  .card .mid{ position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); text-align:center; font-size:22px; }
+  .card.sm .mid{ font-size:15px; }
+  .card.red{ color:var(--red); }
+  .card.joker .mid{ font-size:13px; writing-mode:vertical-rl; left:50%; transform:translate(-50%,-50%); letter-spacing:1px; font-weight:900; }
+  .card.joker.big{ color:var(--red); } .card.joker.small{ color:#1c2530; }
+  .card .jk-corner{ position:absolute; top:3px; left:0; right:0; text-align:center; font-size:10px; font-weight:900; }
+
+  /* card back */
+  .cback{
+    width:30px; height:44px; border-radius:5px; flex:0 0 auto;
+    background:
+      repeating-linear-gradient(45deg, #b32626 0 4px, #8e1b1b 4px 8px);
+    border:1.5px solid rgba(255,255,255,.5); box-shadow:0 2px 5px rgba(0,0,0,.35);
+    position:relative;
+  }
+  .cback::after{ content:""; position:absolute; inset:4px; border:1px solid rgba(255,255,255,.4); border-radius:3px; }
+
+  /* hand */
+  .hand-area{ position:relative; padding:0 8px; }
+  .my-info{ display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:2px; }
+  .hand{ position:relative; display:flex; justify-content:center; align-items:flex-end; height:84px; }
+  .hand .card{ cursor:pointer; transition:transform .12s; margin-left:-22px; }
+  .hand .card:first-child{ margin-left:0; }
+  .hand .card.up{ transform:translateY(-16px); box-shadow:0 8px 16px rgba(0,0,0,.4); }
+  .hand .card.hintable{ outline:2px solid var(--gold); outline-offset:-1px; }
+
+  .actions{
+    display:flex; gap:10px; justify-content:center; align-items:center;
+    padding:10px 12px calc(var(--safe-bottom) + 6px);
+    min-height:60px;
+  }
+  .actions .btn{ padding:11px 20px; font-size:15px; min-width:78px; }
+
+  /* bidding overlay */
+  .overlay{
+    position:absolute; inset:0; z-index:50; display:none;
+    align-items:center; justify-content:center; flex-direction:column;
+    background:rgba(2,16,11,.55); backdrop-filter:blur(3px); padding:24px;
+  }
+  .overlay.show{ display:flex; }
+  .ov-card{
+    background:linear-gradient(180deg,rgba(20,50,38,.96),rgba(8,28,20,.97));
+    border:1px solid rgba(241,196,90,.3); border-radius:22px; padding:24px 20px;
+    text-align:center; width:100%; max-width:320px; box-shadow:0 20px 50px rgba(0,0,0,.5);
+  }
+  .ov-card h2{ margin:0 0 6px; font-size:20px; color:var(--gold); letter-spacing:2px; }
+  .ov-card p{ margin:0 0 18px; font-size:13px; color:#bfe0d4; line-height:1.6; }
+  .bid-row{ display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+  .bid-row .btn{ flex:1; min-width:64px; padding:12px 0; }
+
+  /* result */
+  .result-emoji{ font-size:54px; margin-bottom:6px; }
+  .ov-card .score-line{ font-size:14px; color:#ffe9a8; margin:10px 0; }
+  .ov-card .summary-box{
+    text-align:left; font-size:12.5px; line-height:1.6; color:#d7ece2;
+    background:rgba(0,0,0,.25); border-radius:12px; padding:12px; margin:12px 0 18px;
+    max-height:120px; overflow:auto;
+  }
+
+  .toast{
+    position:absolute; left:50%; bottom:120px; transform:translateX(-50%) translateY(10px);
+    background:rgba(0,0,0,.82); color:#fff; font-size:13px; padding:9px 16px; border-radius:999px;
+    z-index:60; opacity:0; transition:opacity .2s, transform .2s; pointer-events:none; white-space:nowrap;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  .loading{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:90; color:#cfe6da; font-size:14px; }
+  @keyframes dealIn{ from{ transform:translateY(40px) scale(.6); opacity:0; } to{ transform:none; opacity:1; } }
+  .deal-anim{ animation:dealIn .35s ease both; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- SETUP -->
+  <section id="setup" class="screen active">
+    <div class="title-wrap">
+      <h1>斗 地 主</h1>
+      <p>选 1~2 位 TA 来陪你打牌 · 出牌与吐槽由角色自己决定</p>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+      <h2>选择牌友</h2>
+      <p class="hint">最多选 2 位。只选 1 位时，剩下一个座位由系统牌友补上。被选中的角色会在游戏里真的开口吐槽，结束后还会记住这局。</p>
+      <div id="charList" class="char-list"></div>
+    </div>
+    <div class="start-row">
+      <button id="resumeBtn" class="btn ghost" style="display:none;">继续上一局</button>
+      <button id="startBtn" class="btn">开始游戏</button>
+    </div>
+  </section>
+
+  <!-- GAME -->
+  <section id="game" class="screen">
+    <div class="topbar">
+      <div class="pill">底分 <b id="baseScore">1</b></div>
+      <div class="pill">倍数 <b id="multi">1</b></div>
+    </div>
+
+    <div class="table" id="table">
+      <div class="dipai" id="dipai"><div class="dp-label">底牌</div></div>
+
+      <div class="seat top-left" id="seat-2">
+        <div class="av-wrap"><div class="avatar" id="av-2"></div><div class="role-badge" id="rb-2" style="display:none;"></div></div>
+        <div class="nm-line" id="nm-2">—</div>
+        <div class="count"><span class="mini"></span><span id="cnt-2">17</span></div>
+      </div>
+
+      <div class="seat top-right" id="seat-1">
+        <div class="av-wrap"><div class="avatar" id="av-1"></div><div class="role-badge" id="rb-1" style="display:none;"></div></div>
+        <div class="nm-line" id="nm-1">—</div>
+        <div class="count"><span class="mini"></span><span id="cnt-1">17</span></div>
+      </div>
+
+      <div class="center-info" id="centerInfo"><div class="vs">发牌中…</div></div>
+
+      <div class="play-zone" id="pz-2"></div>
+      <div class="play-zone" id="pz-1"></div>
+      <div class="play-zone" id="pz-0"></div>
+
+      <div class="bubble left"  id="bub-2"></div>
+      <div class="bubble right" id="bub-1"></div>
+      <div class="bubble right" id="bub-0" style="bottom:96px; top:auto; right:14px;"></div>
+    </div>
+
+    <div class="hand-area">
+      <div class="my-info">
+        <div class="role-badge" id="rb-0" style="position:static; transform:none; display:none;"></div>
+        <span id="nm-0" style="font-size:13px;">你</span>
+      </div>
+      <div class="hand" id="hand"></div>
+    </div>
+
+    <div class="actions" id="actions"></div>
+
+    <!-- bidding / result overlay -->
+    <div class="overlay" id="overlay"><div class="ov-card" id="ovCard"></div></div>
+    <div class="toast" id="toast"></div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================
+   宿主 API 安全封装（缺失时降级，避免崩溃）
+   ========================================================= */
+const Host = (() => {
+  const A = (typeof window !== "undefined" && window.AiPhoneGame) ? window.AiPhoneGame : null;
+  const has = (k) => A && typeof A[k] === "function";
+  return {
+    available: !!A,
+    async listCharacters(){ try { return has("listAvailableCharacters") ? (await A.listAvailableCharacters())||[] : []; } catch(e){ return []; } },
+    async player(){ try { return has("getPlayerProfile") ? (await A.getPlayerProfile())||{} : {}; } catch(e){ return {}; } },
+    async light(id){ try { return has("getRoleLightPackage") ? await A.getRoleLightPackage(id) : null; } catch(e){ return null; } },
+    async callLLM(args){ try { return has("callLLM") ? await A.callLLM(args) : null; } catch(e){ return null; } },
+    async callGlobal(args){ try { return has("callGlobalLLM") ? await A.callGlobalLLM(args) : null; } catch(e){ return null; } },
+    async record(args){ try { if(has("recordGameEvent")) await A.recordGameEvent(args); } catch(e){} },
+    async save(s){ try { if(has("saveGame")) await A.saveGame(s); } catch(e){} },
+    async load(){ try { return has("loadGame") ? await A.loadGame() : null; } catch(e){ return null; } },
+    async titleBar(s){ try { if(has("setTitleBar")) await A.setTitleBar(s); } catch(e){} },
+    async close(){ try { if(has("closeGame")) await A.closeGame(); } catch(e){} }
+  };
+})();
+
+/* =========================================================
+   牌引擎
+   rank: 3..10=本值, J=11,Q=12,K=13,A=14,2=15, 小王=16, 大王=17
+   ========================================================= */
+const SUITS = ["♠","♥","♦","♣"];
+const RANK_LABEL = {11:"J",12:"Q",13:"K",14:"A",15:"2"};
+function rankLabel(r){ if(r===16) return "小王"; if(r===17) return "大王"; return RANK_LABEL[r] || String(r); }
+function isRed(c){ if(c.rank===17) return true; if(c.rank===16) return false; return c.suit==="♥"||c.suit==="♦"; }
+let _cid = 0;
+function buildDeck(){
+  const d=[];
+  for(let r=3;r<=15;r++) for(const s of SUITS) d.push({id:++_cid, rank:r, suit:s});
+  d.push({id:++_cid, rank:16, suit:null}); // 小王
+  d.push({id:++_cid, rank:17, suit:null}); // 大王
+  return d;
+}
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function sortHand(h){ return h.slice().sort((a,b)=> a.rank-b.rank || (SUITS.indexOf(a.suit)-SUITS.indexOf(b.suit))); }
+
+/* ---------- 牌型 ---------- */
+function groupByRank(cards){ const g={}; cards.forEach(c=>{ (g[c.rank]=g[c.rank]||[]).push(c); }); return g; }
+function isRun(arr){ for(let i=1;i<arr.length;i++) if(arr[i]!==arr[i-1]+1) return false; return true; }
+
+// 识别玩家手动选择的牌型 → move 或 null
+function parseSelection(cards){
+  const n=cards.length; if(n===0) return null;
+  const g=groupByRank(cards);
+  const counts={}; for(const k in g) counts[k]=g[k].length;
+  const uniq=Object.keys(counts).map(Number).sort((a,b)=>a-b);
+
+  if(n===2 && counts[16]===1 && counts[17]===1) return mk("rocket",1000,1,cards);
+  if(n===4 && uniq.length===1) return mk("bomb",uniq[0],1,cards);
+  if(n===1) return mk("single",uniq[0],1,cards);
+  if(n===2 && uniq.length===1) return mk("pair",uniq[0],1,cards);
+  if(n===3 && uniq.length===1) return mk("triple",uniq[0],1,cards);
+  if(n===4){ const t=uniq.find(r=>counts[r]===3); if(t!==undefined) return mk("triple_one",t,1,cards); }
+  if(n===5){ const t=uniq.find(r=>counts[r]===3), p=uniq.find(r=>counts[r]===2); if(t!==undefined&&p!==undefined) return mk("triple_two",t,1,cards); }
+  // 顺子
+  if(n>=5 && uniq.length===n && isRun(uniq) && uniq[uniq.length-1]<=14) return mk("straight",uniq[0],n,cards);
+  // 连对
+  if(n>=6 && n%2===0 && uniq.length>=3 && uniq.every(r=>counts[r]===2) && isRun(uniq) && uniq[uniq.length-1]<=14)
+    return mk("double_straight",uniq[0],uniq.length,cards);
+  // 飞机
+  const trips=uniq.filter(r=>counts[r]===3 && r<=14);
+  const quads=uniq.filter(r=>counts[r]===4);
+  if(trips.length>=2 && isRun(trips) && quads.length===0){
+    const k=trips.length;
+    const rest=uniq.filter(r=>!trips.includes(r));
+    const restCards=rest.reduce((s,r)=>s+counts[r],0);
+    if(restCards===0) return mk("airplane",trips[0],k,cards);
+    if(restCards===k && rest.every(r=>counts[r]===1)) return mk("airplane_single",trips[0],k,cards);
+    if(restCards===2*k && rest.every(r=>counts[r]===2)) return mk("airplane_pair",trips[0],k,cards);
+  }
+  return null;
+}
+function mk(type,value,len,cards){ return {type,value,len,cards}; }
+
+// move 能否压过 last
+function canBeat(move,last){
+  if(!last) return true;
+  if(move.type==="rocket") return true;
+  if(move.type==="bomb"){
+    if(last.type==="rocket") return false;
+    if(last.type==="bomb") return move.value>last.value;
+    return true;
+  }
+  if(last.type==="rocket"||last.type==="bomb") return false;
+  return move.type===last.type && move.len===last.len && move.value>last.value;
+}
+
+// 生成手牌全部可出牌型（用于 AI 候选、提示、校验池）
+function generateAllMoves(hand){
+  const moves=[];
+  const g=groupByRank(hand);
+  const ranks=Object.keys(g).map(Number).sort((a,b)=>a-b);
+  const cnt=(r)=> g[r]? g[r].length:0;
+  const take=(r,k)=> g[r].slice(0,k);
+
+  for(const r of ranks){
+    moves.push(mk("single",r,1,take(r,1)));
+    if(cnt(r)>=2) moves.push(mk("pair",r,1,take(r,2)));
+    if(cnt(r)>=3) moves.push(mk("triple",r,1,take(r,3)));
+    if(cnt(r)===4) moves.push(mk("bomb",r,1,take(r,4)));
+  }
+  if(g[16]&&g[17]) moves.push(mk("rocket",1000,1,[g[16][0],g[17][0]]));
+
+  // 三带（用 id 最低、最不破坏结构的余牌作搭子）
+  const allIds = new Set(hand.map(c=>c.id));
+  function pickKickers(usedIds, kSingles, kPairs){
+    // 返回 {ok, cards}; 优先用单张余牌，再拆对
+    const pool = hand.filter(c=>!usedIds.has(c.id));
+    const pg = groupByRank(pool);
+    const out=[];
+    // 先满足对子搭子（飞机带对）
+    if(kPairs>0){
+      const pairRanks=Object.keys(pg).map(Number).filter(r=>pg[r].length>=2).sort((a,b)=>a-b);
+      if(pairRanks.length<kPairs) return {ok:false};
+      for(let i=0;i<kPairs;i++){ out.push(pg[pairRanks[i]][0], pg[pairRanks[i]][1]); }
+    }
+    if(kSingles>0){
+      const usedNow=new Set(out.map(c=>c.id));
+      const singles=pool.filter(c=>!usedNow.has(c.id)).sort((a,b)=>a.rank-b.rank);
+      // 尽量挑“孤张”，简单起见直接挑最小的 kSingles 张
+      if(singles.length<kSingles) return {ok:false};
+      for(let i=0;i<kSingles;i++) out.push(singles[i]);
+    }
+    return {ok:true, cards:out};
+  }
+  for(const r of ranks){
+    if(cnt(r)>=3){
+      const base=take(r,3); const used=new Set(base.map(c=>c.id));
+      const k1=pickKickers(used,1,0); if(k1.ok) moves.push(mk("triple_one",r,1,base.concat(k1.cards)));
+      const k2=pickKickers(used,0,1); if(k2.ok) moves.push(mk("triple_two",r,1,base.concat(k2.cards)));
+    }
+  }
+
+  // 顺子
+  const present=(r)=> cnt(r)>=1;
+  for(let s=3;s<=10;s++){
+    if(!present(s)) continue;
+    let cards=[g[s][0]];
+    for(let e=s+1;e<=14;e++){
+      if(!present(e)) break;
+      cards=cards.concat([g[e][0]]);
+      if(cards.length>=5) moves.push(mk("straight",s,cards.length,cards.slice()));
+    }
+  }
+  // 连对
+  for(let s=3;s<=13;s++){
+    if(cnt(s)<2) continue;
+    let cards=g[s].slice(0,2);
+    for(let e=s+1;e<=14;e++){
+      if(cnt(e)<2) break;
+      cards=cards.concat(g[e].slice(0,2));
+      const len=(e-s+1);
+      if(len>=3) moves.push(mk("double_straight",s,len,cards.slice()));
+    }
+  }
+  // 飞机（纯 + 带单 + 带对）
+  for(let s=3;s<=13;s++){
+    if(cnt(s)<3) continue;
+    let tripRanks=[s];
+    let core=g[s].slice(0,3);
+    for(let e=s+1;e<=14;e++){
+      if(cnt(e)<3) break;
+      tripRanks.push(e); core=core.concat(g[e].slice(0,3));
+      const k=tripRanks.length;
+      if(k>=2){
+        const used=new Set(core.map(c=>c.id));
+        moves.push(mk("airplane",s,k,core.slice()));
+        const ks=pickKickers(used,k,0); if(ks.ok) moves.push(mk("airplane_single",s,k,core.concat(ks.cards)));
+        const kp=pickKickers(used,0,k); if(kp.ok) moves.push(mk("airplane_pair",s,k,core.concat(kp.cards)));
+      }
+    }
+  }
+  return moves;
+}
+
+// 评估手牌强度（叫地主用）0~100
+function handStrength(hand){
+  const g=groupByRank(hand); let s=0;
+  if(g[17]) s+=9; if(g[16]) s+=7;
+  for(const r in g){ const c=g[r].length; if(c===4) s+=10; }
+  s += (g[15]?g[15].length*3:0);
+  s += (g[14]?g[14].length*1.5:0);
+  // 顺子潜力粗估
+  const allMoves=generateAllMoves(hand);
+  s += allMoves.filter(m=>m.type==="straight"&&m.len>=5).length*2;
+  return Math.min(100, Math.round(s*4));
+}
+
+/* =========================================================
+   游戏状态
+   players[0]=玩家(下) players[1]=右上 players[2]=左上
+   ========================================================= */
+const G = {
+  players:[],          // {idx,name,avatar,isHuman,charId,pkg,npcPersona,hand,role}
+  turn:0,
+  landlord:0,
+  lastMove:null,
+  lastPlayer:0,
+  baseScore:1,
+  multiplier:1,
+  bottomCards:[],
+  phase:"setup",
+  over:false,
+  selectedChars:[]      // [{id,name,avatar}]
+};
+let allChars=[];
+let humanSelection=[];
+
+/* =========================================================
+   DOM 帮助
+   ========================================================= */
+const $ = (id)=>document.getElementById(id);
+function show(scr){ document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active")); $(scr).classList.add("active"); }
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1500); }
+function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+function cardEl(c, sm){
+  const d=document.createElement("div");
+  d.className="card"+(sm?" sm":"")+(isRed(c)?" red":"");
+  if(c.rank>=16){
+    d.classList.add("joker", c.rank===17?"big":"small");
+    d.innerHTML=`<div class="jk-corner">JOKER</div><div class="mid">${c.rank===17?"大王":"小王"}</div>`;
+  } else {
+    d.innerHTML=`<div class="corner"><div class="r">${rankLabel(c.rank)}</div><div class="s">${c.suit}</div></div>
+                 <div class="mid">${c.suit}</div>`;
+  }
+  return d;
+}
+function backFan(n){
+  const wrap=document.createElement("div"); wrap.style.display="flex"; wrap.style.justifyContent="center";
+  const show=Math.min(n,3);
+  for(let i=0;i<show;i++){ const b=document.createElement("div"); b.className="cback"; if(i>0) b.style.marginLeft="-22px"; wrap.appendChild(b); }
+  return wrap;
+}
+
+/* =========================================================
+   渲染
+   ========================================================= */
+function renderSeats(){
+  for(let i=0;i<3;i++){
+    const p=G.players[i];
+    if(i===0){ $("nm-0").textContent=p.name; }
+    else {
+      $("nm-"+i).textContent=p.name;
+      const av=$("av-"+i);
+      av.innerHTML = p.avatar ? `<img src="${p.avatar}" onerror="this.remove()">` : (p.name?p.name[0]:"?");
+      $("cnt-"+i).textContent=p.hand.length;
+    }
+    const rb=$("rb-"+i);
+    if(p.role){ rb.style.display="inline-block"; rb.className="role-badge "+(p.role==="地主"?"dz":"nm")+(i===0?"":""); if(i===0){rb.style.position="static";rb.style.transform="none";} rb.textContent=p.role; }
+  }
+}
+function renderTurn(){
+  for(let i=1;i<3;i++) $("av-"+i).classList.toggle("turn", G.turn===i && !G.over);
+}
+function renderCounts(){ for(let i=1;i<3;i++) $("cnt-"+i).textContent=G.players[i].hand.length; }
+
+function renderHand(){
+  const hand=$("hand"); hand.innerHTML="";
+  const cards=sortHand(G.players[0].hand);
+  G.players[0].hand=cards;
+  cards.forEach(c=>{
+    const el=cardEl(c,false);
+    el.dataset.id=c.id;
+    if(selected.has(c.id)) el.classList.add("up");
+    el.addEventListener("click",()=>toggleCard(c.id,el));
+    hand.appendChild(el);
+  });
+  // 重叠间距按屏宽自适应，保证所有牌都在一屏内、不被裁切
+  const n=cards.length;
+  const cardW=46;
+  const containerW=(hand.clientWidth || (document.body.clientWidth-28)) - 4;
+  let step=30; // 每张牌露出的宽度
+  if(n>1){ step=Math.min(30, (containerW-cardW)/(n-1)); }
+  const ml=Math.round(step-cardW);
+  hand.querySelectorAll(".card").forEach((el,i)=>{ el.style.marginLeft = i===0?"0":ml+"px"; });
+}
+
+function renderPlay(idx, move){
+  const pz=$("pz-"+idx); pz.innerHTML="";
+  if(!move){ return; }
+  if(move.type==="pass"){ pz.innerHTML=`<div class="pz-pass">不出</div>`; return; }
+  const cards = sortHand(move.cards);
+  cards.forEach((c,i)=>{ const el=cardEl(c,true); el.classList.add("deal-anim"); el.style.animationDelay=(i*0.03)+"s"; if(i>0) el.style.marginLeft="-16px"; pz.appendChild(el); });
+}
+function clearPlays(){ ["pz-0","pz-1","pz-2"].forEach(id=>$(id).innerHTML=""); }
+
+function renderHud(){ $("baseScore").textContent=G.baseScore; $("multi").textContent=G.multiplier; }
+
+/* 气泡 */
+const bubbleTimers={};
+function bubble(idx, html, sticky){
+  const b=$("bub-"+idx); b.innerHTML=html; b.classList.add("show");
+  clearTimeout(bubbleTimers[idx]);
+  if(!sticky) bubbleTimers[idx]=setTimeout(()=>b.classList.remove("show"), 3200);
+}
+function hideBubble(idx){ clearTimeout(bubbleTimers[idx]); $("bub-"+idx).classList.remove("show"); }
+function thinking(idx){ bubble(idx,`<span class="think"><i></i><i></i><i></i></span>`, true); }
+
+/* =========================================================
+   选牌（玩家）
+   ========================================================= */
+let selected=new Set();
+function toggleCard(id, el){
+  if(G.turn!==0 || G.over || G.phase!=="playing") return;
+  if(selected.has(id)){ selected.delete(id); el.classList.remove("up"); }
+  else { selected.add(id); el.classList.add("up"); }
+  clearHints();
+}
+function selectedCards(){ return G.players[0].hand.filter(c=>selected.has(c.id)); }
+function clearSelection(){ selected.clear(); $("hand").querySelectorAll(".card.up").forEach(e=>e.classList.remove("up")); }
+
+/* 提示 */
+let hintList=[], hintIdx=0;
+function clearHints(){ $("hand").querySelectorAll(".hintable").forEach(e=>e.classList.remove("hintable")); }
+function doHint(){
+  clearHints();
+  const hand=G.players[0].hand;
+  const leading = G.lastPlayer===0 || !G.lastMove;
+  let opts = generateAllMoves(hand);
+  if(!leading) opts = opts.filter(m=>canBeat(m,G.lastMove));
+  if(opts.length===0){ toast(leading?"没有可出的牌":"要不起，点【不出】"); return; }
+  // 排序：小到大，炸弹火箭往后
+  opts.sort((a,b)=> rankCat(a)-rankCat(b) || a.len-b.len || a.value-b.value );
+  hintList=opts; hintIdx=hintIdx%opts.length;
+  const m=hintList[hintIdx]; hintIdx=(hintIdx+1)%hintList.length;
+  selected=new Set(m.cards.map(c=>c.id));
+  renderHand();
+  $("hand").querySelectorAll(".card").forEach(e=>{ if(selected.has(+e.dataset.id)) e.classList.add("hintable"); });
+}
+function rankCat(m){ if(m.type==="rocket")return 9; if(m.type==="bomb")return 8; return 0; }
+
+/* =========================================================
+   动作按钮
+   ========================================================= */
+function renderActions(){
+  const a=$("actions"); a.innerHTML="";
+  if(G.over || G.phase!=="playing"){ return; }
+  if(G.turn!==0){ a.innerHTML=`<div style="color:#bfe0d4;font-size:13px;">等待 ${G.players[G.turn].name} 出牌…</div>`; return; }
+  const leading = G.lastPlayer===0 || !G.lastMove;
+  const passBtn=mkBtn("不出","ghost",onPass); passBtn.disabled=leading;
+  const hintBtn=mkBtn("提示","ghost",doHint);
+  const playBtn=mkBtn("出牌","",onPlay);
+  a.appendChild(passBtn); a.appendChild(hintBtn); a.appendChild(playBtn);
+}
+function mkBtn(text,cls,fn){ const b=document.createElement("button"); b.className="btn"+(cls?" "+cls:""); b.textContent=text; b.addEventListener("click",fn); return b; }
+
+function onPass(){
+  if(G.lastPlayer===0 || !G.lastMove){ toast("你是先手，必须出牌"); return; }
+  clearSelection(); clearHints();
+  applyMove(0,{type:"pass"});
+}
+function onPlay(){
+  const sel=selectedCards();
+  if(sel.length===0){ toast("先选牌"); return; }
+  const move=parseSelection(sel);
+  if(!move){ toast("不是有效牌型"); shakeHand(); return; }
+  const leading = G.lastPlayer===0 || !G.lastMove;
+  if(!leading && !canBeat(move,G.lastMove)){ toast("压不过上家"); shakeHand(); return; }
+  clearHints();
+  applyMove(0,move);
+}
+function shakeHand(){ const h=$("hand"); h.animate([{transform:"translateX(0)"},{transform:"translateX(-6px)"},{transform:"translateX(6px)"},{transform:"translateX(0)"}],{duration:240}); }
+
+/* =========================================================
+   核心：执行一手
+   ========================================================= */
+async function applyMove(idx, move){
+  const p=G.players[idx];
+  if(move.type==="pass"){
+    renderPlay(idx,{type:"pass"});
+    bubble(idx, p.isHuman ? "不出~" : (p._lastSay||"过"));
+  } else {
+    // 从手牌移除
+    const ids=new Set(move.cards.map(c=>c.id));
+    p.hand=p.hand.filter(c=>!ids.has(c.id));
+    // 清掉其它桌面（新一轮压牌可视化）
+    if(G.lastPlayer===idx || !G.lastMove){ clearPlays(); }
+    renderPlay(idx,move);
+    G.lastMove=move; G.lastPlayer=idx;
+    if(move.type==="bomb"||move.type==="rocket"){ G.multiplier*=2; renderHud(); toast(move.type==="rocket"?"火箭！双倍！":"炸弹！双倍！"); }
+    if(p._lastSay) bubble(idx,p._lastSay); else if(p.isHuman) hideBubble(0);
+  }
+  if(idx===0) clearSelection();
+  renderHand(); renderCounts();
+
+  // 胜负
+  if(p.hand.length===0){ return endGame(idx); }
+
+  await Host.save(serialize());
+  await wait(600);
+  G.turn=(G.turn+1)%3;
+  renderTurn(); renderActions();
+  await stepLoop();
+}
+
+async function stepLoop(){
+  while(!G.over){
+    const p=G.players[G.turn];
+    // 轮回到上次出牌者 → 新一轮，自己先手
+    if(G.lastPlayer===G.turn) { G.lastMove=null; }
+    if(p.isHuman){ renderActions(); $("centerInfo").innerHTML=`<div class="vs">轮到你出牌</div>`; return; }
+    $("centerInfo").innerHTML=`<div class="vs">${p.name} 思考中…</div>`;
+    await aiTurn(p);
+    if(G.over) return;
+    await wait(550);
+    G.turn=(G.turn+1)%3; renderTurn();
+  }
+}
+
+/* =========================================================
+   AI 出牌：让角色自己挑 + 吐槽
+   ========================================================= */
+function moveDesc(m){
+  if(m.type==="pass") return "不出";
+  const names={single:"单",pair:"对",triple:"三张",triple_one:"三带一",triple_two:"三带二",straight:"顺子",double_straight:"连对",airplane:"飞机",airplane_single:"飞机带单",airplane_pair:"飞机带对",bomb:"炸弹",rocket:"王炸"};
+  const cs=sortHand(m.cards).map(c=>rankLabel(c.rank)).join(" ");
+  return `${names[m.type]||m.type}[${cs}]`;
+}
+function curateOptions(opts, leading){
+  // 去重 + 控制数量（省 token），保留多样性
+  const seen=new Set(); const out=[];
+  opts.sort((a,b)=> rankCat(a)-rankCat(b) || typeOrder(a)-typeOrder(b) || a.len-b.len || a.value-b.value);
+  for(const m of opts){
+    const key=m.type+"|"+m.len+"|"+m.value;
+    if(seen.has(key)) continue; seen.add(key); out.push(m);
+  }
+  // 每个 type 最多保留几项，避免顺子刷屏
+  const byType={}; const limited=[];
+  for(const m of out){ byType[m.type]=(byType[m.type]||0)+1; if(byType[m.type]<=4) limited.push(m); }
+  return limited.slice(0,14);
+}
+function typeOrder(m){ const o={single:0,pair:1,triple:2,triple_one:3,triple_two:4,straight:5,double_straight:6,airplane:7,airplane_single:8,airplane_pair:9,bomb:10,rocket:11}; return o[m.type]??5; }
+
+function fallbackMove(opts, leading, handLen){
+  if(opts.length===0) return leading?null:{type:"pass"};
+  const nonBig=opts.filter(m=>m.type!=="bomb"&&m.type!=="rocket");
+  nonBig.sort((a,b)=> a.value-b.value || a.len-b.len);
+  if(leading){ return (nonBig[0]||opts[0]); }
+  // 跟牌：手里牌多时用最小的能压的；牌很少或对方要赢时考虑炸
+  if(nonBig.length) return nonBig[0];
+  return Math.random()<0.5 ? opts[0] : {type:"pass"};
+}
+
+async function aiTurn(p){
+  const leading = G.lastPlayer===p.idx || !G.lastMove;
+  let opts = generateAllMoves(p.hand);
+  if(!leading) opts = opts.filter(m=>canBeat(m,G.lastMove));
+  const options = curateOptions(opts, leading);
+
+  thinking(p.idx);
+
+  const human=G.players[0];
+  const others=G.players.filter(x=>x.idx!==p.idx).map(x=>`${x.name}(${x.role}，剩${x.hand.length}张)`).join("、");
+  const optLines = options.map((m,i)=>`${i+1}. ${moveDesc(m)}`).join("\n");
+  const passLine = leading ? "" : "0. 不出/过\n";
+  const lastStr = (leading||!G.lastMove) ? "你是先手，可任意出牌。" : `上一手是 ${G.players[G.lastPlayer].name} 打出的 ${moveDesc(G.lastMove)}，你要压过它或不出。`;
+  const myHand = sortHand(p.hand).map(c=>rankLabel(c.rank)).join(" ");
+
+  const rule =
+`【斗地主对局】你是「${p.name}」，身份：${p.role}。和你同桌的还有：${others}。
+现在轮到你出牌。请保持你的人物性格，先用一句很短的口语吐槽/评论当前牌局（8~26字，符合你平时说话的语气，可以损人、可以得意、可以装弱），再选一个出牌编号。
+策略提示：地主要尽快走完手牌；两个农民要配合夹击地主，别压自己队友。手牌少的人优先出小牌跑牌；该留炸弹/王炸时别乱炸。
+你的手牌（${p.hand.length}张）：${myHand}
+${lastStr}
+可选出牌：
+${passLine}${optLines}
+只输出 JSON，不要任何多余文字、不要解释、不要代码块：
+{"choice": <编号数字>, "say": "<一句吐槽>"}`;
+
+  let raw=null;
+  if(p.charId && p.pkg){
+    const res=await Host.callLLM({ characterId:p.charId, messages:[...(p.pkg.messages||[]), {role:"system",content:rule}, {role:"user",content:"请按规则出牌并吐槽。"}] });
+    raw=res&&res.content;
+  } else {
+    const persona = p.npcPersona || "一个爱开玩笑的牌友";
+    const res=await Host.callGlobal({ messages:[
+      {role:"system",content:`你是这个斗地主小游戏里的一位系统牌友，名字叫「${p.name}」，性格：${persona}。你不是真实角色，只是临时陪玩的 NPC。${rule}`},
+      {role:"user",content:"请按规则出牌并吐槽。"}
+    ]});
+    raw=res&&res.content;
+  }
+
+  hideBubble(p.idx);
+
+  let choice=null, say="";
+  if(raw){
+    try{
+      const j=JSON.parse(String(raw).replace(/```json|```/g,"").trim().replace(/^[^{]*/,"").replace(/[^}]*$/,""));
+      choice=j.choice; say=(j.say||"").toString().slice(0,40);
+    }catch(e){ /* 解析失败走兜底 */ }
+  }
+
+  let move;
+  if(choice===0 && !leading){ move={type:"pass"}; }
+  else if(typeof choice==="number" && options[choice-1]){ move=options[choice-1]; }
+  else { move=fallbackMove(options, leading, p.hand.length); }
+  if(!move){ move=leading? (options[0]||null) : {type:"pass"}; }
+  if(!move){ move={type:"pass"}; }
+
+  p._lastSay = say || (move.type==="pass" ? randPass() : "");
+  await applyMoveAI(p.idx, move, say);
+}
+function randPass(){ const a=["这把我先看看","压不过啊…","过过过","你们打吧","留着炸你们"]; return a[Math.floor(Math.random()*a.length)]; }
+
+// AI 版 applyMove（不递归 stepLoop，由外层循环推进）
+async function applyMoveAI(idx, move, say){
+  const p=G.players[idx];
+  if(move.type==="pass"){
+    renderPlay(idx,{type:"pass"});
+    if(say) bubble(idx,say); else bubble(idx,randPass());
+  } else {
+    const ids=new Set(move.cards.map(c=>c.id));
+    p.hand=p.hand.filter(c=>!ids.has(c.id));
+    if(G.lastPlayer===idx || !G.lastMove){ clearPlays(); }
+    renderPlay(idx,move);
+    G.lastMove=move; G.lastPlayer=idx;
+    if(move.type==="bomb"||move.type==="rocket"){ G.multiplier*=2; renderHud(); }
+    if(say) bubble(idx,say);
+  }
+  renderCounts();
+  await Host.save(serialize());
+  if(p.hand.length===0){ await endGame(idx); }
+}
+
+/* =========================================================
+   叫地主
+   ========================================================= */
+async function biddingPhase(){
+  G.phase="bidding";
+  // 计算强度
+  G.players.forEach(p=>{ p._str=handStrength(p.hand); });
+  // 随机首叫
+  const first=Math.floor(Math.random()*3);
+  let bestBid=0, bestPlayer=-1;
+  const order=[0,1,2].map(i=>(first+i)%3);
+
+  for(const i of order){
+    const p=G.players[i];
+    if(p.isHuman){
+      const bid=await humanBid(bestBid);
+      if(bid>bestBid){ bestBid=bid; bestPlayer=i; }
+    } else {
+      // 启发式：强度→分数
+      const str=p._str; let bid=0;
+      if(str>=78) bid=3; else if(str>=58) bid=2; else if(str>=38) bid=1; else bid=0;
+      if(bid<=bestBid) bid = (str>=70 && bestBid<3) ? bestBid+1 : 0; // 抢一下
+      if(bid>3) bid=3;
+      $("centerInfo").innerHTML=`<div class="vs">${p.name}：${bid>0?("叫 "+bid+" 分"):"不叫"}</div>`;
+      if(bid>0) bubble(i, bid>=3?"我当地主！":"我叫"+bid+"分");
+      else bubble(i,"不叫，你们来");
+      await wait(900);
+      if(bid>bestBid){ bestBid=bid; bestPlayer=i; }
+    }
+  }
+  if(bestPlayer<0){ // 都不叫 → 强度最高者当地主
+    bestPlayer=[0,1,2].sort((a,b)=>G.players[b]._str-G.players[a]._str)[0];
+    bestBid=1;
+  }
+  G.landlord=bestPlayer; G.baseScore=Math.max(1,bestBid);
+  // 发底牌
+  G.players[G.landlord].hand=G.players[G.landlord].hand.concat(G.bottomCards);
+  G.players.forEach((p,i)=> p.role = (i===G.landlord?"地主":"农民"));
+  G.turn=G.landlord; G.lastPlayer=G.landlord; G.lastMove=null;
+  G.phase="playing";
+
+  // 揭示底牌
+  const dp=$("dipai"); dp.querySelectorAll(".card").forEach(e=>e.remove());
+  G.bottomCards.forEach((c,i)=>{ const el=cardEl(c,true); el.classList.add("deal-anim"); el.style.animationDelay=(i*0.1)+"s"; dp.appendChild(el); });
+
+  renderSeats(); renderHand(); renderHud(); renderTurn();
+  const ll=G.players[G.landlord];
+  $("centerInfo").innerHTML=`<div class="vs">${ll.name} 是地主！</div>`;
+  await Host.save(serialize());
+  await wait(1100);
+  await stepLoop();
+}
+
+function humanBid(currentBest){
+  return new Promise(resolve=>{
+    const ov=$("overlay"), card=$("ovCard");
+    card.innerHTML=`<h2>叫地主</h2><p>看看你的手牌，要不要争地主？${currentBest>0?("当前最高 "+currentBest+" 分"):""}</p>
+      <div class="bid-row" id="bidRow"></div>`;
+    const row=card.querySelector("#bidRow");
+    const opts=[{t:"不叫",v:0,c:"ghost"},{t:"1分",v:1},{t:"2分",v:2},{t:"3分",v:3}];
+    opts.forEach(o=>{
+      const b=mkBtn(o.t,o.c||"",()=>{ ov.classList.remove("show"); resolve(o.v); });
+      if(o.v>0 && o.v<=currentBest) b.disabled=true;
+      row.appendChild(b);
+    });
+    ov.classList.add("show");
+  });
+}
+
+/* =========================================================
+   结算
+   ========================================================= */
+async function endGame(winnerIdx){
+  if(G.over) return; G.over=true; G.phase="over";
+  renderTurn(); $("actions").innerHTML="";
+  const winner=G.players[winnerIdx];
+  const landlordWon = winnerIdx===G.landlord;
+  const human=G.players[0];
+  const humanIsLandlord = G.landlord===0;
+  const humanWon = landlordWon ? humanIsLandlord : !humanIsLandlord;
+  const finalScore=G.baseScore*G.multiplier;
+
+  // 结束吐槽（赢家或地主说一句）
+  const speaker = G.players.find(p=>p.idx===winnerIdx) ;
+  let closing="";
+  try{
+    if(speaker && speaker.charId && speaker.pkg){
+      const r=await Host.callLLM({characterId:speaker.charId, messages:[...(speaker.pkg.messages||[]),
+        {role:"system",content:`斗地主刚刚结束，${landlordWon?"地主赢了":"农民赢了"}，你是赢家「${speaker.name}」。用你的人物语气说一句很短的胜利/收尾的话（10~30字），对${human.name}说。只输出这句话。`},
+        {role:"user",content:"说一句收尾的话。"}]});
+      closing=(r&&r.content)?String(r.content).slice(0,50):"";
+    }
+  }catch(e){}
+
+  // 写入记忆（只写真实角色，使用真实名字）——一局只写一次
+  const realChars=G.players.filter(p=>p.charId);
+  if(realChars.length){
+    const charIds=realChars.map(p=>p.charId);
+    const names=realChars.map(p=>`${p.name}(${p.role})`).join("、");
+    const resultText = humanWon
+      ? `${human.name}赢了，${realChars.filter(p=>p.role!==(humanIsLandlord?"地主":"农民")||p.role!==human.role).map(p=>p.name).join("、")}这边没跑掉。`
+      : `${human.name}输了。`;
+    const sideText = landlordWon ? "地主胜" : "农民胜";
+    const summary = `${human.name}和${names}玩了一局斗地主，${human.name}当${humanIsLandlord?"地主":"农民"}，最后${sideText}（底分${G.baseScore}×倍数${G.multiplier}=${finalScore}分）。${realChars.map(p=>`${p.name}打牌时${p.role==="地主"?"独挑大梁":"配合默契"}`).join("，")}。${humanWon?`${human.name}赢得很开心`:`${human.name}有点不服气，说下次再战`}。`;
+    await Host.record({ characterIds:charIds, summary });
+  }
+
+  // 结算面板
+  const ov=$("overlay"), card=$("ovCard");
+  const emoji = humanWon ? "🎉" : "😵";
+  const title = humanWon ? "你赢了！" : "你输了…";
+  card.innerHTML=`
+    <div class="result-emoji">${emoji}</div>
+    <h2>${title}</h2>
+    <p>${landlordWon?"地主":"农民"}方获胜 · 底分 ${G.baseScore} × 倍数 ${G.multiplier}</p>
+    <div class="score-line">本局结算：${humanWon?"+":"-"}${finalScore} 分</div>
+    ${closing?`<div class="summary-box">「${speaker.name}」：${closing}</div>`:""}
+    <div class="start-row" style="margin-top:6px;">
+      <button class="btn ghost" id="quitBtn">退出</button>
+      <button class="btn" id="againBtn">再来一局</button>
+    </div>`;
+  card.querySelector("#againBtn").addEventListener("click", ()=>{ ov.classList.remove("show"); restart(); });
+  card.querySelector("#quitBtn").addEventListener("click", ()=> Host.close());
+  ov.classList.add("show");
+  await Host.save(null); // 清存档
+}
+
+/* =========================================================
+   开局 / 发牌
+   ========================================================= */
+const NPC_POOL=[
+  {name:"老张",persona:"东北大哥，话痨，爱吹牛但牌品还行"},
+  {name:"小雨",persona:"软萌但贼精，喜欢卖惨然后偷偷憋大牌"},
+  {name:"K哥",persona:"沉默冷酷型，开口就是阴阳怪气"},
+  {name:"豆豆",persona:"急性子，输不起，爱嚷嚷"},
+];
+
+async function setupNewGame(){
+  $("centerInfo").innerHTML=`<div class="vs">发牌中…</div>`;
+  clearPlays(); $("dipai").querySelectorAll(".card").forEach(e=>e.remove());
+  selected.clear(); hintList=[]; hintIdx=0;
+  G.over=false; G.multiplier=1; G.baseScore=1; G.lastMove=null;
+
+  const player=await Host.player();
+  const myName=(player && player.name) ? player.name : "你";
+
+  // 组装三个座位
+  const seats=[{idx:0,name:myName,isHuman:true}];
+  const chosen=G.selectedChars.slice(0,2);
+  // 座位 1、2
+  let seatNames=[1,2];
+  for(let s=0;s<2;s++){
+    const ch=chosen[s];
+    if(ch){
+      seats.push({idx:seatNames[s], name:ch.name, avatar:ch.avatar, isHuman:false, charId:ch.id, pkg:null});
+    } else {
+      const used=new Set(seats.map(x=>x.name));
+      const npc=NPC_POOL.filter(n=>!used.has(n.name))[Math.floor(Math.random()*Math.max(1,NPC_POOL.length-seats.length+1))]||NPC_POOL[0];
+      seats.push({idx:seatNames[s], name:npc.name, isHuman:false, charId:null, npcPersona:npc.persona});
+    }
+  }
+  // 让座位按 idx 排
+  seats.sort((a,b)=>a.idx-b.idx);
+  G.players=seats.map(s=>({...s, hand:[], role:null, _lastSay:""}));
+
+  // 预取角色轻量包
+  $("centerInfo").innerHTML=`<div class="vs">准备角色中…</div>`;
+  for(const p of G.players){ if(p.charId){ p.pkg=await Host.light(p.charId); } }
+
+  // 发牌
+  const deck=shuffle(buildDeck());
+  G.players[0].hand=deck.slice(0,17);
+  G.players[1].hand=deck.slice(17,34);
+  G.players[2].hand=deck.slice(34,51);
+  G.bottomCards=deck.slice(51,54);
+
+  // 底牌占位（背面）
+  const dp=$("dipai"); dp.querySelectorAll(".card").forEach(e=>e.remove());
+  for(let i=0;i<3;i++){ const b=document.createElement("div"); b.className="cback"; b.style.width="34px"; b.style.height="48px"; if(i>0) b.style.marginLeft="-10px"; dp.appendChild(b); }
+
+  renderSeats(); renderHand(); renderHud();
+  show("game");
+  await Host.titleBar({ material:"glass", buttonBackground:"rgba(8,40,28,.6)", buttonColor:"#f1c45a", buttonBorderColor:"rgba(241,196,90,.35)", buttonRadius:"999px", buttonShadow:"0 8px 20px rgba(0,0,0,.3)", iconOpacity:1 });
+  await wait(400);
+  await biddingPhase();
+}
+function restart(){ setupNewGame(); }
+
+/* =========================================================
+   存档（best-effort）
+   ========================================================= */
+function serialize(){
+  if(G.phase!=="playing") return null;
+  return {
+    v:1, phase:G.phase, turn:G.turn, landlord:G.landlord,
+    baseScore:G.baseScore, multiplier:G.multiplier,
+    lastPlayer:G.lastPlayer, lastMove:G.lastMove,
+    bottomCards:G.bottomCards,
+    players:G.players.map(p=>({idx:p.idx,name:p.name,avatar:p.avatar||null,isHuman:p.isHuman,charId:p.charId||null,npcPersona:p.npcPersona||null,hand:p.hand,role:p.role}))
+  };
+}
+async function tryResume(save){
+  try{
+    G.phase="playing"; G.turn=save.turn; G.landlord=save.landlord;
+    G.baseScore=save.baseScore; G.multiplier=save.multiplier;
+    G.lastPlayer=save.lastPlayer; G.lastMove=save.lastMove; G.bottomCards=save.bottomCards||[];
+    G.over=false;
+    G.players=save.players.map(p=>({...p, pkg:null, _lastSay:""}));
+    for(const p of G.players){ if(p.charId){ p.pkg=await Host.light(p.charId); } }
+    show("game");
+    await Host.titleBar({ material:"glass", buttonBackground:"rgba(8,40,28,.6)", buttonColor:"#f1c45a", buttonBorderColor:"rgba(241,196,90,.35)", buttonRadius:"999px", iconOpacity:1 });
+    // 底牌显示
+    const dp=$("dipai"); dp.querySelectorAll(".card").forEach(e=>e.remove());
+    G.bottomCards.forEach(c=>{ dp.appendChild(cardEl(c,true)); });
+    renderSeats(); renderHand(); renderHud(); renderTurn(); clearPlays();
+    await wait(300);
+    await stepLoop();
+  }catch(e){ setupNewGame(); }
+}
+
+/* =========================================================
+   角色选择界面
+   ========================================================= */
+function renderCharList(){
+  const box=$("charList"); box.innerHTML="";
+  if(!allChars.length){
+    box.innerHTML=`<div class="empty-note">没有读到可选角色。<br>没关系，直接开始也行，系统会安排两位牌友陪你打。</div>`;
+    return;
+  }
+  allChars.forEach(ch=>{
+    const sel=humanSelection.some(x=>x.id===ch.id);
+    const d=document.createElement("div");
+    d.className="char-card"+(sel?" sel":"");
+    d.innerHTML=`<div class="avatar">${ch.avatar?`<img src="${ch.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.remove()">`:(ch.name?ch.name[0]:"?")}</div>
+      <div class="meta"><div class="nm">${ch.name||"未命名"}</div><div class="sub">${ch.subtitle||""}</div></div>
+      <div class="tick">${sel?"✓":""}</div>`;
+    d.addEventListener("click",()=>toggleChar(ch));
+    box.appendChild(d);
+  });
+}
+function toggleChar(ch){
+  const i=humanSelection.findIndex(x=>x.id===ch.id);
+  if(i>=0) humanSelection.splice(i,1);
+  else { if(humanSelection.length>=2){ toast("最多选 2 位哦"); return; } humanSelection.push(ch); }
+  renderCharList();
+}
+
+/* =========================================================
+   启动
+   ========================================================= */
+async function init(){
+  allChars = await Host.listCharacters();
+  renderCharList();
+  // 检查存档
+  const save=await Host.load();
+  if(save && save.phase==="playing"){ $("resumeBtn").style.display="block"; $("resumeBtn").addEventListener("click",()=>tryResume(save)); }
+
+  $("startBtn").addEventListener("click", async ()=>{
+    G.selectedChars=humanSelection.slice(0,2);
+    $("startBtn").disabled=true; $("startBtn").textContent="发牌中…";
+    await setupNewGame();
+    $("startBtn").disabled=false; $("startBtn").textContent="开始游戏";
+  });
+}
+init();
+</script>
+</body>
+</html>

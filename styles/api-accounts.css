@@ -1,0 +1,560 @@
+/*
+ * API 账户（一本账）相关样式：账户面板、余额徽章、记一笔。
+ * 面板用 --apiacct-* 局部变量，浅色容器走默认值，深色容器（特调界面）覆盖一次即可。
+ */
+
+.apiacct {
+  --apiacct-fg: #2C3440;
+  --apiacct-fg-dim: #797E85;
+  --apiacct-surface: #F2F3F5;
+  --apiacct-surface-2: #FFFFFF;
+  --apiacct-line: #E6E8EB;
+  --apiacct-accent: #246bfd;
+  --apiacct-spend: #E5484D;
+  --apiacct-gain: #2FA84F;
+  --apiacct-warn: #FF9500;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--apiacct-fg);
+}
+
+/* 特调（深色）容器内换一套取值 */
+.mixology-app .apiacct {
+  --apiacct-fg: var(--mix-text, #f2f0f7);
+  --apiacct-fg-dim: var(--mix-dim, rgba(242, 240, 247, 0.55));
+  --apiacct-surface: var(--mix-panel-2, #1c1c26);
+  --apiacct-surface-2: var(--mix-panel, #15151d);
+  --apiacct-line: var(--mix-line, rgba(255, 255, 255, 0.07));
+  --apiacct-accent: var(--mix-violet, #8d7bf5);
+  --apiacct-spend: #ff8b7a;
+  --apiacct-gain: #6fd39a;
+  --apiacct-warn: var(--mix-gold, #d9b06a);
+}
+
+.apiacct-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.apiacct-head-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.apiacct-head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--apiacct-surface);
+  color: var(--apiacct-accent);
+  flex: none;
+}
+
+.apiacct-head strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.apiacct-head small {
+  display: block;
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+}
+
+.apiacct-icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--apiacct-fg-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  flex: none;
+}
+
+.apiacct-icon-btn:hover {
+  background: var(--apiacct-surface);
+}
+
+.apiacct-balance {
+  background: var(--apiacct-surface);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+
+.apiacct-balance[data-low] {
+  box-shadow: inset 0 0 0 1px var(--apiacct-warn);
+}
+
+.apiacct-balance-value {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.apiacct-balance-sub {
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+  margin-top: 2px;
+}
+
+.apiacct-balance-warn {
+  font-size: 11px;
+  color: var(--apiacct-warn);
+  margin-top: 4px;
+}
+
+.apiacct-stats {
+  display: flex;
+  gap: 8px;
+}
+
+.apiacct-stats > div {
+  flex: 1;
+  background: var(--apiacct-surface);
+  border-radius: 12px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.apiacct-stats span {
+  display: block;
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+}
+
+.apiacct-stats b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apiacct-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.apiacct-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 25%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--apiacct-line);
+  background: var(--apiacct-surface-2);
+  color: var(--apiacct-fg);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.apiacct-btn:hover {
+  border-color: var(--apiacct-accent);
+}
+
+.apiacct-btn:active {
+  transform: scale(0.97);
+}
+
+.apiacct-btn-primary {
+  background: var(--apiacct-accent);
+  border-color: var(--apiacct-accent);
+  color: #fff;
+}
+
+.apiacct-ledger-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--apiacct-fg-dim);
+  margin-top: 2px;
+}
+
+.apiacct-ledger {
+  display: flex;
+  flex-direction: column;
+}
+
+.apiacct-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px dashed var(--apiacct-line);
+  font-size: 12px;
+}
+
+.apiacct-row:first-child {
+  border-top: 0;
+}
+
+.apiacct-row-time {
+  flex: none;
+  width: 62px;
+  color: var(--apiacct-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.apiacct-row-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  color: var(--apiacct-fg-dim);
+}
+
+.apiacct-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apiacct-row-amount {
+  flex: none;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.apiacct-row-amount[data-kind="spend"] {
+  color: var(--apiacct-spend);
+}
+
+.apiacct-row-amount[data-kind="topup"],
+.apiacct-row-amount[data-kind="set"] {
+  color: var(--apiacct-gain);
+}
+
+.apiacct-row-after {
+  flex: none;
+  width: 62px;
+  text-align: right;
+  color: var(--apiacct-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.apiacct-empty {
+  font-size: 12px;
+  color: var(--apiacct-fg-dim);
+  padding: 10px 0;
+  line-height: 1.5;
+}
+
+.apiacct-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.apiacct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.apiacct-field > span {
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+}
+
+.apiacct-field input,
+.apiacct-field select {
+  width: 100%;
+  border: 1px solid var(--apiacct-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--apiacct-surface-2);
+  color: var(--apiacct-fg);
+  outline: none;
+}
+
+.apiacct-field input:focus,
+.apiacct-field select:focus {
+  border-color: var(--apiacct-accent);
+}
+
+.apiacct-field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.apiacct-hint {
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+  line-height: 1.5;
+}
+
+.apiacct-hint-warn {
+  color: var(--apiacct-warn);
+}
+
+.apiacct-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.apiacct-check input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.apiacct-check span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.apiacct-check small {
+  font-size: 11px;
+  color: var(--apiacct-fg-dim);
+  line-height: 1.45;
+}
+
+.apiacct-summary {
+  font-size: 12px;
+  background: var(--apiacct-surface);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.apiacct-summary b {
+  font-size: 14px;
+}
+
+.apiacct-summary span {
+  color: var(--apiacct-fg-dim);
+  margin-left: 4px;
+}
+
+.apiacct-form-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.apiacct-notice {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: center;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--apiacct-accent) 14%, transparent);
+  color: var(--apiacct-accent);
+  animation: apiacct-notice-in 160ms ease-out both;
+}
+
+@keyframes apiacct-notice-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 设置页：文件夹标题上的余额 */
+.api-group-balance {
+  margin-left: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text, #797E85);
+  white-space: nowrap;
+}
+
+.api-group-balance[data-low="true"] {
+  color: var(--c-warning, #FF9500);
+}
+
+/* 设置页 / 特调用的弹层外壳 */
+.apiacct-sheet-body {
+  padding: 4px 16px 18px;
+}
+
+/* 余额徽章（快捷菜单 heading、特调 header 共用） */
+.api-bal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(36, 107, 253, 0.12);
+  color: #246bfd;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.api-bal-chip[data-low="true"] {
+  background: rgba(255, 149, 0, 0.16);
+  color: #c2740a;
+}
+
+.api-bal-chip[data-empty="true"] {
+  background: rgba(127, 127, 127, 0.14);
+  color: inherit;
+  opacity: 0.75;
+}
+
+/* 快捷菜单：文件夹行上的余额 */
+.quick-action-folder-bal {
+  margin-left: auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.quick-action-account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 6px;
+  border-radius: 12px;
+  background: rgba(127, 127, 127, 0.1);
+  font-size: 11px;
+}
+
+.quick-action-account-bar b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-action-account-bar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.quick-action-account-bar-main small {
+  opacity: 0.66;
+}
+
+.quick-action-account-warn {
+  margin-left: 6px;
+  color: #c2740a;
+  font-style: normal;
+}
+
+.quick-action-account-empty {
+  opacity: 0.6;
+}
+
+/* 快捷菜单：API 选项上的单价 */
+.quick-action-option-price {
+  margin-left: auto;
+  font-size: 10px;
+  font-style: normal;
+  opacity: 0.62;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 特调 header 的余额 chip */
+.mix-balance-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--mix-line);
+  background: var(--mix-panel-2);
+  color: var(--mix-text);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.mix-balance-chip[data-low="true"] {
+  border-color: var(--mix-gold);
+  color: var(--mix-gold);
+}
+
+.mix-balance-chip small {
+  color: var(--mix-dim);
+  font-size: 10px;
+}
+
+/* 扣费那一刻：胶囊脉冲一下，眼角能捕捉到，但不用弹窗打断阅读 */
+.mix-balance-chip[data-spending="true"] {
+  animation: mix-balance-pulse 900ms ease-out 2;
+}
+
+@keyframes mix-balance-pulse {
+  0%, 100% { transform: scale(1); }
+  35% { transform: scale(1.07); }
+}
+
+/* 对局头部：沿用原来「金色用量胶囊」的观感 */
+.mix-game-token.mix-balance-chip {
+  background: rgba(217, 176, 106, 0.12);
+  border-color: rgba(217, 176, 106, 0.32);
+  color: var(--mix-gold);
+}
+
+.mix-game-token.mix-balance-chip small {
+  color: rgba(217, 176, 106, 0.75);
+}
+
+/* 自动扣费发生时闪一下扣掉的额度 */
+.mix-balance-delta {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ff8b7a;
+  animation: mix-balance-delta-in 240ms ease-out both;
+}
+
+@keyframes mix-balance-delta-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 特调：账户弹层（沿用底部弹层观感） */
+.mix-account-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+}
+
+.mix-account-sheet {
+  width: 100%;
+  max-width: 420px;
+  max-height: 78%;
+  overflow-y: auto;
+  background: var(--mix-panel);
+  border: 1px solid var(--mix-line);
+  border-radius: 20px;
+  padding: 14px;
+}

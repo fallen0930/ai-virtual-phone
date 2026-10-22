@@ -1,0 +1,266 @@
+* {
+  box-sizing: border-box;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  overscroll-behavior-y: none;
+  touch-action: pan-x pan-y;
+}
+
+body {
+  color: var(--c-text-title);
+  background: var(--c-input);
+  font-family: var(--app-font-family);
+}
+
+/* Disable rubber-band scroll utility */
+.hide-scrollbar {
+  overscroll-behavior: none;
+}
+
+/* Global input container constraints */
+input,
+textarea,
+select {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+.app-root {
+  width: min(1120px, 92vw);
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.loading-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  font-size: calc(13.5px*var(--app-text-scale,1));
+  color: #9a8a7a;
+}
+
+.app-root.splash-root {
+  width: min(1120px, 92vw);
+  margin: 0 auto;
+  padding: 24px 0 40px;
+  background: var(--c-input);
+}
+
+.splash-shell-wrap {
+  gap: 0;
+  width: var(--phone-total-width);
+}
+
+.splash-phone-screen {
+  padding: 0;
+  background: #F1F2F6;
+}
+
+.splash-phone-screen::before {
+  display: none;
+}
+
+.splash-enter-button {
+  position: absolute;
+  left: 50%;
+  bottom: 36px;
+  z-index: 5;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  transform: translateX(-50%);
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(23, 75, 255, 0.66);
+  box-shadow: 0 4px 10px rgba(23, 75, 255, 0.035);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.7s ease,
+    transform 0.2s ease;
+}
+
+.splash-enter-button svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.splash-enter-button-show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.splash-enter-button:active {
+  transform: translateX(-50%) scale(0.96);
+}
+
+.splash-animation-stage,
+.splash-animation-canvas {
+  display: block;
+}
+
+.splash-animation-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #F1F2F6;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.splash-animation-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.splash-animation-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.4;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.splash-animation-corner {
+  position: absolute;
+  top: 54px;
+  left: 18px;
+  z-index: 4;
+  color: rgba(0, 38, 224, 0.5);
+  font: 300 calc(9px*var(--app-text-scale,1))/1 "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+.splash-animation-corner-right {
+  right: 18px;
+  left: auto;
+}
+
+/* ── Scaled text utilities (replace Tailwind text-[Npx]) ── */
+.ts-8  { font-size: calc(7.2px*var(--app-text-scale,1)); }
+.ts-9  { font-size: calc(8.1px*var(--app-text-scale,1)); }
+.ts-10 { font-size: calc(9px*var(--app-text-scale,1)); }
+.ts-11 { font-size: calc(9.9px*var(--app-text-scale,1)); }
+.ts-12 { font-size: calc(10.8px*var(--app-text-scale,1)); }
+.ts-13 { font-size: calc(11.7px*var(--app-text-scale,1)); }
+.ts-14 { font-size: calc(12.6px*var(--app-text-scale,1)); }
+.ts-15 { font-size: calc(13.5px*var(--app-text-scale,1)); }
+.ts-16 { font-size: calc(14.4px*var(--app-text-scale,1)); }
+.ts-17 { font-size: calc(15.3px*var(--app-text-scale,1)); }
+.ts-18 { font-size: calc(16.2px*var(--app-text-scale,1)); }
+.ts-20 { font-size: calc(18px*var(--app-text-scale,1)); }
+.ts-24 { font-size: calc(21.6px*var(--app-text-scale,1)); }
+.ts-28 { font-size: calc(25.2px*var(--app-text-scale,1)); }
+.ts-32 { font-size: calc(28.8px*var(--app-text-scale,1)); }
+.ts-36 { font-size: calc(32.4px*var(--app-text-scale,1)); }
+.ts-40 { font-size: calc(36px*var(--app-text-scale,1)); }
+.ts-48 { font-size: calc(43.2px*var(--app-text-scale,1)); }
+.ts-60 { font-size: calc(54px*var(--app-text-scale,1)); }
+
+/* Tailwind text-size utilities need to follow the app-level scale too. */
+.text-xs { font-size: calc(12px*var(--app-text-scale,1)); }
+.text-sm { font-size: calc(14px*var(--app-text-scale,1)); }
+.text-base { font-size: calc(16px*var(--app-text-scale,1)); }
+.text-lg { font-size: calc(18px*var(--app-text-scale,1)); }
+.text-xl { font-size: calc(20px*var(--app-text-scale,1)); }
+.text-2xl { font-size: calc(24px*var(--app-text-scale,1)); }
+.text-3xl { font-size: calc(30px*var(--app-text-scale,1)); }
+.text-4xl { font-size: calc(36px*var(--app-text-scale,1)); }
+.text-5xl { font-size: calc(48px*var(--app-text-scale,1)); }
+.text-6xl { font-size: calc(60px*var(--app-text-scale,1)); }
+
+.first-letter\:text-xs::first-letter { font-size: calc(12px*var(--app-text-scale,1)); }
+.first-letter\:text-sm::first-letter { font-size: calc(14px*var(--app-text-scale,1)); }
+.first-letter\:text-base::first-letter { font-size: calc(16px*var(--app-text-scale,1)); }
+.first-letter\:text-lg::first-letter { font-size: calc(18px*var(--app-text-scale,1)); }
+.first-letter\:text-xl::first-letter { font-size: calc(20px*var(--app-text-scale,1)); }
+.first-letter\:text-2xl::first-letter { font-size: calc(24px*var(--app-text-scale,1)); }
+.first-letter\:text-3xl::first-letter { font-size: calc(30px*var(--app-text-scale,1)); }
+.first-letter\:text-4xl::first-letter { font-size: calc(36px*var(--app-text-scale,1)); }
+.first-letter\:text-5xl::first-letter { font-size: calc(48px*var(--app-text-scale,1)); }
+.first-letter\:text-6xl::first-letter { font-size: calc(60px*var(--app-text-scale,1)); }
+
+@media (min-width: 640px) {
+  .sm\:text-xs { font-size: calc(12px*var(--app-text-scale,1)); }
+  .sm\:text-sm { font-size: calc(14px*var(--app-text-scale,1)); }
+  .sm\:text-base { font-size: calc(16px*var(--app-text-scale,1)); }
+  .sm\:text-lg { font-size: calc(18px*var(--app-text-scale,1)); }
+  .sm\:text-xl { font-size: calc(20px*var(--app-text-scale,1)); }
+  .sm\:text-2xl { font-size: calc(24px*var(--app-text-scale,1)); }
+  .sm\:text-3xl { font-size: calc(30px*var(--app-text-scale,1)); }
+  .sm\:text-4xl { font-size: calc(36px*var(--app-text-scale,1)); }
+  .sm\:text-5xl { font-size: calc(48px*var(--app-text-scale,1)); }
+  .sm\:text-6xl { font-size: calc(60px*var(--app-text-scale,1)); }
+}
+
+@media (min-width: 768px) {
+  .md\:text-xs { font-size: calc(12px*var(--app-text-scale,1)); }
+  .md\:text-sm { font-size: calc(14px*var(--app-text-scale,1)); }
+  .md\:text-base { font-size: calc(16px*var(--app-text-scale,1)); }
+  .md\:text-lg { font-size: calc(18px*var(--app-text-scale,1)); }
+  .md\:text-xl { font-size: calc(20px*var(--app-text-scale,1)); }
+  .md\:text-2xl { font-size: calc(24px*var(--app-text-scale,1)); }
+  .md\:text-3xl { font-size: calc(30px*var(--app-text-scale,1)); }
+  .md\:text-4xl { font-size: calc(36px*var(--app-text-scale,1)); }
+  .md\:text-5xl { font-size: calc(48px*var(--app-text-scale,1)); }
+  .md\:text-6xl { font-size: calc(60px*var(--app-text-scale,1)); }
+}
+
+@media (min-width: 1024px) {
+  .lg\:text-xs { font-size: calc(12px*var(--app-text-scale,1)); }
+  .lg\:text-sm { font-size: calc(14px*var(--app-text-scale,1)); }
+  .lg\:text-base { font-size: calc(16px*var(--app-text-scale,1)); }
+  .lg\:text-lg { font-size: calc(18px*var(--app-text-scale,1)); }
+  .lg\:text-xl { font-size: calc(20px*var(--app-text-scale,1)); }
+  .lg\:text-2xl { font-size: calc(24px*var(--app-text-scale,1)); }
+  .lg\:text-3xl { font-size: calc(30px*var(--app-text-scale,1)); }
+  .lg\:text-4xl { font-size: calc(36px*var(--app-text-scale,1)); }
+  .lg\:text-5xl { font-size: calc(48px*var(--app-text-scale,1)); }
+  .lg\:text-6xl { font-size: calc(60px*var(--app-text-scale,1)); }
+}
+
+@media (min-width: 1280px) {
+  .xl\:text-xs { font-size: calc(12px*var(--app-text-scale,1)); }
+  .xl\:text-sm { font-size: calc(14px*var(--app-text-scale,1)); }
+  .xl\:text-base { font-size: calc(16px*var(--app-text-scale,1)); }
+  .xl\:text-lg { font-size: calc(18px*var(--app-text-scale,1)); }
+  .xl\:text-xl { font-size: calc(20px*var(--app-text-scale,1)); }
+  .xl\:text-2xl { font-size: calc(24px*var(--app-text-scale,1)); }
+  .xl\:text-3xl { font-size: calc(30px*var(--app-text-scale,1)); }
+  .xl\:text-4xl { font-size: calc(36px*var(--app-text-scale,1)); }
+  .xl\:text-5xl { font-size: calc(48px*var(--app-text-scale,1)); }
+  .xl\:text-6xl { font-size: calc(60px*var(--app-text-scale,1)); }
+}
+

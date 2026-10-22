@@ -1,0 +1,51 @@
+.next
+.next/
+# 本地验证构建用 NEXT_DIST_DIR=.next-verify / .next-prod 指过来的独立产物目录
+.next-*
+node_modules
+node_modules/
+out
+out/
+*.log
+.env.local
+.env
+data/activation-codes.json
+SillyTavern/
+.codex
+*:Zone.Identifier
+*.crdownload
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+.idea/
+.vscode/
+.wx-media/
+.claude/
+.agents/
+tools/weixin-local-assistant/config.txt
+应用市场草稿/
+自定义APP制作说明-完整版.md
+自定义APP制作说明-完整版改.md
+
+# Tailscale serve cert files (written into cwd by `tailscale cert`)
+*.ts.net.crt
+*.ts.net.key
+/public/models/world-builder/
+
+# Android build artifacts
+android-shell/.gradle/
+android-shell/app/build/
+*.apk
+FloatShell-*.apk
+
+# Temporary local work files
+.workbuddy/
+preview_header_fix.html
+api-folders-*.patch
+api-folders-patch-*.zip
+worldbook-file-vault-patch-*.zip
+
+# 交付/说明文档：本地材料，不参与部署与编译，不入库（只 push 代码）
+/API文件夹收纳-*
+/文件库三线适配-*
+/角色记忆与情感规范-*
+/*.docx

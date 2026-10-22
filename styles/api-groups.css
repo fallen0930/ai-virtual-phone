@@ -1,0 +1,287 @@
+/* API 文件夹收纳：设置页分组块 + 快捷菜单折叠文件夹行 */
+
+.api-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.api-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.api-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: var(--c-text-title);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.api-group-toggle[data-static="true"] {
+  cursor: default;
+}
+
+.api-group-toggle svg {
+  flex: 0 0 auto;
+  color: #139085;
+}
+
+.api-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-group-count {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(19, 144, 133, 0.12);
+  color: #107a72;
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.api-group-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(19, 144, 133, 0.45);
+  border-radius: 10px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--c-text-title);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 700;
+}
+
+.api-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.api-group-empty {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.28);
+  color: var(--c-text);
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  text-align: center;
+}
+
+/* --- 快捷菜单里的文件夹 --- */
+
+.quick-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-action-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.quick-action-folder {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--c-text-title);
+  text-align: left;
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 750;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.quick-action-folder[data-selected="true"] {
+  color: #0d756f;
+  background: rgba(126, 232, 205, 0.22);
+}
+
+.quick-action-folder[data-renaming="true"] {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.quick-action-folder span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-action-folder svg {
+  flex: 0 0 auto;
+  color: #139085;
+}
+
+.quick-action-folder-count {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(19, 144, 133, 0.12);
+  color: #107a72;
+  font-size: calc(10px * var(--app-text-scale, 1));
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-action-folder-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.42);
+  color: #139085;
+}
+
+.quick-action-folder-btn:disabled {
+  opacity: 0.4;
+}
+
+.quick-action-folder-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(19, 144, 133, 0.45);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--c-text-title);
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 700;
+}
+
+.quick-action-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 10px;
+  margin-left: 4px;
+  border-left: 2px solid rgba(19, 144, 133, 0.18);
+}
+
+/* --- 拖拽归入文件夹 --- */
+
+body.api-drag-active {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grabbing;
+}
+
+.api-drag-source {
+  cursor: grab;
+  -webkit-touch-callout: none;
+}
+
+.quick-action-heading-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quick-action-heading-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #139085;
+}
+
+.quick-action-heading-btn:disabled {
+  opacity: 0.4;
+}
+
+.quick-action-ungrouped {
+  padding: 4px 8px;
+  border-radius: 10px;
+  color: var(--c-text);
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* 放置目标高亮：设置页文件夹块 / 快捷菜单文件夹行 */
+[data-api-drop-group].is-drop-target {
+  outline: 2px dashed #139085;
+  outline-offset: 1px;
+  background: rgba(126, 232, 205, 0.28) !important;
+}
+
+.api-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: 220px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 22px rgba(24, 58, 74, 0.24);
+  color: var(--c-text-title);
+  font-size: calc(12.5px * var(--app-text-scale, 1));
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translate(-50%, -140%);
+}
+
+.api-drag-ghost[data-over-target="true"] {
+  background: rgba(126, 232, 205, 0.96);
+  color: #0b5f59;
+}
+
+.api-group-empty-drop {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.28);
+  color: var(--c-text);
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  text-align: center;
+}

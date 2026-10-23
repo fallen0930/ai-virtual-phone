@@ -811,6 +811,11 @@ export function DataManagement({ onNotice }: DataManagementProps) {
               ariaLabel="选择导出模块"
             />
           </div>
+          {selectedExportModules.includes("creative") && !selectedExportModules.includes("narrative") ? (
+            <div className="data-cloud-status" role="note">
+              特调会话的记忆存在「执笔记忆」模块里，本备份没勾它——请一起勾选，否则恢复后会话在、记忆却是空的。
+            </div>
+          ) : null}
           <div className="data-menu-actions">
             <button type="button" className={`ui-btn ui-btn-primary ${busy === "导出中" ? "is-busy" : ""}`} onClick={() => handleExport(selectedExportModules)} disabled={Boolean(busy)}>
               {busy === "导出中" ? <><Loader2 size={16} className="animate-spin" /> 导出中…</> : <><Download size={16} /> 导出备份</>}
@@ -1169,7 +1174,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                   ? "将按规则压缩/清理过期动态媒体：4 天以上压缩图片，7 天以上清理聊天图片、朋友圈/小红书真实图和本地音乐，并清理确定无引用的旧主题素材。壁纸、图标、dock、字体等仍在引用的常驻资源不会删除。是否继续？"
                   : confirmRequest.type === "orphan-theme"
                     ? "将扫描当前仍被引用的主题素材，只删除确定无引用的旧图片、旧字体、旧 dock、旧图标皮肤等素材。是否继续？"
-                    : `清理 ${confirmRequest.labels} 会删除对应数据。${confirmRequest.moduleIds.includes("narrative") ? "此操作会删除所有聊天的记忆卡、情感卡、剧情状态，以及尚未迁移的旧版记忆及其备份，无法恢复。" : "不会自动备份，删除后无法恢复，请先手动导出备份。"}是否继续？`
+                    : `清理 ${confirmRequest.labels} 会删除对应数据。${confirmRequest.moduleIds.includes("narrative") ? "此操作会删除所有聊天的记忆卡、情感卡、剧情状态，以及尚未迁移的旧版记忆及其备份，无法恢复。" : "不会自动备份，删除后无法恢复，请先手动导出备份。"}${confirmRequest.moduleIds.includes("creative") && !confirmRequest.moduleIds.includes("narrative") ? "特调对局会话将被删除，但其执笔记忆不会同时删除；如需一并清除，请同时勾选「执笔记忆」。" : ""}是否继续？`
           }
           icon={confirmRequest.type === "export" ? Download : confirmRequest.type === "import" ? Upload : confirmRequest.type === "media-maintenance" ? Archive : AlertTriangle}
           variant={confirmRequest.type === "clear" || confirmRequest.type === "media-maintenance" || confirmRequest.type === "orphan-theme" || (confirmRequest.type === "import" && confirmRequest.overwrite) ? "danger" : "action"}

@@ -734,11 +734,16 @@ export async function migrateLegacyToSession(
   for (const key of kvKeysWithPrefix(LEGACY.historyPrefix)) {
     const entry = await nwGet<NarrativeHistoryEntry>(key);
     if (!entry) continue;
-    if (await getNarrativeHistoryEntry(sid, entry.id)) {
+    // 条目自带 sessionId 的，按条目自己的归属落进那一场，而不是全塞给用户选中的会话——
+    // 生成历史本来就是某一场里点出来的，认错了场就串了。没有 sessionId 的旧条目才归到选中会话。
+    // 目标会话可能已被删除：这种拷贝只是静静躺在 narrative:{那id}: 命名空间里，没有任何生成链路
+    // 会读它，等该会话被清理时一并 purge，不会崩、也不会污染别的会话。
+    const targetSid = typeof entry.sessionId === "string" && entry.sessionId.trim() ? entry.sessionId.trim() : sid;
+    if (await getNarrativeHistoryEntry(targetSid, entry.id)) {
       skippedDuplicates++;
       continue;
     }
-    await saveNarrativeHistoryEntry(sid, entry);
+    await saveNarrativeHistoryEntry(targetSid, entry);
     history++;
   }
 

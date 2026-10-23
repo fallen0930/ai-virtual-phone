@@ -31,7 +31,13 @@ import {
   deleteEmotionCard,
   updateMemoryCard,
   updateEmotionCard,
+  hasLegacyNarrativeData,
+  getMigrationState,
+  deferLegacyMigration,
 } from "@/lib/narrative-writer/storage";
+import { loadMixSessions } from "@/lib/mixology/storage";
+import { mixSessionTitle } from "@/lib/mixology/types";
+import { LegacyMigrationDialog } from "@/components/narrative-writer/legacy-migration-dialog";
 import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ExtractionRules } from "@/lib/narrative-writer/types";
 
 const UI_KEY = "phone_narrative_writer_ui_v2"; // v2 强制重置默认尺寸
@@ -118,6 +124,12 @@ export function NarrativeWriterPanel() {
     // 数据面板当前读的是哪一场的记忆。记忆已按会话隔离，面板必须在载入前拿到这个 id，
     // 后续所有卡片增删改都要用它，不能退回"读全部"。
     const [dataSessionId, setDataSessionId] = useState<string | null>(null);
+
+    // 旧全局记忆归属迁移（任务 #20）
+    const [migrationOpen, setMigrationOpen] = useState(false);
+    const [legacyPending, setLegacyPending] = useState(false); // 有旧数据且尚未归属
+    const [migrationSessions, setMigrationSessions] = useState<Array<{ id: string; title: string }>>([]);
+    const [migrationHasActive, setMigrationHasActive] = useState(false);
     
     // 卡片管理状态
     const [editingCard, setEditingCard] = useState<{ type: "memory" | "emotion"; card: MemoryCard | EmotionCard } | null>(null);
@@ -313,9 +325,73 @@ export function NarrativeWriterPanel() {
         loadData();
     }, [activeTab, open, loadData]);
 
+    // 刷新迁移提示所需的状态：是否有未归属旧数据、是否有活动会话、可选对局列表。
+    const refreshMigrationContext = useCallback(async () => {
+        const has = await hasLegacyNarrativeData();
+        if (!has) { setLegacyPending(false); return false; }
+        const st = await getMigrationState();
+        const done = st?.status === "done";
+        setLegacyPending(!done);
+        const active = getActiveMixSession();
+        setMigrationHasActive(!!active);
+        setMigrationSessions(loadMixSessions().map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
+        return !done;
+    }, []);
+
+    // 进入执笔面板时：若存在未迁移旧数据、用户既没选过归属也没选过"稍后"、且当前有活动会话 → 自动弹一次。
+    // 其余情况（无活动会话 / 已选稍后 / 已完成）不自动弹，只在面板顶部留常驻提示。
+    useEffect(() => {
+        if (!open) return;
+        (async () => {
+            try {
+                const has = await hasLegacyNarrativeData();
+                if (!has) { setLegacyPending(false); setMigrationOpen(false); return; }
+                const st = await getMigrationState();
+                const done = st?.status === "done";
+                const deferred = st?.status === "deferred";
+                setLegacyPending(!done);
+                const active = getActiveMixSession();
+                setMigrationHasActive(!!active);
+                setMigrationSessions(loadMixSessions().map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
+                if (!done && !deferred && active) setMigrationOpen(true);
+            } catch (err) {
+                console.error("[NarrativeWriter] 检查旧记忆归属迁移条件失败:", err);
+            }
+        })();
+    }, [open]);
+
+    // 迁移成功：旧数据不再待归属；若在数据面板则重载以显示迁移进来的卡。弹窗留在"完成"页由用户手动关。
+    const handleMigrationMigrated = useCallback(() => {
+        setLegacyPending(false);
+        if (activeTab === "data") void loadData();
+    }, [activeTab, loadData]);
+
+    // 关闭 / 稍后：迁移未完成就记 deferred（不删旧数据、不算已迁移）；已完成就只是关闭。
+    const handleMigrationClose = useCallback(async () => {
+        setMigrationOpen(false);
+        try {
+            const st = await getMigrationState();
+            if (st?.status === "done") {
+                setLegacyPending(false);
+                if (activeTab === "data") void loadData();
+            } else {
+                await deferLegacyMigration();
+                setLegacyPending(true);
+            }
+        } catch (err) {
+            console.error("[NarrativeWriter] 处理旧记忆迁移弹窗关闭失败:", err);
+        }
+    }, [activeTab, loadData]);
+
+    // 点常驻提示重新打开：没有活动会话时不弹（提示语会引导先开一局）。
+    const openMigrationFromHint = useCallback(async () => {
+        if (!migrationHasActive) return;
+        await refreshMigrationContext();
+        setMigrationOpen(true);
+    }, [migrationHasActive, refreshMigrationContext]);
+
     // 拖动逻辑
-    const onDragPointerDown = (e: ReactPointerEvent) => {
-        e.preventDefault();
+    const onDragPointerDown = (e: ReactPointerEvent) => {        e.preventDefault();
         const current = rect;
         dragRef.current = { sx: e.clientX, sy: e.clientY, ox: current.x, oy: current.y };
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -983,6 +1059,40 @@ export function NarrativeWriterPanel() {
                     <X size={18} />
                 </button>
             </div>
+
+            {/* 常驻提示：有旧记忆待归属（选了"稍后"或当前无活动会话时不再自动弹，但一直留着入口） */}
+            {legacyPending && !migrationOpen && (
+                <div
+                    onClick={() => void openMigrationFromHint()}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openMigrationFromHint(); } }}
+                    style={{
+                        padding: "9px 14px",
+                        background: "rgba(245, 158, 11, 0.12)",
+                        borderBottom: "1px solid rgba(245, 158, 11, 0.25)",
+                        color: "#fbbf24",
+                        fontSize: "12px",
+                        lineHeight: 1.5,
+                        cursor: migrationHasActive ? "pointer" : "default",
+                    }}
+                >
+                    {migrationHasActive ? (
+                        <>有旧记忆待归属 →　点击选择它们属于哪场聊天</>
+                    ) : (
+                        <>有旧记忆待归属。请先在特调里打开或新建一场对局，再来选择它们属于哪个聊天。</>
+                    )}
+                </div>
+            )}
+
+            {/* 旧记忆归属迁移弹窗（任务 #20） */}
+            {migrationOpen && (
+                <LegacyMigrationDialog
+                    sessions={migrationSessions}
+                    onMigrated={handleMigrationMigrated}
+                    onDeferred={() => void handleMigrationClose()}
+                />
+            )}
 
             {/* 内容区 */}
             <div

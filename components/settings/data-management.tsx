@@ -29,6 +29,10 @@ import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import { Select, Toggle } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { CloudUpload } from "lucide-react";
+import { LegacyMigrationDialog } from "@/components/narrative-writer/legacy-migration-dialog";
+import { getMigrationState, hasLegacyNarrativeData } from "@/lib/narrative-writer/storage";
+import { loadMixSessions } from "@/lib/mixology/storage";
+import { mixSessionTitle } from "@/lib/mixology/types";
 import {
   DEFAULT_CLOUD_BACKUP_CONFIG,
   isCloudBackupConfigured,
@@ -310,6 +314,20 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const [spaceScanDetail, setSpaceScanDetail] = useState<string | null>(null);
   const [spaceClearPending, setSpaceClearPending] = useState<StorageCategoryStat | null>(null);
   const [spaceClearRange, setSpaceClearRange] = useState<number>(30);
+
+  // 执笔旧记忆归属迁移（任务 #20 在设置里保留的同一入口）
+  const [narrativeMigrationOpen, setNarrativeMigrationOpen] = useState(false);
+  const [narrativeLegacyPending, setNarrativeLegacyPending] = useState(false);
+  const refreshNarrativeLegacy = async () => {
+    try {
+      const has = await hasLegacyNarrativeData();
+      const st = await getMigrationState();
+      setNarrativeLegacyPending(has && st?.status !== "done");
+    } catch (error) {
+      console.error("[DataManagement] 检查执笔旧记忆归属失败:", error);
+    }
+  };
+  useEffect(() => { void refreshNarrativeLegacy(); }, []);
 
   useEffect(() => {
     setCloudConfig(loadCloudBackupConfig());
@@ -630,6 +648,20 @@ export function DataManagement({ onNotice }: DataManagementProps) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="data-section">
+        <DataSectionTitle>执笔旧记忆归属</DataSectionTitle>
+        <div className="menu-group">
+          <div className="menu-item">
+            <DataSettingsIcon icon={Brain} color={BINDING_ACCENTS.memory} />
+            <div className="menu-label-group">
+              <span className="menu-label">升级前的旧记忆</span>
+              <span className="menu-desc">{narrativeLegacyPending ? "有旧记忆尚未归属到任何对局，可在此选择它们属于哪场聊天。" : "没有待归属的旧记忆。"}</span>
+            </div>
+            <button type="button" className="ui-btn ui-btn-outline" disabled={!narrativeLegacyPending} onClick={() => setNarrativeMigrationOpen(true)}>归属迁移</button>
+          </div>
         </div>
       </div>
 
@@ -1190,6 +1222,14 @@ export function DataManagement({ onNotice }: DataManagementProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {narrativeMigrationOpen && (
+        <LegacyMigrationDialog
+          sessions={loadMixSessions().map((s) => ({ id: s.id, title: mixSessionTitle(s) }))}
+          onMigrated={() => { onNotice?.("旧记忆已归属完成。"); }}
+          onDeferred={() => { setNarrativeMigrationOpen(false); void refreshNarrativeLegacy(); }}
+        />
       )}
     </div>
   );

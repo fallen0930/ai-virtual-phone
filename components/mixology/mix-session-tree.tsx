@@ -23,6 +23,7 @@ import {
     type MixSessionTreeNode,
 } from "@/lib/mixology/storage";
 import { forkMixSession, mixRoundCount } from "@/lib/mixology/engine";
+import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
 import { mixSessionLatestSummary, mixSessionTitle, type MixSession } from "@/lib/mixology/types";
 import {
     isDockManaged,
@@ -234,12 +235,18 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
         (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
     };
 
-    const quickFork = (node: MixSession) => {
+    const quickFork = async (node: MixSession) => {
         try {
             const child = forkMixSession(node.id, node.turns.length - 1, {
                 branchName: node.branchName ? `${node.branchName} · 分支` : undefined,
             });
-            onToast?.(`已开新支线「${mixSessionTitle(child)}」。当前对局不变，可在 🌳 世界树里点开继续玩。`);
+            const copy = await copyNarrativeOnFork(child);
+            const memoryNote = copy.copied
+                ? `已继承父支线记忆：${copy.memories} 张记忆卡 / ${copy.emotions} 张情感卡。`
+                : copy.endFork
+                    ? "分叉成功，但记忆复制失败，该分支将从空记忆开始。"
+                    : "这条支线从空记忆开始，可在执笔面板用「补抽」从保留的对话重建记忆。";
+            onToast?.(`已开新支线「${mixSessionTitle(child)}」。${memoryNote}当前对局不变，可在 🌳 世界树里点开继续玩。`);
             reload();
         } catch (err) {
             onToast?.(err instanceof Error ? err.message : "分叉失败");

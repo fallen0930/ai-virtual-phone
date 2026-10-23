@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { ChevronLeft, Copy, GitBranch, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
 import { continueMix, editMixTurn, forkMixSession, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixRoundCount, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
+import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
 import { MixBalanceChip } from "./mix-balance-chip";
 import { ApiAccountPanel } from "@/components/settings/api-account-panel";
 import { accountLabel, getApiAccount } from "@/lib/api-accounts";
@@ -2547,11 +2548,17 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
                         roundCount={mixRoundCount(session.turns.slice(0, fork.idx + 1))}
                         defaultName={session.branchName}
                         onCancel={() => setFork(null)}
-                        onConfirm={({ branchName, branchNote }) => {
+                        onConfirm={async ({ branchName, branchNote }) => {
                             try {
                                 const child = forkMixSession(sessionId, fork.idx, { branchName, branchNote });
                                 setFork(null);
-                                onToast(`已开新支线「${mixSessionTitle(child)}」。当前对局不变，可在 🌳 世界树里点开继续玩。`);
+                                const copy = await copyNarrativeOnFork(child);
+                                const memoryNote = copy.copied
+                                    ? `已继承父对局记忆：${copy.memories} 张记忆卡 / ${copy.emotions} 张情感卡。`
+                                    : copy.endFork
+                                        ? "分叉成功，但记忆复制失败，该分支将从空记忆开始。"
+                                        : "这条支线从空记忆开始，可在执笔面板用「补抽」从保留的对话重建记忆。";
+                                onToast(`已开新支线「${mixSessionTitle(child)}」。${memoryNote}当前对局不变，可在 🌳 世界树里点开继续玩。`);
                             } catch (error) {
                                 setFork(null);
                                 onToast(error instanceof Error ? error.message : "分叉失败");

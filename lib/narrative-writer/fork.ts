@@ -38,7 +38,9 @@ export type ForkCopyResult = {
 /** 判定末尾分叉：子会话留下了父会话的每一条消息，且父会话非空。其余一律当中间分叉。 */
 function isEndFork(parent: MixSession | null, child: MixSession): boolean {
   if (!parent) return false;
-  // 空父会话（只有开场白被删、或还没出过一轮）时无从判断，保守当作中间分叉。
+  // 父会话一条消息都没有（turns 为空）时无从判断，保守当作中间分叉。
+  // 注意：只有开场白（turns.length === 1 且是 assistant）且子会话同样等长时，
+  // 仍会按下面的“消息条数相等”判为末尾分叉。
   if (parent.turns.length === 0) return false;
   // forkMixSession 用 turns.slice(0, clamped+1) 造子会话，
   // 只有分叉点落在最后一条消息上，子会话才与父会话等长——即"末尾分叉"。

@@ -682,11 +682,14 @@ export async function backupLegacyNarrativeData(): Promise<{
 
 export async function readLegacyNarrativeBackup(): Promise<{
   createdAt: number;
+  source: string;
   entries: NarrativeLegacyBackupEntry[];
 } | null> {
-  return nwGet<{ createdAt: number; entries: NarrativeLegacyBackupEntry[] }>(
-    LEGACY_BACKUP_KEY
-  );
+  return nwGet<{
+    createdAt: number;
+    source: string;
+    entries: NarrativeLegacyBackupEntry[];
+  }>(LEGACY_BACKUP_KEY);
 }
 
 /**

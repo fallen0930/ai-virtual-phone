@@ -6,7 +6,7 @@
 // 在任意界面都能用。用于剧情自主书写。
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { X, Feather, Loader2 } from "lucide-react";
+import { X, Feather, Loader2, Database } from "lucide-react";
 import {
     CONTROL_DOCK_ACTIVATE_EVENT,
     getControlDockState,
@@ -1625,6 +1625,14 @@ export function NarrativeWriterPanel() {
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 0", color: "#6b7280" }}>
                                 <Loader2 size={20} className="animate-spin" style={{ marginRight: "8px" }} />
                                 加载中...
+                            </div>
+                        ) : !dataSessionId ? (
+                            // 记忆按会话隔离：没打开对局就没有归属会话，不能退回"读全部"显示 0 张，
+                            // 那会让人以为数据丢了。明确提示先打开一场对局。
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", padding: "48px 16px", color: "#9ca3af", textAlign: "center" }}>
+                                <Database size={28} style={{ opacity: 0.5 }} />
+                                <div style={{ fontSize: "14px", fontWeight: 600, color: "#d1d5db" }}>请先打开一个对局</div>
+                                <div style={{ fontSize: "12px", lineHeight: 1.6 }}>记忆、情感、关系水位与剧情大纲都按对局隔离存放。<br />在特调里进入一场对局后，这里会显示该对局专属的数据面板。</div>
                             </div>
                         ) : (
                             <>

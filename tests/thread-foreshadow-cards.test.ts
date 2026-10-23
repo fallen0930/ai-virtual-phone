@@ -983,10 +983,21 @@ describe("[执笔状态] 停止渲染与批量确认扩到四类", () => {
       阶段进度: 0.4,
       散落线头: ["老桥下的硬币"],
     };
+    const 水位 = {
+      戏内层: {
+        作用域: "戏内层",
+        水位: "L2",
+        status: "active",
+        准入证据: [],
+        未解决冲突: [],
+        冻结项: [],
+        最后更新: "",
+      },
+    };
     const 导演 = requireContinuityContext()(
       [mkMemory("记忆")],
       [],
-      {},
+      水位,
       带状态,
       null,
       { 视角: "导演" },
@@ -996,7 +1007,7 @@ describe("[执笔状态] 停止渲染与批量确认扩到四类", () => {
     const 角色 = requireContinuityContext()(
       [mkMemory("记忆")],
       [],
-      {},
+      水位,
       带状态,
       null,
       { 视角: "角色" },
@@ -1007,9 +1018,9 @@ describe("[执笔状态] 停止渲染与批量确认扩到四类", () => {
     expect(角色).not.toContain("[执笔状态]");
     expect(导演).not.toContain("当前基调");
     expect(导演).not.toContain("散落线头");
-    // 素材与红线的位置关系不变：悬念段在前，大纲与水位随后，红线收尾
+    // 素材与红线的位置关系不变：悬念段在前，大纲与关系分寸随后，红线收尾
     expect(导演).toContain("[未决线索]");
-    expect(导演.indexOf("[未决线索]")).toBeLessThan(导演.indexOf("[关系水位]"));
+    expect(导演.indexOf("[未决线索]")).toBeLessThan(导演.indexOf("[关系分寸]"));
     expect(导演.lastIndexOf("[视角红线]")).toBeGreaterThan(导演.indexOf("[未决线索]"));
   });
 

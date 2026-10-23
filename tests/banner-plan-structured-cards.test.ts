@@ -408,6 +408,13 @@ function lastPayload(): Record<string, string> {
   return JSON.parse(req.content) as Record<string, string>;
 }
 
+/** 取最近一次发给模型的系统提示词 */
+function lastSystem(): string {
+  const req = llmMock.requests.filter((r) => r.characterName === "NarrativeWriter").pop();
+  if (!req) throw new Error("没有发出 NarrativeWriter 请求");
+  return req.system;
+}
+
 async function generate(sid: string, charName = "角色A"): Promise<CandidateLike[]> {
   const fn = writerApi.generateBannerOptions;
   expect(fn, "generateBannerOptions 不可用").toBeTypeOf("function");
@@ -1312,6 +1319,48 @@ describe("走向卡 · 正文提示词的边界", () => {
       "（基调：日常｜场景：灯塔｜走向：闲聊）" as never
     )) as { metadata: { isTurningPoint: boolean } };
     expect(无注意.metadata.isTurningPoint).toBe(false);
+  });
+
+  it("41. 正文提示词：A–E 级符号与旧关系水位块都不再出现，新分寸句与越级禁止都在", async () => {
+    const sid = makeSessionId("plain-water");
+    await seedWaters(sid, [
+      mkWater("戏内层", "L2", { 未解决冲突: ["上次失约没解释"] }),
+      mkWater("现实层", "L1"),
+      mkWater("共识层", "L2"),
+    ]);
+    llmMock.respond = () =>
+      [
+        "标题甲｜变化甲｜代价甲｜（基调：日常｜场景：灯塔｜走向：闲聊）",
+        "标题乙｜变化乙｜代价乙｜（基调：推进｜场景：旧城｜走向：查证）",
+        "标题丙｜变化丙｜代价丙｜（基调：转折｜场景：海堤｜走向：来客）",
+      ].join("\n");
+    const cards = await generate(sid);
+    const 关系 = cards.find((c) => c.卡.类型 === "关系")!;
+    expect(关系, "第一批里没有关系卡，夹具失效").toBeDefined();
+
+    llmMock.respond = () => "（基调：日常｜场景：灯塔｜走向：闲聊）\n\n正文一段。";
+    const fn = writerApi.writeWithSelectedBanner as NonNullable<
+      WriterBannerApi["writeWithSelectedBanner"]
+    >;
+    expect(typeof fn).toBe("function");
+    await fn!(writerInput(sid) as never, 关系 as never);
+
+    const 系统 = lastSystem();
+    const 内容 = lastPayload();
+    const 水位文字 = `${系统}\n${内容["连续性上下文"] ?? ""}\n${内容["任务"] ?? ""}`;
+
+    expect(水位文字, "正文提示词还在用未定义的 A–E 级").not.toMatch(/[A-E]\s*级/);
+    expect(水位文字, "还在用 L→字母 的闸门速记").not.toMatch(/L[0-5]\s*→\s*[A-E]/);
+    expect(水位文字, "旧的关系水位块还在").not.toContain("[关系水位]");
+    expect(水位文字, "旧的 status/冲突字段名还在").not.toContain("未解决冲突：");
+
+    expect(内容["连续性上下文"], "新的关系分寸块没进正文上下文").toContain("[关系分寸]");
+    expect(内容["连续性上下文"], "水位没有写成一句人话").toContain("可出现");
+    expect(内容["连续性上下文"], "旧账在替换时丢了").toContain("上次失约没解释");
+    expect(内容["任务"], "这一张的一句话上限没进正文").toContain(关系.卡.上限);
+
+    expect(系统, "越级禁止的说明被删了").toContain("越级");
+    expect(系统, "越级行为只能作念头的说明没了").toContain("念头");
   });
 });
 

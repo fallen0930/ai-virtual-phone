@@ -981,7 +981,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                   ))}
                 </div>
               ) : (
-                <p className="menu-desc">该类别将整体清理。建议先做一次备份。</p>
+                <p className="menu-desc">该类别将整体清理。不会自动备份，删除后无法恢复，请先手动导出备份。</p>
               )}
             </div>
             <div className="modal-footer" data-ui="modal-footer" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1089,7 +1089,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
             <DataSettingsIcon icon={Trash2} color="#E5484D" />
             <div className="menu-label-group">
               <span className="menu-label">清理模块</span>
-              <span className="menu-desc">已选择 {selectedClearModules.length} / {DATA_MODULES.length} 个模块，清理前会先尝试备份</span>
+              <span className="menu-desc">已选择 {selectedClearModules.length} / {DATA_MODULES.length} 个模块，不会自动备份，删除后无法恢复，请先手动导出备份</span>
             </div>
             <div className="menu-right data-inline-actions">
               <button type="button" className="ui-btn ui-btn-outline py-1 px-3 ts-12" onClick={() => setSelectedClearModules([])}>
@@ -1137,7 +1137,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                   ? "将按规则压缩/清理过期动态媒体：4 天以上压缩图片，7 天以上清理聊天图片、朋友圈/小红书真实图和本地音乐，并清理确定无引用的旧主题素材。壁纸、图标、dock、字体等仍在引用的常驻资源不会删除。是否继续？"
                   : confirmRequest.type === "orphan-theme"
                     ? "将扫描当前仍被引用的主题素材，只删除确定无引用的旧图片、旧字体、旧 dock、旧图标皮肤等素材。是否继续？"
-                    : `清理 ${confirmRequest.labels} 会删除对应数据。${confirmRequest.moduleIds.includes("narrative") ? "此操作会删除所有聊天的记忆卡、情感卡、剧情状态，以及尚未迁移的旧版记忆及其备份，无法恢复。" : "建议先备份。"}是否继续？`
+                    : `清理 ${confirmRequest.labels} 会删除对应数据。${confirmRequest.moduleIds.includes("narrative") ? "此操作会删除所有聊天的记忆卡、情感卡、剧情状态，以及尚未迁移的旧版记忆及其备份，无法恢复。" : "不会自动备份，删除后无法恢复，请先手动导出备份。"}是否继续？`
           }
           icon={confirmRequest.type === "export" ? Download : confirmRequest.type === "import" ? Upload : confirmRequest.type === "media-maintenance" ? Archive : AlertTriangle}
           variant={confirmRequest.type === "clear" || confirmRequest.type === "media-maintenance" || confirmRequest.type === "orphan-theme" || (confirmRequest.type === "import" && confirmRequest.overwrite) ? "danger" : "action"}

@@ -8,7 +8,6 @@ import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
 import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId } from "./storage";
-import { hotExtractFromNarrativeBody } from "./extractor";
 import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy } from "./types";
 import { createDefaultWriterState } from "./types";
 
@@ -422,13 +421,8 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
   // 6. 元数据推断
   const metadata = inferMetadata(banner, body);
 
-  // 7. 异步触发抽取（不阻塞返回）
-  // 注意：直接模式下缺少完整会话上下文，抽取可能不完整
-  setTimeout(() => {
-    // TODO: 从 localStorage 或其他方式获取当前 session 信息
-    // 暂时跳过抽取，等待执笔面板传入完整上下文
-    console.log("[NarrativeWriter] Skipping extraction in direct mode (no session context)");
-  }, 0);
+  // 这里不抽取：正文还没进对话，抽出来的卡没有消息可归属。
+  // 抽取统一发生在 insertNarrativeTurn 落库之后（那时才有来源消息ID与轮次）。
 
   return { banner, body, metadata };
 }
@@ -578,12 +572,10 @@ export async function writeWithSelectedBanner(
 
   const metadata = inferMetadata(banner, body);
 
-  // 热轨抽取（快速版，<3 秒）
-  setTimeout(() => {
-    hotExtractFromNarrativeBody(input.sessionId, body, []).catch(err => {
-      console.error("[NarrativeWriter] Hot extraction failed:", err);
-    });
-  }, 0);
+  // 不在这里抽取。正文此刻还只是一段返回值，没进对话，抽出来的卡挂不到任何一条消息上，
+  // 于是「重说/回溯作废了这条回复」永远追不到它们；而且它和 insertNarrativeTurn 里
+  // 那次带来源的热抽会各抽同一篇正文，一次点击白跑两次大模型、落两张重复卡。
+  // 抽取只在正文落库之后发生（见 mixology/engine 的 insertNarrativeTurn）。
 
   return { 
     banner, 

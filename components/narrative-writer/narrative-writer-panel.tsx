@@ -31,6 +31,7 @@ import {
   deleteEmotionCard,
   updateMemoryCard,
   updateEmotionCard,
+  confirmAllPendingCards,
   hasLegacyNarrativeData,
   getMigrationState,
   deferLegacyMigration,
@@ -167,6 +168,8 @@ export function NarrativeWriterPanel() {
     // 深度抽取状态
     const [deepExtracting, setDeepExtracting] = useState(false);
     const [lastDeepExtractAt, setLastDeepExtractAt] = useState<number | null>(null);
+    // 批量确认待核卡状态（防重复点：确认会把卡片写进正文上下文，跑一半再点一次会重复写）
+    const [confirmingPending, setConfirmingPending] = useState(false);
     // ETA 用最近 N 步的滚动均值，避免第1步冷启动把整体预估拉高
     const [recentStepTimes, setRecentStepTimes] = useState<number[]>([]);
     const ETA_ROLLING_WINDOW = 3; // 取最近 3 步的均值
@@ -787,6 +790,44 @@ export function NarrativeWriterPanel() {
         }
     }, [loadData]);
     
+    // 批量确认待核卡：把当前会话所有"待核"一次性转为"生效"。
+    // 后果必须在弹窗里写清楚——生效后这些卡就进正文上下文，角色会把它们当作已知事实使用；
+    // 这不是"一键清空待办"，是替角色认领一批记忆。归档/冲突/陈旧一律不碰。
+    const handleConfirmAllPending = useCallback(async () => {
+        if (confirmingPending) return;
+
+        const activeSession = getActiveMixSession();
+        if (!activeSession) {
+            setError("请先打开一个对局");
+            return;
+        }
+
+        const 待核记忆 = memories.filter(m => m.状态 === "待核").length;
+        const 待核情感 = emotions.filter(e => e.状态 === "待核").length;
+        const 合计 = 待核记忆 + 待核情感;
+        if (合计 === 0) return;
+
+        if (!window.confirm(
+            `确认这 ${合计} 张待核卡（记忆 ${待核记忆} 张、情感 ${待核情感} 张）？\n` +
+            `确认后这 ${合计} 张卡将进入正文上下文，角色会把它们当作已知事实使用。\n` +
+            `只处理当前对局；已归档 / 冲突 / 陈旧的卡不受影响。`
+        )) return;
+
+        setConfirmingPending(true);
+        setError(null);
+        try {
+            const done = await confirmAllPendingCards(activeSession.id);
+            console.log(`[NarrativeWriter] 批量确认待核卡：记忆 ${done.memories} 张、情感 ${done.emotions} 张转为生效`);
+            await loadData();
+            void loadRecommendations();
+        } catch (err) {
+            console.error("[NarrativeWriter] 批量确认待核卡失败:", err);
+            setError("批量确认失败，请稍后重试");
+        } finally {
+            setConfirmingPending(false);
+        }
+    }, [confirmingPending, memories, emotions, loadData, loadRecommendations]);
+
     // 补抽历史：整局按每4轮一批喂给逐轮抽取器，恢复抽取通道损坏期间丢失的记忆。
     // 一次性工具，会真实产生多次 LLM 调用，先确认再跑；与记忆整理互斥
     const handleBackfill = useCallback(async () => {
@@ -1775,7 +1816,7 @@ export function NarrativeWriterPanel() {
                                         {[
                                             { label: "生效中", value: memories.filter(m => m.状态 === "生效").length + emotions.filter(e => e.状态 === "生效").length, color: "#10b981" },
                                             { label: "已归档", value: memories.filter(m => m.状态 === "归档").length + emotions.filter(e => e.状态 === "归档").length, color: "#6b7280" },
-                                            { label: "待核实", value: memories.filter(m => m.状态 === "待核").length, color: "#f59e0b", warn: true },
+                                            { label: "待核实", value: memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length, color: "#f59e0b", warn: true },
                                             { label: "已删除", value: 0, color: "#ef4444" },
                                         ].map((stat) => (
                                             <div key={stat.label} style={{
@@ -1893,6 +1934,26 @@ export function NarrativeWriterPanel() {
                                         >
                                             ⚠️ 待核实 ({memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length})
                                         </button>
+                                        {/* 批量确认：入口贴着"待核实"这个动作发生处，没有待核卡时不占位置 */}
+                                        {memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length > 0 && (
+                                            <button
+                                                onClick={handleConfirmAllPending}
+                                                disabled={confirmingPending}
+                                                title="把当前对局所有待核卡一次性转为生效（角色会把这些卡当作已知事实使用）"
+                                                style={{
+                                                    padding: "3px 8px",
+                                                    background: "rgba(16, 185, 129, 0.18)",
+                                                    border: "1px solid rgba(16, 185, 129, 0.5)",
+                                                    borderRadius: "4px",
+                                                    color: "#6ee7b7",
+                                                    fontSize: "11px",
+                                                    cursor: confirmingPending ? "default" : "pointer",
+                                                    opacity: confirmingPending ? 0.6 : 1,
+                                                }}
+                                            >
+                                                {confirmingPending ? "确认中…" : `✅ 全部确认 (记忆 ${memories.filter(m => m.状态 === "待核").length} / 情感 ${emotions.filter(e => e.状态 === "待核").length})`}
+                                            </button>
+                                        )}
                                     </div>
                                     
                                     {/* 维度筛选：主类型 + 次标签（仅作用于记忆卡列表） */}

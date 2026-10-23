@@ -256,6 +256,38 @@ export async function listEmotionCards(
 // 别名导出，保持API一致性
 export const getEmotionCards = listEmotionCards;
 
+// ==================== 批量确认待核卡 ====================
+
+/**
+ * 把当前会话的待核卡一次性转成生效，返回两边各转了几张。
+ *
+ * 只碰「待核」：归档（历史版本）、冲突（与别的卡打架）、陈旧（过期）都有各自的
+ * 处理路径，一把梭会把玩家刻意收起来的东西又放回正文。
+ * 只碰这一个会话：键前缀就是这场对局的命名空间，别的对局的待核卡一张都不该动。
+ *
+ * 确认的语义要说清楚：生效之后这张卡就进正文上下文，角色会把它当作已知事实使用。
+ * 所以面板上的确认弹窗必须写明这一点，不能做成"一键清空待办"的顺手操作。
+ */
+export async function confirmAllPendingCards(
+  sessionId: string | null | undefined
+): Promise<{ memories: number; emotions: number }> {
+  const sid = requireSessionId(sessionId, "confirmAllPendingCards");
+
+  const [pendingMemories, pendingEmotions] = await Promise.all([
+    listMemoryCards(sid, { status: "待核" }),
+    listEmotionCards(sid, { status: "待核" }),
+  ]);
+
+  for (const card of pendingMemories) {
+    await saveMemoryCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
+  }
+  for (const card of pendingEmotions) {
+    await saveEmotionCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
+  }
+
+  return { memories: pendingMemories.length, emotions: pendingEmotions.length };
+}
+
 // ==================== Water Levels ====================
 
 export async function saveWaterLevel(

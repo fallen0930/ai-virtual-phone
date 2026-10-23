@@ -28,6 +28,7 @@ const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方�
 # 视角限制（最高优先级红线）
 你的知识库包含上帝视角的设定，但你只能使用你所扮演角色能听到、看到、推测到的东西。
 - 写正文时，连续性上下文里的卡已经按当前角色的知情范围过滤过，看不到的就是角色不知道的
+- 连续性上下文里标了「（未确认）」的卡是玩家还没核过的抽取结果，不要把它当作角色已知的事实写进正文；正常不该出现在正文里
 - 生成走向卡时你处在导演视角，卡片会带 [共同知晓] / [仅某角色知情] / [仅玩家知情] / [系统预埋·未揭示] 标注；可以用这种信息差设计悬念，但落笔写正文时仍然只能写角色知道的
 - 不要主动提及角色不可能知道的信息；剧情需要信息差就让角色通过对话/观察/推理逐步发现，不要直接"知道"
 
@@ -215,8 +216,11 @@ export async function markExtractionComplete(
 /**
  * 连续性上下文的一种视角。
  * - 角色：写正文用。调用方先用 visibleToCharacter 过滤，这里只渲染，不加标注。
+ *   另外还有一道防御性过滤：非生效（待核/冲突/陈旧/归档）一律不渲染——
+ *   角色只能把玩家确认过的东西当已知事实，这条底线不靠调用方自觉。
  * - 导演：生成走向卡用。不按角色过滤（导演要知道全场），但每张卡标注知情范围，
  *   排除作用域「现实层」的戏外聊天卡，末尾附一条视角红线。
+ *   待核卡可以进导演那份当线索，行尾带「（未确认）」，且只能占生效卡用剩的名额。
  */
 export type ContinuityView = { 视角: "角色" } | { 视角: "导演" };
 
@@ -224,6 +228,29 @@ export type ContinuityView = { 视角: "角色" } | { 视角: "导演" };
 const MEMORY_INJECT_LIMIT = 5;
 /** 情感卡注入上限（3 条） */
 const EMOTION_INJECT_LIMIT = 3;
+/** 待核卡最多占几条记忆位：宁可留空位，也不让没核过的东西把已确认的事实挤出去 */
+const PENDING_MEMORY_LIMIT = 3;
+/** 待核卡最多占几条情感位 */
+const PENDING_EMOTION_LIMIT = 1;
+
+/** 卡片状态；缺失/空白按「生效」处理（旧数据兼容，与 audience 缺失视为 all 同一口径） */
+function cardStatus(card: { 状态?: unknown }): string {
+  return typeof card.状态 === "string" && card.状态.trim() !== "" ? card.状态.trim() : "生效";
+}
+
+/** 待核卡排序：置信度从高到低，同分再看新近。
+ *  置信度是模型自己给的，只用来排先后，不用来决定能不能出现——能不能出现由玩家核没核决定。 */
+function byConfidence(
+  a: { 置信度?: unknown; updatedAt?: unknown },
+  b: { 置信度?: unknown; updatedAt?: unknown }
+): number {
+  const ca = typeof a.置信度 === "number" ? a.置信度 : 0;
+  const cb = typeof b.置信度 === "number" ? b.置信度 : 0;
+  if (ca !== cb) return cb - ca;
+  const ua = typeof a.updatedAt === "number" ? a.updatedAt : 0;
+  const ub = typeof b.updatedAt === "number" ? b.updatedAt : 0;
+  return ub - ua;
+}
 
 /** 悬念素材（system / user 名下的卡）在截断时优先保留：
  *  这类卡是设计伏笔的原料，被排序挤掉就再也没机会用上了。 */
@@ -260,28 +287,61 @@ export function buildContinuityContext(
 
   // 导演视角排除「现实层」（戏外聊天）：那是玩家与角色在剧情之外的事，
   // 拿来设计剧情就是混层。作用域缺失或「待确认」的卡仍然可用——分不清不等于不存在。
-  const injectMemories = isDirector
-    ? prioritizeSuspense(memories.filter((m) => String(m.作用域 ?? "") !== "现实层"))
-    : memories;
-  const injectEmotions = isDirector
-    ? prioritizeSuspense(emotions)
-    : emotions;
+  // 状态门槛：归档/冲突/陈旧两个视角都拿不到；待核只有导演能拿到（下面的 fill 里区分）。
+  const 可选记忆 = memories.filter((m) => {
+    const st = cardStatus(m);
+    if (st === "归档" || st === "冲突" || st === "陈旧") return false;
+    if (!isDirector) return st === "生效";
+    return String(m.作用域 ?? "") !== "现实层";
+  });
+  const 可选情感 = emotions.filter((e) => {
+    const st = cardStatus(e);
+    if (st === "归档" || st === "冲突" || st === "陈旧") return false;
+    return isDirector || st === "生效";
+  });
+
+  type Injection<T> = { card: T; 未确认: boolean };
+
+  // 生效卡先占位，待核卡只填剩余名额，且各自有独立上限（记忆 3 / 情感 1）。
+  // 待核卡不能挤掉生效卡：哪怕它是 system 名下这种设计伏笔最好用的悬念素材也一样。
+  function fill<
+    T extends { 状态?: unknown; audience?: unknown; 置信度?: unknown; updatedAt?: unknown }
+  >(cards: T[], 总上限: number, 待核上限: number): Injection<T>[] {
+    const 生效卡 = prioritizeSuspense(cards.filter((c) => cardStatus(c) === "生效"));
+    const out: Injection<T>[] = 生效卡.slice(0, 总上限).map((card) => ({ card, 未确认: false }));
+    const 剩余 = 总上限 - out.length;
+    if (剩余 > 0 && 待核上限 > 0) {
+      const 待核卡 = cards.filter((c) => cardStatus(c) === "待核").sort(byConfidence);
+      for (const card of 待核卡.slice(0, Math.min(待核上限, 剩余))) {
+        out.push({ card, 未确认: true });
+      }
+    }
+    return out;
+  }
+
+  const injectMemories = fill(可选记忆, MEMORY_INJECT_LIMIT, isDirector ? PENDING_MEMORY_LIMIT : 0);
+  const injectEmotions = fill(可选情感, EMOTION_INJECT_LIMIT, isDirector ? PENDING_EMOTION_LIMIT : 0);
   // 每张卡后面的知情标注：只有导演那份需要（角色看到的本来就已经过滤过）
   const tag = (card: MemoryCard | EmotionCard) =>
     isDirector ? ` ${audienceLabel(card)}` : "";
+  const 未确认标记 = (pending: boolean) => (pending ? "（未确认）" : "");
 
-  // 记忆卡 (最多5条)
+  // 记忆卡 (最多5条，其中待核最多3条)
   if (injectMemories.length > 0) {
     parts.push("[连续性上下文]");
-    injectMemories.slice(0, MEMORY_INJECT_LIMIT).forEach((m) => {
-      parts.push(`- ${m.主类型}：${m.内容}（${m.作用域}，${m.时间 || "未知"}）${tag(m)}`);
+    injectMemories.forEach(({ card: m, 未确认 }) => {
+      parts.push(
+        `- ${m.主类型}：${m.内容}（${m.作用域}，${m.时间 || "未知"}）${未确认标记(未确认)}${tag(m)}`
+      );
     });
   }
 
-  // 情感卡 (最多3条)
+  // 情感卡 (最多3条，其中待核最多1条)
   if (injectEmotions.length > 0) {
-    injectEmotions.slice(0, EMOTION_INJECT_LIMIT).forEach((e) => {
-      parts.push(`- 瞬时情绪：${e.主体}${e.标签}(${e.强度})，对象${e.对象 || "无"}${tag(e)}`);
+    injectEmotions.forEach(({ card: e, 未确认 }) => {
+      parts.push(
+        `- 瞬时情绪：${e.主体}${e.标签}(${e.强度})，对象${e.对象 || "无"}${未确认标记(未确认)}${tag(e)}`
+      );
     });
   }
 
@@ -325,7 +385,9 @@ export function buildContinuityContext(
       "[视角红线] 上面每张卡标了知情范围：你可以利用这些知情差异设计悬念与伏笔" +
         "（让某个角色先知道、让玩家先知道、或埋一条谁都还没察觉的设定），" +
         "但不得把标注「系统预埋·未揭示」的内容当作已经揭示的事实写出来，" +
-        "也不得让角色说出他不该知道的事。"
+        "也不得让角色说出他不该知道的事。" +
+        "另外，标注「（未确认）」的卡是玩家还没核过的抽取结果，只能当作可用的线索或可能性，" +
+        "不要把它当成既成事实来编排；不确定就换别的素材。"
     );
   }
 
@@ -473,8 +535,10 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
 export async function generateBannerOptions(input: WriterInput): Promise<string[]> {
   // 导演视角：走向卡是在替整场戏挑方向，不是角色在自言自语，所以不按角色过滤。
   // 全场卡都交给导演，每张标注知情范围；现实层与 5+3 上限由 buildContinuityContext 处理。
-  const memories = await getMemoryCards(input.sessionId, { status: "生效" });
-  const emotions = await getEmotionCards(input.sessionId, { status: "生效" });
+  // 这里读全部状态（不再只读生效）：待核卡是导演很好用的线索素材，
+  // 谁能进上下文、谁只能占剩余名额、谁要标「（未确认）」，统一由 buildContinuityContext 决定。
+  const memories = await getMemoryCards(input.sessionId);
+  const emotions = await getEmotionCards(input.sessionId);
   const waterLevels = await getWaterLevels(input.sessionId);
   const writerState = await getWriterState(input.sessionId);
 

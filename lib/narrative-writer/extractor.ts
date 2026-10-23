@@ -9,8 +9,8 @@ import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
 import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId, isSourceMessageAlive, sessionCharName } from "./storage";
-import type { MemoryCard, EmotionCard, WaterLevelState } from "./types";
-import { createDefaultWaterLevel, checkWaterLevelEligibility, normalizeAudience } from "./types";
+import type { MemoryCard, EmotionCard, WaterLevelState, CardStatus } from "./types";
+import { createDefaultWaterLevel, checkWaterLevelEligibility, normalizeAudience, CONFIDENCE_THRESHOLDS } from "./types";
 
 const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只在对话出口工作，负责把对话提炼成可长期使用的记忆卡与情感卡，并检查关系水位与执笔状态是否需要更新。你不替角色回话，不写正文，不做任何扮演。
 
@@ -244,6 +244,8 @@ export async function extractFromTurn(
         const card: MemoryCard = {
           ...item,
           id: generateId(),
+          // 状态门槛先于知情范围：代码决定这张卡能不能直接进正文
+          状态: gateNewCardStatus("memory", item.状态, item.置信度, item.主类型),
           // 知情范围同样以代码为准：模型给的值先归一化（别名换成当前角色名、
           // 词表外丢弃、缺失退 all），不接受它自由发挥
           audience: normalizeAudience(item.audience, 当前角色标识),
@@ -262,6 +264,8 @@ export async function extractFromTurn(
         const card: EmotionCard = {
           ...item,
           id: generateId(),
+          // 情感卡同样过状态门槛（阈值为情感档 0.65；情感没有世界变更这一类）
+          状态: gateNewCardStatus("emotion", item.状态, item.置信度),
           // 情感卡的知情范围与记忆卡同一套规则：角色的内心不能让玩家的角色看到，反之亦然
           audience: normalizeAudience(item.audience, 当前角色标识),
           来源消息ID: 来源消息ID,
@@ -321,6 +325,44 @@ async function applyWaterLevelUpdates(
  */
 function generateId(): string {
   return `nw_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * 新卡入库状态门槛（代码强制，不信模型给的状态）。
+ *
+ * 抽取提示词里写了"低档不建卡、中档标待核、世界变更一律待核"，但模型并不总照做：
+ * 实测它会给 0.2 置信度的卡标"生效"，也会把「世界变更」直接标"生效"。
+ * 这种卡一旦生效就进正文，角色会把它当已知事实——所以这里由代码兜一道：
+ * - 置信度低于该类卡「中」档阈值（记忆 0.6 / 情感 0.65）→ 待核；**不丢弃**，
+ *   玩家核过就能用，扔掉等于把这条信息永久丢掉；
+ * - 主类型「世界变更」→ 待核（世界设定的改动必须过玩家的眼）；
+ * - 其余状态沿用模型给的值，且**只降不升**：模型自己标了待核的卡，
+ *   代码不会因为"够格"就把它偷偷升成生效。
+ *
+ * 缺失或非法的置信度按最低处理（宁可多一张待核，不要多一张自动生效的）。
+ * 置信度阈值取自 CONFIDENCE_THRESHOLDS——这份门槛与提示词里的分档必须同源，
+ * 否则改一处忘一处，规则就会分叉。
+ */
+function gateNewCardStatus(
+  类别: "memory" | "emotion",
+  模型状态: unknown,
+  模型置信度: unknown,
+  主类型?: unknown
+): CardStatus {
+  const 允许的状态: CardStatus[] = ["生效", "待核", "冲突", "陈旧", "归档"];
+  const 原状态 =
+    typeof 模型状态 === "string" && (允许的状态 as string[]).includes(模型状态)
+      ? (模型状态 as CardStatus)
+      : "待核"; // 模型没给或给了词表外的值：新卡一律先待核，不给它默认生效
+
+  if (原状态 !== "生效") return 原状态;
+
+  const 下限 =
+    类别 === "memory" ? CONFIDENCE_THRESHOLDS.memory.medium : CONFIDENCE_THRESHOLDS.emotion.medium;
+  const 置信度 = typeof 模型置信度 === "number" && Number.isFinite(模型置信度) ? 模型置信度 : -1;
+  if (置信度 < 下限) return "待核";
+  if (类别 === "memory" && 主类型 === "世界变更") return "待核";
+  return "生效";
 }
 
 /**

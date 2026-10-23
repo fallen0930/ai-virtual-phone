@@ -696,6 +696,16 @@ export function onTurnsDiscarded(
   };
 }
 
+/**
+ * 当前坐在"角色位"上的角色名。抽取器规范化 audience 时要用它把旧别名 "character"
+ * 换成实际标识；热轨/补抽的调用方没传 characterName，就从对局本身取。
+ * 取不到返回空串——调用方据此退化成 "all"（宁可多给，绝不错杀整张卡）。
+ */
+export function sessionCharName(sessionId: string | null | undefined): string {
+  const sid = requireSessionId(sessionId, "sessionCharName");
+  return getMixSession(sid)?.charName?.trim() ?? "";
+}
+
 // ==================== 旧全局数据：备份与归属迁移 ====================
 
 export async function getMigrationState(): Promise<NarrativeMigrationState | null> {

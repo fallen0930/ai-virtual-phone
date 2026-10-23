@@ -9,7 +9,11 @@ import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
 import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId } from "./storage";
 import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy } from "./types";
-import { createDefaultWriterState } from "./types";
+import { createDefaultWriterState, visibleToCharacter, audienceLabel } from "./types";
+
+// 读侧的两个工具住在 types.ts（领域规则），这里转导出一次：
+// 执笔层是它们的唯一调用方，测试与后续改动都从 writer 这条入口看。
+export { visibleToCharacter, audienceLabel } from "./types";
 
 const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方向判断与正文书写的角色扮演 AI。玩家可能只给一句倾向，也可能什么都不给；方向、节奏、转折、正文全部由你判断和书写。你在同一次输出内完成全部工作，阶段过程不输出给用户，只输出最终结果。
 
@@ -23,11 +27,9 @@ const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方�
 
 # 视角限制（最高优先级红线）
 你的知识库包含上帝视角的设定，但你只能使用你所扮演角色能听到、看到、推测到的东西。
-- 连续性上下文里的记忆卡/情感卡已经过 audience 过滤，只包含你的角色能知道的信息
-- 如果某条信息标记为 audience=["user"]，你的角色不知道这件事
-- 如果某条信息标记为 audience=["narrator"]，这是世界设定但你的角色尚未察觉
-- 不要主动提及你的角色不可能知道的信息
-- 如果剧情需要信息差，让角色通过对话/观察/推理逐步发现，不要直接"知道"
+- 写正文时，连续性上下文里的卡已经按当前角色的知情范围过滤过，看不到的就是角色不知道的
+- 生成走向卡时你处在导演视角，卡片会带 [共同知晓] / [仅某角色知情] / [仅玩家知情] / [系统预埋·未揭示] 标注；可以用这种信息差设计悬念，但落笔写正文时仍然只能写角色知道的
+- 不要主动提及角色不可能知道的信息；剧情需要信息差就让角色通过对话/观察/推理逐步发现，不要直接"知道"
 
 # 内部阶段（在同一次输出内完成，不输出中间产物）
 1 解析玩家倾向：八维度（基调/节奏/焦点/关系方向/触发/主题/禁忌/密度）；玩家明示优先，未提及走默认，不追问；具体事件作为强约束但仍过三审与四闸；与人设/世界观/水位冲突以三者为准，报幕里说明"方向已调整"；什么都没给 → 全自主，不报"请给方向"。
@@ -132,24 +134,6 @@ export interface WriterOutput {
 }
 
 /**
- * 防全知视角过滤：只保留当前角色能知道的信息
- * - audience 包含 "all" → 所有人都知道
- * - audience 包含 "character" → 当前角色知道
- * - audience 包含 "narrator" → 只有旁白知道（角色不知道，过滤掉）
- * - audience 包含 "user" → 只有用户知道（角色不知道，过滤掉）
- * - 没有 audience 字段 → 兼容旧数据，默认保留
- */
-function filterByAudience<T extends { audience?: string[] }>(
-  items: T[],
-  currentCharacter: string
-): T[] {
-  return items.filter(item => {
-    if (!item.audience || item.audience.length === 0) return true; // 兼容旧数据
-    return item.audience.includes("all") || item.audience.includes("character");
-  });
-}
-
-/**
  * 计算当前会话的完成回合数
  * 每个回合 = 1 个 user turn + 1 个 assistant turn
  * 开场白（单独 assistant）不计入
@@ -229,29 +213,75 @@ export async function markExtractionComplete(
 }
 
 /**
- * 构建连续性上下文字符串
+ * 连续性上下文的一种视角。
+ * - 角色：写正文用。调用方先用 visibleToCharacter 过滤，这里只渲染，不加标注。
+ * - 导演：生成走向卡用。不按角色过滤（导演要知道全场），但每张卡标注知情范围，
+ *   排除作用域「现实层」的戏外聊天卡，末尾附一条视角红线。
  */
-function buildContinuityContext(
+export type ContinuityView = { 视角: "角色" } | { 视角: "导演" };
+
+/** 记忆卡注入上限（规范 v1.6 一期：5 条），导演视角同样受它约束 */
+const MEMORY_INJECT_LIMIT = 5;
+/** 情感卡注入上限（3 条） */
+const EMOTION_INJECT_LIMIT = 3;
+
+/** 悬念素材（system / user 名下的卡）在截断时优先保留：
+ *  这类卡是设计伏笔的原料，被排序挤掉就再也没机会用上了。 */
+function isSuspenseCard(card: { audience?: unknown }): boolean {
+  const raw = Array.isArray(card.audience) ? card.audience : [];
+  return raw.some(
+    (item) => typeof item === "string" && (item.trim() === "system" || item.trim() === "user" || item.trim() === "narrator")
+  );
+}
+
+/** 先按"悬念优先"稳定分组，其余保持调用方给的原顺序（列表读取时已按更新时间降序） */
+function prioritizeSuspense<T extends { audience?: unknown }>(cards: T[]): T[] {
+  const suspense: T[] = [];
+  const rest: T[] = [];
+  for (const card of cards) (isSuspenseCard(card) ? suspense : rest).push(card);
+  return [...suspense, ...rest];
+}
+
+/**
+ * 构建连续性上下文字符串（纯函数：输入卡与参数，输出字符串；不读存储、不看时间）
+ *
+ * view 缺省按角色视角处理，与历史行为一致。
+ */
+export function buildContinuityContext(
   memories: MemoryCard[],
   emotions: EmotionCard[],
   waterLevels: Record<string, WaterLevelState>,
   writerState: NarrativeWriterState,
-  hierarchy?: ContextHierarchy | null
+  hierarchy?: ContextHierarchy | null,
+  view: ContinuityView = { 视角: "角色" }
 ): string {
   const parts: string[] = [];
+  const isDirector = view.视角 === "导演";
+
+  // 导演视角排除「现实层」（戏外聊天）：那是玩家与角色在剧情之外的事，
+  // 拿来设计剧情就是混层。作用域缺失或「待确认」的卡仍然可用——分不清不等于不存在。
+  const injectMemories = isDirector
+    ? prioritizeSuspense(memories.filter((m) => String(m.作用域 ?? "") !== "现实层"))
+    : memories;
+  const injectEmotions = isDirector
+    ? prioritizeSuspense(emotions)
+    : emotions;
+  // 每张卡后面的知情标注：只有导演那份需要（角色看到的本来就已经过滤过）
+  const tag = (card: MemoryCard | EmotionCard) =>
+    isDirector ? ` ${audienceLabel(card)}` : "";
 
   // 记忆卡 (最多5条)
-  if (memories.length > 0) {
+  if (injectMemories.length > 0) {
     parts.push("[连续性上下文]");
-    memories.slice(0, 5).forEach((m) => {
-      parts.push(`- ${m.主类型}：${m.内容}（${m.作用域}，${m.时间 || "未知"}）`);
+    injectMemories.slice(0, MEMORY_INJECT_LIMIT).forEach((m) => {
+      parts.push(`- ${m.主类型}：${m.内容}（${m.作用域}，${m.时间 || "未知"}）${tag(m)}`);
     });
   }
 
   // 情感卡 (最多3条)
-  if (emotions.length > 0) {
-    emotions.slice(0, 3).forEach((e) => {
-      parts.push(`- 瞬时情绪：${e.主体}${e.标签}(${e.强度})，对象${e.对象 || "无"}`);
+  if (injectEmotions.length > 0) {
+    injectEmotions.slice(0, EMOTION_INJECT_LIMIT).forEach((e) => {
+      parts.push(`- 瞬时情绪：${e.主体}${e.标签}(${e.强度})，对象${e.对象 || "无"}${tag(e)}`);
     });
   }
 
@@ -287,6 +317,16 @@ function buildContinuityContext(
   }
   if (writerState.散落线头.length > 0) {
     parts.push(`- 散落线头：${writerState.散落线头.length} 条（${writerState.散落线头.join("、")}`);
+  }
+
+  // 导演视角的收口红线：放在全部素材与状态之后，最后读到的规则最不容易被冲掉。
+  if (isDirector) {
+    parts.push(
+      "[视角红线] 上面每张卡标了知情范围：你可以利用这些知情差异设计悬念与伏笔" +
+        "（让某个角色先知道、让玩家先知道、或埋一条谁都还没察觉的设定），" +
+        "但不得把标注「系统预埋·未揭示」的内容当作已经揭示的事实写出来，" +
+        "也不得让角色说出他不该知道的事。"
+    );
   }
 
   return parts.join("\n");
@@ -346,9 +386,9 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
   // 1. 召回上下文
   const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
   const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
-  // 防全知视角过滤
-  const memories = filterByAudience(allMemories, input.characterProfile.charName);
-  const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
+  // 角色视角：只把当前角色知道的东西交给它，玩家私密/系统预埋/别人的秘密一律不进上下文
+  const memories = visibleToCharacter(allMemories, input.characterProfile.charName);
+  const emotions = visibleToCharacter(allEmotions, input.characterProfile.charName);
   const waterLevels = await getWaterLevels(input.sessionId);
   const writerState = await getWriterState(input.sessionId);
 
@@ -431,15 +471,21 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
  * 生成多个报幕选项供用户选择（选择模式第一步）
  */
 export async function generateBannerOptions(input: WriterInput): Promise<string[]> {
-  const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
-  const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
-  // 防全知视角过滤
-  const memories = filterByAudience(allMemories, input.characterProfile.charName);
-  const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
+  // 导演视角：走向卡是在替整场戏挑方向，不是角色在自言自语，所以不按角色过滤。
+  // 全场卡都交给导演，每张标注知情范围；现实层与 5+3 上限由 buildContinuityContext 处理。
+  const memories = await getMemoryCards(input.sessionId, { status: "生效" });
+  const emotions = await getEmotionCards(input.sessionId, { status: "生效" });
   const waterLevels = await getWaterLevels(input.sessionId);
   const writerState = await getWriterState(input.sessionId);
 
-  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy(input.sessionId));
+  const continuityContext = buildContinuityContext(
+    memories,
+    emotions,
+    waterLevels,
+    writerState,
+    await getContextHierarchy(input.sessionId),
+    { 视角: "导演" }
+  );
 
   let characterWorldText = "";
   if (input.characterProfile.profileText && input.characterProfile.worldText) {
@@ -485,6 +531,7 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
 - 其余由你自主判断，优先选择能推动剧情或深化关系的选项
 - 至少包含1个转折预告（用"注意："标记）
 - 避免重复或相似的方向
+- 你现在是导演：卡片后的知情标注（[仅角色A知情]/[仅玩家知情]/[系统预埋·未揭示]）是可用素材，可以据此设计信息差与伏笔；标"未揭示"的设定不能当作已经揭示的事实写进报幕
 
 格式示例：
 （基调：X｜场景：Y｜走向：Z）
@@ -510,11 +557,15 @@ export async function writeWithSelectedBanner(
   input: WriterInput,
   selectedBanner: string
 ): Promise<WriterOutput> {
-  const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
-  const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
-  // 防全知视角过滤
-  const memories = filterByAudience(allMemories, input.characterProfile.charName);
-  const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
+  // 角色视角：报幕是导演挑的，正文由角色来演，这里要把角色不该知道的东西挡掉
+  const memories = visibleToCharacter(
+    await getMemoryCards(input.sessionId, { status: "生效" }),
+    input.characterProfile.charName
+  );
+  const emotions = visibleToCharacter(
+    await getEmotionCards(input.sessionId, { status: "生效" }),
+    input.characterProfile.charName
+  );
   const waterLevels = await getWaterLevels(input.sessionId);
   const writerState = await getWriterState(input.sessionId);
 
@@ -820,6 +871,13 @@ async function extractCardsFromSource(
       状态: "待核",
       时间: String(item.时间 ?? ""),
       证据: `由记忆整理（${new Date(now).toLocaleDateString()}）从${sourceLabel}提炼`,
+      // 整理产物一律显式写 all：这条链处理的是"双方公开聊过"的历史摘要，
+      // 而且提示词没要求模型给 audience，没有可归一化的输入。
+      // 显式写死还有一层作用：这些卡在语义上是"确定共同知晓"，
+      // 不是"没标过 audience 的旧数据"，读侧将来收紧默认行为时不会被误伤。
+      // 已知偏差：主类型「世界变更」中角色尚未察觉的那些，严格说该标 system，
+      // 但整理链分不清"已揭示"和"未揭示"，本轮保持 all 不动（已汇报）。
+      audience: ["all"],
       createdAt: now,
       updatedAt: now,
     };

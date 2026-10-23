@@ -25,8 +25,117 @@ export type ConfidenceLevel = "高" | "中" | "低";
 /** 卡片状态 */
 export type CardStatus = "生效" | "待核" | "冲突" | "陈旧" | "归档";
 
-/** 知情范围：谁"知道"这条信息 */
-export type Audience = "all" | "user" | "character" | "narrator";
+/**
+ * 知情范围：谁"知道"这条信息。
+ *
+ * 词表（写入侧入库前由 normalizeAudience 归一化，读侧按同一套词判断）：
+ * - "all"      共同知晓（对话里公开说过、双方都经历过的）
+ * - "user"     只有玩家知道（玩家内心独白、私下念头）
+ * - "system"   系统预埋、尚未揭示（世界设定变更但角色没察觉）
+ * - 其它字符串  具体角色标识：只有那个角色知道
+ *
+ * 旧别名（第一期数据里存在，读侧继续认，写侧不再产生）：
+ * - "character" 的语义是「本会话主角」——谁在当前角色位上就算谁，不指向某个固定角色；
+ *   写侧遇到它会被替换成当前角色名。
+ * - "narrator" 等价于 "system"，写侧统一换成 "system"。
+ *
+ * 已知限制（有意接受，不做批量迁移）：角色改名后，老卡里写的还是旧角色名，
+ * 读侧按名字匹配会失配 → 该卡对角色不可见、对导演仍可见。
+ * 根因是执笔层只拿到角色名字符串，没有稳定 id；把 materialId 传到执笔层记为待办 #28。
+ */
+export type Audience = "all" | "user" | "system" | (string & Record<never, never>);
+
+/** 写侧认识的旧别名与关键字 */
+const AUDIENCE_KEYWORDS = ["all", "user", "system"] as const;
+
+function pushUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value);
+}
+
+/**
+ * 写入侧规范化：不信模型给的 audience，逐元素清洗后才入库。
+ * - 非数组（缺失 / 空 / 字符串 / 对象）→ ["all"]
+ * - 逐项 trim；"all"/"user"/"system" 原样保留
+ * - "narrator" → "system"
+ * - "character" → 当前角色名（拿不到名字时退为 "all"，宁可多给也不错杀整张卡）
+ * - 等于当前角色名的字符串 → 保留该角色名
+ * - 其余元素（词表外的乱值、非字符串）→ 丢弃
+ * - 全部丢完为空 → ["all"]
+ *
+ * 注意：丢弃词表外角色名只发生在写入这一刻。库里已有的老卡不会被重写，
+ * 所以「角色名失配 → 角色看不到、导演看得到」那条限制依然成立。
+ */
+export function normalizeAudience(
+  value: unknown,
+  当前角色名?: string
+): Audience[] {
+  if (!Array.isArray(value)) return ["all"];
+  const me = typeof 当前角色名 === "string" ? 当前角色名.trim() : "";
+  const out: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const item = raw.trim();
+    if (!item) continue;
+    if ((AUDIENCE_KEYWORDS as readonly string[]).includes(item)) {
+      pushUnique(out, item);
+    } else if (item === "narrator") {
+      pushUnique(out, "system");
+    } else if (item === "character") {
+      pushUnique(out, me || "all");
+    } else if (me && item === me) {
+      pushUnique(out, me);
+    }
+    // 其余：词表外的值，丢弃
+  }
+  return out.length > 0 ? (out as Audience[]) : ["all"];
+}
+
+/**
+ * 读侧：这张卡对"当前这个角色"可见吗。
+ * 保留条件：没有 audience（旧数据）、空数组、含 "all"、含旧别名 "character"（=本会话主角）、
+ * 或含当前角色名。排除："user"、"system"/"narrator"、别人的角色名、词表外的乱值。
+ */
+export function visibleToCharacter<T extends { audience?: unknown }>(
+  cards: T[],
+  当前角色标识?: string
+): T[] {
+  const me = typeof 当前角色标识 === "string" ? 当前角色标识.trim() : "";
+  return cards.filter((card) => {
+    const raw = card.audience;
+    if (!Array.isArray(raw) || raw.length === 0) return true; // 兼容旧数据：视为共同知晓
+    for (const item of raw) {
+      if (typeof item !== "string") continue;
+      const value = item.trim();
+      if (!value) continue;
+      if (value === "all") return true;
+      // "character" 不是某个固定角色，指"当前坐在角色位上的那个人"，对谁都成立
+      if (value === "character") return true;
+      if (me && value === me) return true;
+    }
+    return false;
+  });
+}
+
+/** 导演视角下每张卡的知情标注 */
+export function audienceLabel(card: { audience?: unknown }): string {
+  const raw = Array.isArray(card.audience) ? card.audience : [];
+  const tags: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const value = item.trim();
+    if (!value) continue;
+    if (value === "all") pushUnique(tags, "共同知晓");
+    else if (value === "user") pushUnique(tags, "仅玩家知情");
+    else if (value === "system" || value === "narrator")
+      pushUnique(tags, "系统预埋·未揭示");
+    else if (value === "character") pushUnique(tags, "仅本会话主角知情");
+    else pushUnique(tags, `仅${value}知情`);
+  }
+  // 旧数据没有 audience 字段、或整串都是乱值 → 按共同知晓处理，导演至少不会漏看
+  if (tags.length === 0) tags.push("共同知晓");
+  return `[${tags.join("、")}]`;
+}
+
 
 /** 记忆卡 */
 export interface MemoryCard {

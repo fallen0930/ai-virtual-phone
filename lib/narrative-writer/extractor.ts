@@ -8,9 +8,9 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId, isSourceMessageAlive } from "./storage";
+import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId, isSourceMessageAlive, sessionCharName } from "./storage";
 import type { MemoryCard, EmotionCard, WaterLevelState } from "./types";
-import { createDefaultWaterLevel, checkWaterLevelEligibility } from "./types";
+import { createDefaultWaterLevel, checkWaterLevelEligibility, normalizeAudience } from "./types";
 
 const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只在对话出口工作，负责把对话提炼成可长期使用的记忆卡与情感卡，并检查关系水位与执笔状态是否需要更新。你不替角色回话，不写正文，不做任何扮演。
 
@@ -72,18 +72,9 @@ const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只�
 - 分不清 → 作用域标"待确认"，状态标"待核"
 
 # 知情范围 audience 判定（防全知视角，必填）
-audience 是数组，表示"谁知道这条信息"。取值：
-- "all"：双方都明确知道（对话中公开提及、共同经历）
-- "user"：只有用户/玩家知道（用户内心独白、用户私下决定、用户未说出口的话）
-- "character"：只有角色知道（角色内心独白、角色私下行动、角色未说出口的话）
-- "narrator"：只有旁白/世界书知道（世界设定变更但角色尚未察觉、未揭露的背景设定）
-
-判定规则：
-- 信息来自对话中的公开交流 → ["all"]
-- 信息来自角色的内心描写/未说出口的话 → ["character"]
-- 信息来自用户的内心描写/未说出口的话 → ["user"]
-- 世界变更但角色尚未察觉 → ["narrator"]
-- 如果不确定，默认 ["all"]（兼容旧数据）
+数组，只允许这四个值："all" 双方都知道 / "user" 只有玩家知道（玩家内心、私下念头） / "character" 只有当前角色知道（角色内心、私下行动、未说出口的话） / "narrator" 谁都还没察觉（未揭露的世界设定）。
+公开交流→all，角色内心→character，玩家内心→user，世界变更但角色没察觉→narrator，拿不准就 ["all"]。
+入库前代码会再规范化一次：别名换成实际角色名，词表外的值丢弃，缺失一律 all。
 
 # 硬规则
 1 无证据不建卡。记忆卡"稳定事实/经历节点"的证据必填；情感卡证据全部必填。
@@ -242,11 +233,20 @@ export async function extractFromTurn(
       !!来源消息ID && !isSourceMessageAlive(sid, 来源消息ID);
     const 失效归档原因 = "抽取落库时来源消息已不存在";
 
+    // audience 里的旧别名 "character" 指"本会话主角"，得知道主角是谁才能换成实际标识。
+    // 调用方传了 characterName（精抽/深度抽取）就用它；热轨没传，就从对局本身读；
+    // 两头都拿不到就留空，normalizeAudience 会把 "character" 退成 "all"。
+    const 当前角色标识 =
+      (context.characterName ?? "").trim() || sessionCharName(sid);
+
     for (const item of results) {
       if (item.kind === "memory") {
         const card: MemoryCard = {
           ...item,
           id: generateId(),
+          // 知情范围同样以代码为准：模型给的值先归一化（别名换成当前角色名、
+          // 词表外丢弃、缺失退 all），不接受它自由发挥
+          audience: normalizeAudience(item.audience, 当前角色标识),
           // 来源以代码为准，丢弃模型填的值
           来源消息ID: 来源消息ID,
           来源轮次: 来源轮次,
@@ -262,6 +262,8 @@ export async function extractFromTurn(
         const card: EmotionCard = {
           ...item,
           id: generateId(),
+          // 情感卡的知情范围与记忆卡同一套规则：角色的内心不能让玩家的角色看到，反之亦然
+          audience: normalizeAudience(item.audience, 当前角色标识),
           来源消息ID: 来源消息ID,
           来源轮次: 来源轮次,
           ...(来源已失效

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { kvKeysWithPrefix, kvRemove } from "@/lib/kv-db";
 import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
+import * as storageNamespace from "@/lib/narrative-writer/storage";
 import {
   deleteMemoryCard,
   getContextHierarchy,
@@ -59,6 +60,93 @@ vi.mock("@/lib/narrative-writer/storage", async (importOriginal) => {
 });
 
 const createdSessionIds = new Set<string>();
+
+// 线索卡/伏笔卡的分叉复制是本轮新增范围。这些函数还没实现，用命名空间导入 + 可选签名访问，
+// 让「还没实现」表现为断言失败而不是模块解析错误。
+type ThreadLike = {
+  id: string;
+  kind: string;
+  名称: string;
+  线索状态: string;
+  关联角色: string[];
+  上次推进轮次: number;
+  下一步可能: string;
+  最近变化: Array<{ 变化: string; 轮次?: number; 来源消息ID?: string }>;
+  状态: string;
+  来源消息ID?: string;
+  来源轮次?: number;
+  audience?: string[];
+  createdAt: number;
+  updatedAt: number;
+};
+type ForeshadowLike = {
+  id: string;
+  kind: string;
+  内容: string;
+  埋下轮次: number;
+  预期回收窗口: { 起: number; 止: number };
+  伏笔状态: string;
+  状态: string;
+  来源消息ID?: string;
+  来源轮次?: number;
+  audience?: string[];
+  createdAt: number;
+  updatedAt: number;
+};
+type ForkStorageApi = {
+  saveThreadCard?: (sessionId: string, card: ThreadLike) => Promise<void>;
+  listThreadCards?: (sessionId: string) => Promise<ThreadLike[]>;
+  saveForeshadowCard?: (
+    sessionId: string,
+    card: ForeshadowLike
+  ) => Promise<void>;
+  listForeshadowCards?: (sessionId: string) => Promise<ForeshadowLike[]>;
+};
+const forkStorage = storageNamespace as unknown as ForkStorageApi;
+
+function requireForkFn<K extends keyof ForkStorageApi>(
+  name: K
+): NonNullable<ForkStorageApi[K]> {
+  const fn = forkStorage[name];
+  expect(fn, `storage.${String(name)} 尚未实现`).toBeTypeOf("function");
+  return fn as NonNullable<ForkStorageApi[K]>;
+}
+
+function mkThread(id: string, 名称: string): ThreadLike {
+  const now = Date.now();
+  return {
+    id,
+    kind: "thread",
+    名称,
+    线索状态: "升温",
+    关联角色: ["角色A"],
+    上次推进轮次: 2,
+    下一步可能: "去当铺问来路",
+    最近变化: [{ 变化: "父场推进", 轮次: 2 }],
+    状态: "生效",
+    来源轮次: 2,
+    audience: ["all"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function mkForeshadow(id: string, 内容: string): ForeshadowLike {
+  const now = Date.now();
+  return {
+    id,
+    kind: "foreshadow",
+    内容,
+    埋下轮次: 1,
+    预期回收窗口: { 起: 3, 止: 6 },
+    伏笔状态: "未收",
+    状态: "生效",
+    来源轮次: 1,
+    audience: ["all"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 function makeSessionId(tag: string): string {
   const sid = `testfork_${tag}_${Date.now().toString(36)}_${Math.random()
@@ -242,6 +330,9 @@ describe("fork-copy: 分叉时继承父会话记忆", () => {
       copied: true,
       memories: 2,
       emotions: 1,
+      // 本轮新增：返回结构要能区分「判定为末尾分叉」与「线索/伏笔各复制了几张」
+      threads: 0,
+      foreshadows: 0,
     });
 
     const childMems = await listMemoryCards(childId);
@@ -325,6 +416,8 @@ describe("fork-copy: 分叉时继承父会话记忆", () => {
       copied: false,
       memories: 0,
       emotions: 0,
+      threads: 0,
+      foreshadows: 0,
     });
     expect(kvKeysWithPrefix(`narrative:${childId}:`)).toEqual([]);
     expect(await listMemoryCards(parent.id)).toHaveLength(2);
@@ -420,8 +513,63 @@ describe("fork-copy: 分叉时继承父会话记忆", () => {
       copied: false,
       memories: 0,
       emotions: 0,
+      threads: 0,
+      foreshadows: 0,
     });
     expect(kvKeysWithPrefix(`narrative:${childId}:`)).toEqual([]);
     expect(await listMemoryCards(parent.id)).toHaveLength(2);
+  });
+
+  it("线索卡与伏笔卡：末尾分叉复制进子场且互不影响，中间分叉一张都不带", async () => {
+    // 末尾分叉：悬念资产与记忆卡同属"这场戏的历史"，要一起带过去
+    const parent = makeSession(makeSessionId("t_parent"), makeTurns(2));
+    const childId = makeSessionId("t_child");
+    const child = makeChild(parent, childId, parent.turns.length);
+    saveMixSession(parent);
+    await seedParentData(parent.id);
+    await requireForkFn("saveThreadCard")(
+      parent.id,
+      mkThread(`${parent.id}_t1`, "父场线索")
+    );
+    await requireForkFn("saveForeshadowCard")(
+      parent.id,
+      mkForeshadow(`${parent.id}_f1`, "父场伏笔")
+    );
+    saveControl.calls = 0;
+
+    const copied = await copyNarrativeOnFork(child);
+    expect(copied).toMatchObject({ threads: 1, foreshadows: 1 });
+    const childThreads = await requireForkFn("listThreadCards")(childId);
+    expect(childThreads.map((t) => t.名称)).toEqual(["父场线索"]);
+    // 卡片 id 与关联信息原样带过去（命名空间已按会话分开）
+    expect(childThreads[0].id).toBe(`${parent.id}_t1`);
+    expect(childThreads[0].线索状态).toBe("升温");
+    expect(childThreads[0].最近变化).toHaveLength(1);
+    const childForeshadows = await requireForkFn("listForeshadowCards")(childId);
+    expect(childForeshadows.map((f) => f.内容)).toEqual(["父场伏笔"]);
+    expect(childForeshadows[0].预期回收窗口).toEqual({ 起: 3, 止: 6 });
+
+    // 子场改写不影响父场
+    await requireForkFn("saveThreadCard")(
+      childId,
+      { ...childThreads[0], 名称: "子场改写" }
+    );
+    const parentThreads = await requireForkFn("listThreadCards")(parent.id);
+    expect(parentThreads.map((t) => t.名称)).toEqual(["父场线索"]);
+
+    // 中间分叉：子场空记忆起步，线索卡一张都不带（判定拿不准也按这里处理）
+    const midParent = makeSession(makeSessionId("tm_parent"), makeTurns(2));
+    const midChildId = makeSessionId("tm_child");
+    const midChild = makeChild(midParent, midChildId, 2);
+    saveMixSession(midParent);
+    await requireForkFn("saveThreadCard")(
+      midParent.id,
+      mkThread(`${midParent.id}_t1`, "分叉点之后的线索")
+    );
+    saveControl.calls = 0;
+    const midResult = await copyNarrativeOnFork(midChild);
+    expect((midResult as unknown as { threads?: number }).threads).toBe(0);
+    expect(await requireForkFn("listThreadCards")(midChildId)).toEqual([]);
+    expect(kvKeysWithPrefix(`narrative:${midChildId}:`)).toEqual([]);
   });
 });

@@ -37,7 +37,12 @@ type WriterPendingApi = {
 type StoragePendingApi = {
   confirmAllPendingCards?: (
     sessionId: string
-  ) => Promise<{ memories: number; emotions: number }>;
+  ) => Promise<{
+    memories: number;
+    emotions: number;
+    threads: number;
+    foreshadows: number;
+  }>;
 };
 const writerApi = writerModule as unknown as WriterPendingApi;
 const storageApi = storageModule as unknown as StoragePendingApi;
@@ -444,7 +449,10 @@ describe("待核卡：批量确认", () => {
     await seed(other, [mkMemory("别场待核", ["all"], { 状态: "待核" })]);
 
     const 结果 = await storageApi.confirmAllPendingCards!(sid);
-    expect(结果).toEqual({ memories: 1, emotions: 1 });
+    // 本轮把批量确认扩到四类（线索卡/伏笔卡同批确认），返回结构多出两个字段；
+    // 这场夹具里没有线索/伏笔卡，所以是 0。四类数量的分开断言见
+    // tests/thread-foreshadow-cards.test.ts 用例 18。
+    expect(结果).toEqual({ memories: 1, emotions: 1, threads: 0, foreshadows: 0 });
 
     const statuses = await rawStatusesOfMemories(sid);
     expect(statuses[`${markOf("待核记忆")}这条记忆的内容`]).toBe("生效");

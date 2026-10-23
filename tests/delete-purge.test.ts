@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { kvGet, kvKeysWithPrefix, kvRemove, kvSet } from "@/lib/kv-db";
+import * as purgeStorage from "@/lib/narrative-writer/storage";
 import {
   deleteMixSession,
   deleteMixSessionBranch,
@@ -177,6 +178,26 @@ async function seedNarrative(sessionId: string) {
   return { memoryId, emotionId, historyId };
 }
 
+// 线索卡/伏笔卡是本轮新增的数据种类：还没实现的函数用命名空间导入 + 可选签名访问，
+// 让「还没实现」表现为断言失败，而不是模块解析错误。
+type PurgeCardLike = Record<string, unknown>;
+type PurgeStorageApi = {
+  saveThreadCard?: (sessionId: string, card: PurgeCardLike) => Promise<void>;
+  saveForeshadowCard?: (
+    sessionId: string,
+    card: PurgeCardLike
+  ) => Promise<void>;
+};
+const purgeApi = purgeStorage as unknown as PurgeStorageApi;
+
+function requirePurgeFn<K extends keyof PurgeStorageApi>(
+  name: K
+): NonNullable<PurgeStorageApi[K]> {
+  const fn = purgeApi[name];
+  expect(fn, `storage.${String(name)} 尚未实现`).toBeTypeOf("function");
+  return fn as NonNullable<PurgeStorageApi[K]>;
+}
+
 function setGlobalRaw(key: string, value: unknown): string {
   const raw = JSON.stringify(value);
   kvSet(key, raw);
@@ -206,8 +227,7 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 5));
 });
 
-describe("delete-purge: 删除对局时只清理本会话的执笔数据", () => {
-  it("删除会话 B：B 的 narrative 键全空，A 不受影响", async () => {
+describe("delete-purge: 删除对局时只清理本会话的执笔数据", () => {  it("删除会话 B：B 的 narrative 键全空，A 不受影响", async () => {
     const sidA = makeSessionId("a");
     const sidB = makeSessionId("b");
     saveMixSession(makeSession(sidA));
@@ -353,5 +373,58 @@ describe("delete-purge: 删除对局时只清理本会话的执笔数据", () =>
     });
     expect(await getContextHierarchy(sidA)).toBeNull();
     expect(await listNarrativeHistory(sidA)).toEqual([]);
+  });
+
+  it("线索卡与伏笔卡随会话删除一起清掉，别的会话不动", async () => {
+    const sidA = makeSessionId("threads-a");
+    const sidB = makeSessionId("threads-b");
+    saveMixSession(makeSession(sidA));
+    saveMixSession(makeSession(sidB));
+    await seedNarrative(sidA);
+    await seedNarrative(sidB);
+
+    const threadId = `${sidB}_t`;
+    const foreshadowId = `${sidB}_f`;
+    await requirePurgeFn("saveThreadCard")(sidB, {
+      id: threadId,
+      kind: "thread",
+      名称: "老桥下的硬币",
+      线索状态: "潜伏",
+      关联角色: [],
+      上次推进轮次: 1,
+      下一步可能: "去当铺问来路",
+      最近变化: [],
+      状态: "生效",
+      audience: ["all"],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await requirePurgeFn("saveForeshadowCard")(sidB, {
+      id: foreshadowId,
+      kind: "foreshadow",
+      内容: "雨夜未接的电话",
+      埋下轮次: 1,
+      预期回收窗口: { 起: 3, 止: 6 },
+      伏笔状态: "未收",
+      状态: "生效",
+      audience: ["all"],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // 键落在本会话命名空间里：narrative:{sid}:thread:{id} / :foreshadow:{id}
+    expect(kvGet(`narrative:${sidB}:thread:${threadId}`)).not.toBeNull();
+    expect(kvGet(`narrative:${sidB}:foreshadow:${foreshadowId}`)).not.toBeNull();
+    expect(kvKeysWithPrefix(`narrative:${sidB}:`)).toHaveLength(8);
+    expect(kvKeysWithPrefix(`narrative:${sidA}:`)).toHaveLength(6);
+
+    deleteMixSession(sidB);
+
+    expect(getMixSession(sidB)).toBeNull();
+    expect(kvKeysWithPrefix(`narrative:${sidB}:`)).toEqual([]);
+    expect(kvGet(`narrative:${sidB}:thread:${threadId}`)).toBeNull();
+    expect(kvGet(`narrative:${sidB}:foreshadow:${foreshadowId}`)).toBeNull();
+    // A 场一张不少
+    expect(kvKeysWithPrefix(`narrative:${sidA}:`)).toHaveLength(6);
   });
 });

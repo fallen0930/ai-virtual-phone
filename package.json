@@ -9,6 +9,7 @@
     "build": "node scripts/build-weixin-assistant-dist.mjs && node scripts/build-personal-push-dist.mjs && next build && node scripts/restore-backdrop-filter.mjs",
     "start": "node scripts/local-next-server.mjs --prod",
     "lint": "next lint",
+    "test": "vitest run",
     "check:sdk": "node scripts/check-custom-app-sdk-consistency.mjs",
     "check:weixin": "node scripts/check-weixin-prompt-equivalence.mjs",
     "check:push": "node scripts/check-personal-push-dist.mjs",
@@ -62,8 +63,10 @@
     "docx": "^9.11.0",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.1.0",
+    "fake-indexeddb": "6.2.5",
     "marked": "^18.1.1",
     "tailwindcss": "^4.2.1",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "4.1.11"
   }
 }

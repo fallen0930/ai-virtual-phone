@@ -8,7 +8,7 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId } from "./storage";
+import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId, isSourceMessageAlive } from "./storage";
 import type { MemoryCard, EmotionCard, WaterLevelState } from "./types";
 import { createDefaultWaterLevel, checkWaterLevelEligibility } from "./types";
 
@@ -164,6 +164,12 @@ async function callExtractorLLM(messages: LLMMessage[]): Promise<string> {
 /**
  * 从对话轮次中提取记忆卡与情感卡
  * sessionId 必填：卡一律落在这一场的命名空间里，不留全局写入入口
+ *
+ * context.来源 = 这次抽取是对会话里哪条回复做的：
+ * - 来源消息ID / 来源轮次 由这里传入，落库前由代码盖到每张卡上，
+ *   模型自己填的同名字段一律丢弃（它没见过 turns，报上来的轮次没有依据）；
+ * - 不传（补抽历史、深度抽取、记忆整理、执笔正文入库前就抽的那次）= 来源未知，
+ *   卡片不带这两个字段，永不被丢弃归档与竞态检查触碰。
  */
 export async function extractFromTurn(
   sessionId: string | null | undefined,
@@ -179,9 +185,20 @@ export async function extractFromTurn(
     worldText?: string;
     currentState?: any; // MixState - 包含天数等小票状态
     recentTurnsWithTicket?: Array<{ role: string; text: string; ticketRaw?: string }>;
+    来源?: { 消息ID?: string; 轮次?: number };
   }
 ): Promise<ExtractResult> {
   const sid = requireSessionId(sessionId, "extractFromTurn");
+  const 来源消息ID = context.来源?.消息ID;
+  const 来源轮次 = context.来源?.轮次;
+  // 抽取开始前的第一道检查：来源消息已经不在会话里（多半在等待期间被重说/回溯丢掉了），
+  // 这一次抽取没有任何意义，连大模型都不该调——省一次请求，也不会产出一批来源已失效的卡。
+  if (来源消息ID && !isSourceMessageAlive(sid, 来源消息ID)) {
+    console.log(
+      `[NarrativeWriter] 抽取跳过：来源消息 ${来源消息ID} 已不在对局 ${sid} 中`
+    );
+    return { memories: [], emotions: [] };
+  }
   const messages: LLMMessage[] = [
     { role: "system", content: EXTRACTOR_SYSTEM_PROMPT },
     {
@@ -218,11 +235,24 @@ export async function extractFromTurn(
     const emotions: EmotionCard[] = [];
     const waterLevelUpdates: Array<{ 作用域: string; 建议状态: string; 目标水位: string }> = [];
 
+    // 落库时再查一次来源：模型响应这几秒里玩家可能已经点了重说。
+    // 这一次抽取的结果属于一条已经不存在的话，卡可以留（内容也许还有用），
+    // 但绝不能以"生效"的身份进上下文——一律归档，并写明为什么。
+    const 来源已失效 =
+      !!来源消息ID && !isSourceMessageAlive(sid, 来源消息ID);
+    const 失效归档原因 = "抽取落库时来源消息已不存在";
+
     for (const item of results) {
       if (item.kind === "memory") {
         const card: MemoryCard = {
           ...item,
           id: generateId(),
+          // 来源以代码为准，丢弃模型填的值
+          来源消息ID: 来源消息ID,
+          来源轮次: 来源轮次,
+          ...(来源已失效
+            ? { 状态: "归档" as const, 归档原因: 失效归档原因 }
+            : {}),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -232,6 +262,11 @@ export async function extractFromTurn(
         const card: EmotionCard = {
           ...item,
           id: generateId(),
+          来源消息ID: 来源消息ID,
+          来源轮次: 来源轮次,
+          ...(来源已失效
+            ? { 状态: "归档" as const, 归档原因: 失效归档原因 }
+            : {}),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -242,8 +277,9 @@ export async function extractFromTurn(
       }
     }
 
-    // 处理水位更新
-    if (waterLevelUpdates.length > 0) {
+    // 处理水位更新：同一道来源检查——来源都没了，它建议的水位也不该盖上去。
+    // 注意这里只"跳过本次写入"，不回退历史水位（水位变更不带来源快照，见待办 #24）。
+    if (waterLevelUpdates.length > 0 && !来源已失效) {
       await applyWaterLevelUpdates(sid, waterLevelUpdates, context.currentWaterLevels);
     }
 
@@ -289,11 +325,16 @@ function generateId(): string {
  * 热轨抽取（Hot Extractor）：快速版，<3 秒
  * 只传正文 + 最近 3 轮，不传小票/尾调/状态快照
  * 用于执笔生成后立即出基线记忆卡
+ *
+ * 来源：这次抽取归属到哪条回复（消息ID + 轮次）。特调正常回复那条路径由引擎传进来；
+ * 执笔面板"生成正文"那一路暂时传不了——正文此刻还没插进对局、没有消息 id（已知缺口 #25），
+ * 不传即来源未知，卡片不参与丢弃归档与竞态检查。
  */
 export async function hotExtractFromNarrativeBody(
     sessionId: string | null | undefined,
     body: string,
-    recentTurns: string[] // 最近 3 轮正文
+    recentTurns: string[], // 最近 3 轮正文
+    来源?: { 消息ID?: string; 轮次?: number }
 ): Promise<ExtractResult> {
     const sid = requireSessionId(sessionId, "hotExtractFromNarrativeBody");
     const start = Date.now();
@@ -321,6 +362,7 @@ export async function hotExtractFromNarrativeBody(
             isPlotMode: true,
             existingCardsSummary,
             currentWaterLevels: waterLevels,
+            来源,
         });
         
         const elapsed = Date.now() - start;

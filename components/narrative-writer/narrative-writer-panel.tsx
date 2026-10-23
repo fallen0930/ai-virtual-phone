@@ -77,6 +77,28 @@ function persistRect(rect: Rect): void {
     try { window.localStorage.setItem(UI_KEY, JSON.stringify(rect)); } catch { /* ignore */ }
 }
 
+/**
+ * 归档卡的小字提示。
+ *
+ * 「归档」有两种来路：玩家自己点了归档，或者这张卡的来源回复被丢弃了
+ * （重说／回溯／编辑后截断／抽取竞态）由代码改判。前者不用解释，
+ * 后者必须在卡上说清楚——否则玩家只看到"归档"，不知道这条记忆为什么不能直接恢复生效。
+ *
+ * 只认归档原因里的这两类文案，其它原因（含未来手动归档的新文案）一律不显示。
+ */
+function discardedSourceHint(card: { 状态?: string; 归档原因?: string }): string | null {
+    if (card.状态 !== "归档" || !card.归档原因) return null;
+    const 因丢弃而归档 =
+        card.归档原因.includes("来源回复已被丢弃") || card.归档原因.includes("来源消息已不存在");
+    return 因丢弃而归档 ? "该卡来自已被丢弃的回复" : null;
+}
+
+/** 悬停在卡上时说明为什么被归档；没有原因就不加 title，免得空 tooltip */
+function archiveTitle(card: { 状态?: string; 归档原因?: string }): string | undefined {
+    if (card.状态 !== "归档") return undefined;
+    return card.归档原因 ? `归档原因：${card.归档原因}` : "已归档";
+}
+
 export function NarrativeWriterPanel() {
     const [open, setOpen] = useState(false);
     const [rect, setRect] = useState<Rect>(DEFAULT_RECT);
@@ -1931,7 +1953,7 @@ export function NarrativeWriterPanel() {
                                                 )
                                                 .slice(0, 50)
                                                 .map((card) => (
-                                                    <div key={card.id} style={{
+                                                    <div key={card.id} title={archiveTitle(card)} style={{
                                                         padding: "8px",
                                                         background: "rgba(255, 255, 255, 0.03)",
                                                         borderRadius: "6px",
@@ -1942,7 +1964,12 @@ export function NarrativeWriterPanel() {
                                                                 {card.主类型} · {card.主体} · {card.状态}
                                                                 {card.次标签?.length ? ` · ${card.次标签.map(t => `#${t}`).join(" ")}` : ""}
                                                             </div>
-                                                            <div style={{ display: "flex", gap: "4px" }}>
+                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                                                {discardedSourceHint(card) && (
+                                                                    <span style={{ fontSize: "10px", color: "#9ca3af" }}>
+                                                                        {discardedSourceHint(card)}
+                                                                    </span>
+                                                                )}
                                                                 {card.状态 === "待核" && (
                                                                     <button
                                                                         onClick={() => dataSessionId && updateMemoryCard(dataSessionId, card.id, { 状态: "生效" }).then(() => loadData())}
@@ -1952,6 +1979,15 @@ export function NarrativeWriterPanel() {
                                                                         ✅
                                                                     </button>
                                                                 )}
+                                                                {card.状态 === "归档" && (
+                                                                    <button
+                                                                        onClick={() => dataSessionId && updateMemoryCard(dataSessionId, card.id, { 状态: "生效", 归档原因: undefined }).then(() => loadData())}
+                                                                        title={card.归档原因 ? `恢复生效（归档原因：${card.归档原因}）` : "恢复生效"}
+                                                                        style={{ background: "none", border: "none", color: "#60a5fa", cursor: "pointer", padding: "2px", fontSize: "10px", fontWeight: 600 }}
+                                                                    >
+                                                                        恢复生效
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => handleOpenEdit("memory", card)}
                                                                     title="编辑"
@@ -1959,13 +1995,15 @@ export function NarrativeWriterPanel() {
                                                                 >
                                                                     ✏️
                                                                 </button>
-                                                                <button
-                                                                    onClick={() => dataSessionId && archiveMemoryCard(dataSessionId, card.id).then(() => loadData())}
-                                                                    title="归档"
-                                                                    style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
-                                                                >
-                                                                    📦
-                                                                </button>
+                                                                {card.状态 !== "归档" && (
+                                                                    <button
+                                                                        onClick={() => dataSessionId && archiveMemoryCard(dataSessionId, card.id).then(() => loadData())}
+                                                                        title="归档"
+                                                                        style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
+                                                                    >
+                                                                        📦
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => dataSessionId && deleteMemoryCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="删除"
@@ -1993,7 +2031,7 @@ export function NarrativeWriterPanel() {
                                                 .filter(e => !cardFilter.status || e.状态 === cardFilter.status)
                                                 .slice(0, 8)
                                                 .map((card) => (
-                                                    <div key={card.id} style={{
+                                                    <div key={card.id} title={archiveTitle(card)} style={{
                                                         padding: "8px",
                                                         background: "rgba(255, 255, 255, 0.03)",
                                                         borderRadius: "6px",
@@ -2002,7 +2040,12 @@ export function NarrativeWriterPanel() {
                                                             <div style={{ fontSize: "11px", color: "#6b7280" }}>
                                                                 {card.主体} · {card.标签}({card.强度}) · {card.状态}
                                                             </div>
-                                                            <div style={{ display: "flex", gap: "4px" }}>
+                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                                                {discardedSourceHint(card) && (
+                                                                    <span style={{ fontSize: "10px", color: "#9ca3af" }}>
+                                                                        {discardedSourceHint(card)}
+                                                                    </span>
+                                                                )}
                                                                 {card.状态 === "待核" && (
                                                                     <button
                                                                         onClick={() => dataSessionId && updateEmotionCard(dataSessionId, card.id, { 状态: "生效" } as any).then(() => loadData())}
@@ -2012,6 +2055,15 @@ export function NarrativeWriterPanel() {
                                                                         ✅
                                                                     </button>
                                                                 )}
+                                                                {card.状态 === "归档" && (
+                                                                    <button
+                                                                        onClick={() => dataSessionId && updateEmotionCard(dataSessionId, card.id, { 状态: "生效", 归档原因: undefined } as any).then(() => loadData())}
+                                                                        title={card.归档原因 ? `恢复生效（归档原因：${card.归档原因}）` : "恢复生效"}
+                                                                        style={{ background: "none", border: "none", color: "#60a5fa", cursor: "pointer", padding: "2px", fontSize: "10px", fontWeight: 600 }}
+                                                                    >
+                                                                        恢复生效
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => handleOpenEdit("emotion", card)}
                                                                     title="编辑"
@@ -2019,13 +2071,15 @@ export function NarrativeWriterPanel() {
                                                                 >
                                                                     ✏️
                                                                 </button>
-                                                                <button
-                                                                    onClick={() => dataSessionId && archiveEmotionCard(dataSessionId, card.id).then(() => loadData())}
-                                                                    title="归档"
-                                                                    style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
-                                                                >
-                                                                    📦
-                                                                </button>
+                                                                {card.状态 !== "归档" && (
+                                                                    <button
+                                                                        onClick={() => dataSessionId && archiveEmotionCard(dataSessionId, card.id).then(() => loadData())}
+                                                                        title="归档"
+                                                                        style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
+                                                                    >
+                                                                        📦
+                                                                    </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => dataSessionId && deleteEmotionCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="删除"

@@ -22,7 +22,12 @@
 // "列出本会话全部卡"和"删除本会话全部数据"都用一次前缀扫描完成，
 // 也天然保证任何读取入口都绕不开 sessionId。
 
-import { kvGet, kvSetAsync, kvRemove, kvKeysWithPrefix } from "@/lib/kv-db";
+import { kvGet, kvSet, kvSetAsync, kvRemove, kvKeysWithPrefix } from "@/lib/kv-db";
+// 来源检查要读对局的当前消息列表。这里构成 storage ↔ mixology/storage 的模块环
+// （mixology/storage 为了删对局时清理执笔数据，早就 import 了本模块）。
+// 两边的调用都只发生在函数体里，ESM 的函数声明在链接阶段就已就绪，
+// 模块求值顺序不会让 getMixSession 变成 undefined——但别再往这两个模块的顶层加互相调用的逻辑。
+import { getMixSession } from "@/lib/mixology/storage";
 import type {
   MemoryCard,
   EmotionCard,
@@ -591,6 +596,104 @@ export function purgeNarrativeSessionData(sessionId: string | null | undefined):
     removed++;
   }
   return removed;
+}
+
+// ==================== 来源检查与丢弃归档 ====================
+
+/** 同步读一份 JSON。消息移除都发生在同步链路里，归档必须当场做完，不能留一个飘着的 Promise */
+function nwGetSync<T>(key: string): T | null {
+  const raw = kvGet(key);
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return raw as unknown as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** 同步写：先更新内存缓存，落盘 fire-and-forget（与 kv-db 的同步写入口同一行为） */
+function nwSetSync(key: string, value: unknown): void {
+  kvSet(key, JSON.stringify(value));
+}
+
+/** 带来源字段的卡的窄视图：记忆卡与情感卡在这里同构，不必各自走一遍类型 */
+type SourceBearingCard = {
+  id: string;
+  状态?: string;
+  来源消息ID?: string;
+  归档原因?: string;
+};
+
+/**
+ * 来源消息还在不在这场对局里。
+ *
+ * 两个一律回答"在"的分支是有意为之：
+ * - 没有来源消息ID = 来源未知（旧数据、记忆整理、补抽历史、深度抽取的产出），
+ *   这些卡不归丢弃逻辑管，宁可留着也不凭猜测收起来；
+ * - 会话本身读不到（还没建好、或整局已删）时判断不了，也不能把整场卡误归档。
+ */
+export function isSourceMessageAlive(
+  sessionId: string | null | undefined,
+  messageId?: string | null
+): boolean {
+  const sid = requireSessionId(sessionId, "isSourceMessageAlive");
+  if (!messageId) return true;
+  const session = getMixSession(sid);
+  if (!session) return true;
+  return session.turns.some((t) => t.id === messageId);
+}
+
+/** 按前缀把「来源命中且状态还允许动」的卡改成归档，返回改动条数 */
+function archiveBySource(
+  prefix: string,
+  targets: Set<string>,
+  原因: string
+): number {
+  let changed = 0;
+  for (const key of kvKeysWithPrefix(prefix)) {
+    const card = nwGetSync<SourceBearingCard>(key);
+    if (!card) continue;
+    // 只动生效/待核。冲突/陈旧/已归档的卡状态与归档原因都保持原样——
+    // 它们各自已经有自己的说法（谁标的冲突、为什么陈旧、谁手动归档的），不该被这里覆盖。
+    if (card.状态 !== "生效" && card.状态 !== "待核") continue;
+    // 来源未知（没有来源消息ID）的卡直接跳过
+    if (!card.来源消息ID || !targets.has(card.来源消息ID)) continue;
+    nwSetSync(key, {
+      ...card,
+      状态: "归档",
+      归档原因: 原因,
+      updatedAt: Date.now(),
+    });
+    changed += 1;
+  }
+  return changed;
+}
+
+/**
+ * 消息被丢弃之后该做的事：把来源正是这批消息的卡**归档**（不删）。
+ *
+ * 为什么归档而不是删：卡片内容可能仍然可用（玩家事后觉得那段剧情确实发生过），
+ * 删了就找不回来；而"来源已消失的卡绝不能以生效身份进上下文"这条硬规则，
+ * 归档同样满足。恢复入口在面板的「已归档」筛选里，恢复时清除归档原因。
+ *
+ * 为什么同步：重说 / 回溯 / 撤回 / 编辑截断四条路径都是同步函数，
+ * 它们只该调用这一个入口，不该在引擎里铺业务逻辑，也不该留下"归档还没跑完就开始生成"的窗口。
+ */
+export function onTurnsDiscarded(
+  sessionId: string | null | undefined,
+  discardedTurnIds: string[],
+  原因: string
+): { memories: number; emotions: number } {
+  const sid = requireSessionId(sessionId, "onTurnsDiscarded");
+  const targets = new Set(
+    discardedTurnIds.filter((id) => typeof id === "string" && id.length > 0)
+  );
+  if (targets.size === 0) return { memories: 0, emotions: 0 };
+  return {
+    memories: archiveBySource(memoryPrefix(sid), targets, 原因),
+    emotions: archiveBySource(emotionPrefix(sid), targets, 原因),
+  };
 }
 
 // ==================== 旧全局数据：备份与归属迁移 ====================

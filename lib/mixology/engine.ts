@@ -41,7 +41,7 @@ import {
 
 // 执笔抽取引擎（特调与执笔共享记忆基础设施）
 import { hotExtractFromNarrativeBody } from "../narrative-writer/extractor";
-import { getExtractionRules, getContextHierarchy, saveContextHierarchy } from "../narrative-writer/storage";
+import { getExtractionRules, getContextHierarchy, saveContextHierarchy, onTurnsDiscarded } from "../narrative-writer/storage";
 import { incrementTurnCount, markExtractionComplete } from "../narrative-writer/writer";
 import {
     advanceMixState,
@@ -693,10 +693,13 @@ async function runMixGeneration(
             const worldText = character?.kind === "character" ? mixCardWorldText(character) : "";
             
             // 热轨抽取（快速版，<3 秒）
+            // 来源带上这一条回复的消息 id：抽取是异步的，玩家若在这几秒里点了重说，
+            // 抽取器落库前会查出这条消息已经不在，卡片直接归档，不会以"生效"混进上下文。
             await hotExtractFromNarrativeBody(
                 updated.id,
                 lastAssistantTurn.text,
-                recentTurns.map(t => t.text)
+                recentTurns.map(t => t.text),
+                { 消息ID: lastAssistantTurn.id, 轮次: assistantTurns }
             );
             
             // 标记抽取完成，更新 lastExtractedTurn
@@ -893,6 +896,8 @@ export async function rerollMixReply(sessionId: string, signal?: AbortSignal, on
     }
     const trimmedSession = withRolledBackState(current, current.turns.slice(0, -1));
     saveMixSession(trimmedSession);
+    // 这条回复作废了。它抽出的记忆卡/情感卡不删——归档，写明为什么。
+    onTurnsDiscarded(sessionId, [last.id], "来源回复已被丢弃（重说）");
     const beforeLast = trimmedSession.turns[trimmedSession.turns.length - 1];
     // 上一条也是 assistant（继续产生的），补一个不落库的推进指令避免连续 assistant 消息
     const nudge = beforeLast?.role === "assistant"
@@ -947,6 +952,8 @@ export function truncateMixAfterTurn(sessionId: string, turnId: string): MixSess
     if (idx < 0) throw new ChatEngineError("消息不存在。");
     const updated = withRolledBackState(current, current.turns.slice(0, idx + 1));
     saveMixSession(updated);
+    // 回溯掉的那段历史里没有一条消息还活着，它们抽出的卡全部归档
+    onTurnsDiscarded(sessionId, current.turns.slice(idx + 1).map((t) => t.id), "来源回复已被丢弃（回溯）");
     return updated;
 }
 
@@ -1052,6 +1059,16 @@ export function editMixTurn(sessionId: string, turnId: string, newText: string):
     const later = canReplayMixFrom(current, idx) ? current.turns.slice(idx + 1) : [];
     const updated = withRolledBackState(current, [...kept, edited, ...later]);
     saveMixSession(updated);
+    // 重画不了、被截掉的那些轮次同样作废了。可回放时 later 非空、一条没丢，这里就是空数组，
+    // 不该也不会归档任何东西。
+    // （被编辑的这一条本身 id 不变，它的旧卡继续挂在同一条消息上——已知限制，见 MANUAL_CHECKLIST）
+    if (later.length === 0) {
+        onTurnsDiscarded(
+            sessionId,
+            current.turns.slice(idx + 1).map((t) => t.id),
+            "来源回复已被丢弃（编辑后无法重画，已截断）"
+        );
+    }
     return updated;
 }
 
@@ -1237,6 +1254,12 @@ export function undoMixLastRound(sessionId: string): MixSession {
     if (lastUserIdx < 0) throw new ChatEngineError("还没有可以撤回的发言。");
     const updated = withRolledBackState(current, current.turns.slice(0, lastUserIdx));
     saveMixSession(updated);
+    // 撤回掉的那一轮连同它的回复一起没了，回复抽出的卡归档
+    onTurnsDiscarded(
+        sessionId,
+        current.turns.slice(lastUserIdx).map((t) => t.id),
+        "来源回复已被丢弃（撤回）"
+    );
     return updated;
 }
 
@@ -1340,10 +1363,16 @@ export async function insertNarrativeTurn(sessionId: string, narrativeBody: stri
             }));
             
             // 热轨抽取（快速版，<3 秒）
+            // 执笔正文已经作为 turn 落库了，消息 id 现成，来源照传：
+            // 之后回溯/重说把这条正文丢掉时，它抽出的卡同样会被归档。
             await hotExtractFromNarrativeBody(
                 sessionId,
                 finalText,
-                recentTurns.map(t => t.text)
+                recentTurns.map(t => t.text),
+                {
+                    消息ID: turn.id,
+                    轮次: updated.turns.filter(t => t.role === "assistant").length,
+                }
             );
         } catch (err) {
             console.error("[Mixology] Narrative-turn extraction failed:", err);

@@ -42,7 +42,12 @@ export interface MemoryCard {
   次标签?: string[];
   对象?: string;
   时间?: string;
+  /** 来源轮次：由代码在落库那一刻按会话实际轮数盖写，不信模型给的值 */
   来源轮次?: number;
+  /** 来源消息ID：这张卡是从会话里哪条回复抽出来的。缺失 = 来源未知（旧数据、整理/补抽/深度抽取产出） */
+  来源消息ID?: string;
+  /** 归档原因：仅在状态为「归档」时有意义，写明是谁、为什么把这张卡收起来的 */
+  归档原因?: string;
   证据: string; // 原话或可观察行为
   关联ID?: string;
   audience?: Audience[]; // 新增：知情范围（防全知视角）
@@ -83,6 +88,10 @@ export interface EmotionCard {
   置信度: number;
   状态: CardStatus;
   时间?: string;
+  /** 来源轮次 / 来源消息ID / 归档原因：与记忆卡同一套语义，缺失即来源未知 */
+  来源轮次?: number;
+  来源消息ID?: string;
+  归档原因?: string;
   audience?: Audience[]; // 新增：知情范围（防全知视角）
   createdAt: number;
   updatedAt: number;

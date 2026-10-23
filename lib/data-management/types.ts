@@ -8,6 +8,7 @@ export type DataModuleId =
   | "apps"
   | "resource_hub"
   | "creative"
+  | "narrative"
   | "cache";
 
 export type IconVariant = "action" | "success" | "warning" | "danger" | "teal";

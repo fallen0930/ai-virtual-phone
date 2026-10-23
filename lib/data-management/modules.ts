@@ -371,6 +371,23 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
       },
     ],
   },
+  {
+    id: "narrative",
+    label: "执笔记忆",
+    description: "按对局隔离的记忆卡、情感卡、关系水位、剧情大纲与抽取规则（含旧数据备份与迁移标记）",
+    variant: "teal",
+    sources: [
+      {
+        type: "kv",
+        label: "执笔数据（narrative:*）",
+        // 一个前缀覆盖全部：会话隔离键 narrative:{sessionId}:*、旧全局数据、
+        // 迁移备份键 narrative:legacy_backup_v1、迁移标记 narrative:migration_state_v1、
+        // 抽取规则 narrative:extraction_rules。登记为 owned 前缀后，"缓存与未分类数据"
+        // 的 includeAll 会自动排除它们，不再被误清。
+        prefixes: ["narrative:"],
+      },
+    ],
+  },
 ];
 
 const ownedKvKeys = PRIMARY_DATA_MODULES.flatMap((module) => module.sources.flatMap((source) =>

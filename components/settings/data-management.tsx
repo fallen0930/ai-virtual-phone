@@ -100,6 +100,7 @@ const MODULE_ICONS: Record<DataModuleId, LucideIcon> = {
   apps: Smartphone,
   resource_hub: Store,
   creative: Sparkles,
+  narrative: Database,
   cache: Archive,
 };
 
@@ -113,6 +114,7 @@ const MODULE_ACCENTS: Record<DataModuleId, string> = {
   apps: CONTENT_APP_ACCENTS.calendar,
   resource_hub: CONTENT_APP_ACCENTS.shopping,
   creative: CONTENT_APP_ACCENTS.story,
+  narrative: BINDING_ACCENTS.memory,
   cache: BINDING_ACCENTS.regex,
 };
 
@@ -1135,7 +1137,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                   ? "将按规则压缩/清理过期动态媒体：4 天以上压缩图片，7 天以上清理聊天图片、朋友圈/小红书真实图和本地音乐，并清理确定无引用的旧主题素材。壁纸、图标、dock、字体等仍在引用的常驻资源不会删除。是否继续？"
                   : confirmRequest.type === "orphan-theme"
                     ? "将扫描当前仍被引用的主题素材，只删除确定无引用的旧图片、旧字体、旧 dock、旧图标皮肤等素材。是否继续？"
-                    : `清理 ${confirmRequest.labels} 会删除对应数据。建议先备份。是否继续？`
+                    : `清理 ${confirmRequest.labels} 会删除对应数据。${confirmRequest.moduleIds.includes("narrative") ? "此操作会删除所有聊天的记忆卡、情感卡、剧情状态，以及尚未迁移的旧版记忆及其备份，无法恢复。" : "建议先备份。"}是否继续？`
           }
           icon={confirmRequest.type === "export" ? Download : confirmRequest.type === "import" ? Upload : confirmRequest.type === "media-maintenance" ? Archive : AlertTriangle}
           variant={confirmRequest.type === "clear" || confirmRequest.type === "media-maintenance" || confirmRequest.type === "orphan-theme" || (confirmRequest.type === "import" && confirmRequest.overwrite) ? "danger" : "action"}

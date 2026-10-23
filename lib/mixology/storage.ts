@@ -5,6 +5,7 @@
 
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
 import { dropMixPendingForSession } from "./pending-queue";
+import { purgeNarrativeSessionData } from "../narrative-writer/storage";
 import type {
     MixConnector,
     MixFavoritePreset,
@@ -397,6 +398,9 @@ export function deleteMixSession(id: string): void {
     if (changed) writeJson(SESSION_FOLDERS_KEY, folders);
     // 缓冲发送区里这场的待发消息一并作废，不给孤儿数据留存档
     dropMixPendingForSession(id);
+    // 这场对局的执笔记忆（记忆卡/情感卡/水位/执笔状态/大纲/历史）同步清理，
+    // 不留 narrative:{id}:* 孤儿。purge 是同步 API，和上面两类清理同构。
+    purgeNarrativeSessionData(id);
 }
 
 /**

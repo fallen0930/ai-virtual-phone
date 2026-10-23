@@ -2193,7 +2193,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                     setSessionMenu(null);
                                     setConfirm({
                                         title: "删除这场酒局？",
-                                        body: <>{sessionDisplayName(target)} 的 {mixRoundCount(target.turns)} 轮对话会一起消失，无法找回。</>,
+                                        body: <>{sessionDisplayName(target)} 的 {mixRoundCount(target.turns)} 轮对话会一起消失，无法找回。删除聊天将同时删除该聊天的记忆卡和剧情状态。</>,
                                         confirmText: "删除",
                                         tone: "danger",
                                         run: () => {

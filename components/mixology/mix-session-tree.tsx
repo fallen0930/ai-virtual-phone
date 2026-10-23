@@ -390,7 +390,7 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
                     <div className="mix-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="mix-modal-head"><span>删除这条支线？</span></div>
                         <div className="mix-modal-body">
-                            <p className="mix-fork-from">它的子支线会<b>上提一级</b>挂到父节点（根被删则各自成根），进度不丢、树不散。</p>
+                            <p className="mix-fork-from">它的子支线会<b>上提一级</b>挂到父节点（根被删则各自成根），进度不丢、树不散。删除聊天将同时删除该聊天的记忆卡和剧情状态。</p>
                         </div>
                         <div className="mix-modal-foot">
                             <button type="button" className="mix-btn" onClick={() => setConfirmDelete(null)}>取消</button>

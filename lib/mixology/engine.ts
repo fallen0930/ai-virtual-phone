@@ -42,6 +42,7 @@ import {
 // 执笔抽取引擎（特调与执笔共享记忆基础设施）
 import { hotExtractFromNarrativeBody } from "../narrative-writer/extractor";
 import { getExtractionRules, getContextHierarchy, saveContextHierarchy } from "../narrative-writer/storage";
+import { incrementTurnCount, markExtractionComplete } from "../narrative-writer/writer";
 import {
     advanceMixState,
     buildMixConditionContext,
@@ -667,6 +668,9 @@ async function runMixGeneration(
     
     setTimeout(async () => {
         try {
+            // 递增全局轮次计数（幂等，只在有新回合时递增）
+            const turnResult = await incrementTurnCount(updated.id, updated.turns);
+            
             if (!(await shouldExtract())) return;
             
             // 获取最后一轮 assistant 回复的文本
@@ -690,24 +694,31 @@ async function runMixGeneration(
             
             // 热轨抽取（快速版，<3 秒）
             await hotExtractFromNarrativeBody(
+                updated.id,
                 lastAssistantTurn.text,
                 recentTurns.map(t => t.text)
             );
             
-            // 验证小票状态是否正确保存
-            console.log(`[Mixology] Turn ${totalTurns} extraction completed, state preserved:`, JSON.stringify(updated.state));
+            // 标记抽取完成，更新 lastExtractedTurn
+            await markExtractionComplete(updated.id);
             
-            // 检查是否需要 L2/L3 压缩
-            const hierarchy = await getContextHierarchy();
-            if (hierarchy && assistantTurns > 0) {
-                const turnsSinceLastCompress = totalTurns - (hierarchy.lastCompressedAt ? 
-                    updated.turns.findIndex(t => t.createdAt >= hierarchy.lastCompressedAt) : 0);
-                
-                // 每20轮或自上次压缩以来新增≥5000字时触发 L2 摘要
+            // 验证小票状态是否正确保存
+            console.log(`[Mixology] Turn ${turnResult.currentTurn} extraction completed, state preserved:`, JSON.stringify(updated.state));
+            
+            // 检查是否需要 L2/L3 压缩（使用全局轮次计数）
+            // 量纲必须统一成"回合"：lastCompressedAt 存的是 Date.now() 时间戳，
+            // 用它减回合数会得到一个约 -1.7e12 的巨大负数，条件永远不成立。
+            const hierarchy = await getContextHierarchy(updated.id);
+            if (hierarchy) {
+                const lastCompressedTurn = Number.isFinite(hierarchy.lastCompressedTurn)
+                    ? Math.floor(hierarchy.lastCompressedTurn as number)
+                    : 0; // 旧数据没这个字段，视为从未压缩
+                const turnsSinceLastCompress = turnResult.currentTurn - lastCompressedTurn;
+
+                // 每 20 轮触发一次 L2 摘要
                 if (turnsSinceLastCompress >= 20) {
-                    // TODO: 实际的 L2 摘要生成逻辑
-                    // 当前为占位，后续接入 LLM 调用
-                    console.log(`[Mixology] Trigger L2 summary at turn ${totalTurns}`);
+                    // TODO: 任务 8 实现自动压缩
+                    console.log(`[Mixology] Would trigger L2 summary at turn ${turnResult.currentTurn} (${turnsSinceLastCompress} turns since last compress)`);
                 }
             }
         } catch (err) {
@@ -1330,6 +1341,7 @@ export async function insertNarrativeTurn(sessionId: string, narrativeBody: stri
             
             // 热轨抽取（快速版，<3 秒）
             await hotExtractFromNarrativeBody(
+                sessionId,
                 finalText,
                 recentTurns.map(t => t.text)
             );

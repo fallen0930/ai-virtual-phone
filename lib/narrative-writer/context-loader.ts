@@ -2,14 +2,13 @@
 // 执笔插件 · 上下文加载器：从 mixology session 提取人设、世界观、约束等
 //
 // 数据源优先级：
-// 1. 当前活跃的 mixology session（recipe 中的 materials）
-// 2. 若无活跃 session，使用 builtin-preset 的默认人设
-// 3. 执笔状态、关系水位从 kv-db 读取
+// 1. 当前活跃的 mixology session（recipe 中的 materials）——只认 localStorage 里的 activeId
+// 2. 执笔状态、关系水位按会话从 kv-db 读取，必须带上 sessionId
 
-import { getMixSession, loadMixSessions } from "@/lib/mixology/storage";
+import { getMixSession } from "@/lib/mixology/storage";
 import type { MixSession, MixCharacterCard, MixTextMaterial } from "@/lib/mixology/types";
 import { resolveMixRecipeMaterials } from "@/lib/mixology/storage";
-import { getWriterState, getWaterLevels } from "./storage";
+import { getWriterState, getWaterLevels, requireSessionId } from "./storage";
 import type { NarrativeWriterState, WaterLevelState } from "./types";
 import { createDefaultWriterState } from "./types";
 
@@ -44,31 +43,20 @@ export interface CharacterWorldContext {
 
 /**
  * 获取当前活跃的 mixology session
- * 策略：优先从 localStorage 读取当前打开的 session ID（mixology-game 写入）
+ * 只认 localStorage 里当前打开的 session ID（由 mixology-game 写入）。
+ * 记忆已按会话隔离，"猜一个最近的 session"会把 A 场的记忆读进 B 场，
+ * 所以取消按 updatedAt 的兜底；拿不到就返回 null，由调用方提示先打开对局。
  */
 export function getActiveMixSession(): MixSession | null {
-  // 1. 优先读 localStorage 里当前打开的 session
-  if (typeof window !== "undefined") {
-    try {
-      const activeId = window.localStorage.getItem("mixology_active_session_id");
-      if (activeId) {
-        const session = getMixSession(activeId);
-        if (session) return session;
-      }
-    } catch { /* ignore */ }
-  }
-
-  // 2. 退而求其次：取有对话内容的最近 session
-  const sessions = loadMixSessions();
-  if (sessions.length === 0) return null;
-
-  const withTurns = sessions.filter(s => s.turns && s.turns.length > 0);
-  if (withTurns.length > 0) {
-    return withTurns.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-  }
-
-  // 3. 最后兜底：取最近更新的
-  return sessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (typeof window === "undefined") return null;
+  try {
+    const activeId = window.localStorage.getItem("mixology_active_session_id");
+    if (activeId) {
+      const session = getMixSession(activeId);
+      if (session) return session;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 /**
@@ -145,30 +133,30 @@ export async function loadCharacterWorldFromSession(
 
 /**
  * 加载完整的执笔上下文（人设 + 世界观 + 水位 + 执笔状态）
+ * sessionId 必填：水位与执笔状态已按会话隔离，缺了就没法确定读哪一场
  */
 export async function loadFullNarrativeContext(
-  sessionId?: string
+  sessionId: string | null | undefined
 ): Promise<{
   characterWorld: CharacterWorldContext | null;
   waterLevels: Record<string, WaterLevelState>;
   writerState: NarrativeWriterState;
 }> {
-  // 1. 确定 session
-  const targetSessionId = sessionId || getActiveMixSession()?.id;
-  const characterWorld = targetSessionId
-    ? await loadCharacterWorldFromSession(targetSessionId)
-    : null;
+  const sid = requireSessionId(sessionId, "loadFullNarrativeContext");
+
+  // 1. 人设与世界观
+  const characterWorld = await loadCharacterWorldFromSession(sid);
 
   // 2. 加载水位
-  const waterLevels = await getWaterLevels();
+  const waterLevels = await getWaterLevels(sid);
 
   // 3. 加载执笔状态
-  const writerState = await getWriterState();
+  const writerState = await getWriterState(sid);
 
   return {
     characterWorld,
     waterLevels,
-    writerState: writerState || createDefaultWriterState(),
+    writerState: writerState || createDefaultWriterState(sid),
   };
 }
 

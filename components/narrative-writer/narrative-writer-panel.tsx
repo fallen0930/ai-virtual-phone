@@ -13,10 +13,10 @@ import {
     subscribeControlDockState,
 } from "@/lib/floating-controls-store";
 import { loadCharacterWorldFromSession, getActiveMixSession } from "@/lib/narrative-writer/context-loader";
-import { writeNarrative, generateBannerOptions, writeWithSelectedBanner, compressNarrativeMemory, extractMemoriesFromCompression, NARRATIVE_CHUNK_SIZE } from "@/lib/narrative-writer/writer";
+import { writeNarrative, generateBannerOptions, writeWithSelectedBanner, compressNarrativeMemory, extractMemoriesFromCompression, computeCurrentTurn, NARRATIVE_CHUNK_SIZE } from "@/lib/narrative-writer/writer";
 import { insertNarrativeTurn } from "@/lib/mixology/engine";
-import { backfillExtraction, hotExtractFromNarrativeBody, deepExtractFromNarrativeBody } from "@/lib/narrative-writer/extractor";
-import { generateSmartRecommendations, type SceneRecommendation } from "@/lib/narrative-writer/recommender";
+import { backfillExtraction, deepExtractFromNarrativeBody } from "@/lib/narrative-writer/extractor";
+import { generatePlotPreviews, type PlotPreview } from "@/lib/narrative-writer/recommender";
 import {
   getMemoryCards,
   getEmotionCards,
@@ -115,6 +115,9 @@ export function NarrativeWriterPanel() {
     const [contextHierarchy, setContextHierarchy] = useState<ContextHierarchy | null>(null);
     const [extractionRules, setExtractionRules] = useState<ExtractionRules | null>(null);
     const [dataLoading, setDataLoading] = useState(false);
+    // 数据面板当前读的是哪一场的记忆。记忆已按会话隔离，面板必须在载入前拿到这个 id，
+    // 后续所有卡片增删改都要用它，不能退回"读全部"。
+    const [dataSessionId, setDataSessionId] = useState<string | null>(null);
     
     // 卡片管理状态
     const [editingCard, setEditingCard] = useState<{ type: "memory" | "emotion"; card: MemoryCard | EmotionCard } | null>(null);
@@ -135,30 +138,41 @@ export function NarrativeWriterPanel() {
     const ETA_ROLLING_WINDOW = 3; // 取最近 3 步的均值
     const ETA_CAP_MS = 30 * 60 * 1000; // 预估上限 30 分钟，避免吓人
 
-    // 场景推荐相关状态
-    const [sceneRecommendations, setSceneRecommendations] = useState<SceneRecommendation[]>([]);
+    // 剧情预告相关状态
+    const [sceneRecommendations, setSceneRecommendations] = useState<PlotPreview[]>([]);
     const [loadingRecommendations, setLoadingRecommendations] = useState(false);
     const [selectedScene, setSelectedScene] = useState<string | null>(null);
-    const [editingScene, setEditingScene] = useState<SceneRecommendation | null>(null);
+    const [editingScene, setEditingScene] = useState<PlotPreview | null>(null);
+    // 每张卡当前选中的维度
+    const [selectedDimensions, setSelectedDimensions] = useState<Record<string, { focus?: string; intensity?: string; tempo?: string }>>({});
     
-    // 加载场景推荐
+    // 切换维度选项
+    const handleToggleDimension = useCallback((sceneId: string, dim: 'focus' | 'intensity' | 'tempo', value: string) => {
+        setSelectedDimensions(prev => {
+            const current = prev[sceneId] || {};
+            const next = { ...current, [dim]: current[dim] === value ? undefined : value };
+            return { ...prev, [sceneId]: next };
+        });
+    }, []);
+    
+    // 加载剧情预告
     const loadRecommendations = useCallback(async () => {
         setLoadingRecommendations(true);
         try {
             const activeSession = getActiveMixSession();
             if (!activeSession) return;
             
-            const memories = await getMemoryCards({ status: "生效" });
-            const pendingMemories = await getMemoryCards({ status: "待核" });
-            const emotions = await getEmotionCards({ status: "生效" });
-            const waterLevels = await getWaterLevels();
-            const writerState = await getWriterState();
-            const hierarchy = await getContextHierarchy();
+            const memories = await getMemoryCards(activeSession.id, { status: "生效" });
+            const pendingMemories = await getMemoryCards(activeSession.id, { status: "待核" });
+            const emotions = await getEmotionCards(activeSession.id, { status: "生效" });
+            const waterLevels = await getWaterLevels(activeSession.id);
+            const writerState = await getWriterState(activeSession.id);
+            const hierarchy = await getContextHierarchy(activeSession.id);
             const context = await loadCharacterWorldFromSession(activeSession.id);
             
             const currentWaterLevel = waterLevels['戏内层']?.水位 || 'L0';
             
-            const recommendations = generateSmartRecommendations({
+            const previews = generatePlotPreviews({
                 memories,
                 pendingMemories,
                 emotions,
@@ -169,41 +183,40 @@ export function NarrativeWriterPanel() {
                 worldText: context?.characterProfile?.worldText || "",
             });
             
-            setSceneRecommendations(recommendations);
+            setSceneRecommendations(previews);
         } catch (err) {
-            console.error("[NarrativeWriter] Failed to load recommendations:", err);
+            console.error("[NarrativeWriter] Failed to load previews:", err);
         } finally {
             setLoadingRecommendations(false);
         }
     }, []);
     
-    // 打开面板时加载推荐
+    // 打开面板时加载预告
     useEffect(() => {
         if (open) {
             loadRecommendations();
         }
     }, [open, loadRecommendations]);
     
-    // 选择场景
-    const handleSelectScene = useCallback((scene: SceneRecommendation) => {
+    // 选择预告：把功能+风格+钩子画面+维度拼进倾向文本
+    const handleSelectScene = useCallback((scene: PlotPreview) => {
         setSelectedScene(scene.id);
-        // 将场景参数转换为倾向文本
-        const parts = [];
-        if (scene.params.tone) parts.push(`基调:${scene.params.tone}`);
-        if (scene.params.pace) parts.push(`节奏:${scene.params.pace}`);
-        if (scene.params.focus) parts.push(`焦点:${scene.params.focus}`);
-        if (scene.params.relationship) parts.push(`关系:${scene.params.relationship}`);
-        if (scene.params.trigger) parts.push(`触发:${scene.params.trigger}`);
-        if (scene.params.theme) parts.push(`主题:${scene.params.theme}`);
-        if (scene.params.taboo) parts.push(`禁忌:${scene.params.taboo}`);
-        if (scene.params.density) parts.push(`密度:${scene.params.density}`);
-        
-        const sceneText = parts.length > 0 ? parts.join(",") : scene.name;
-        setTendency(sceneText);
-    }, []);
+        const dims = selectedDimensions[scene.id] || scene.defaultDimension || {};
+        const parts = [
+            `基调:${scene.style.tone}`,
+            `节奏:${scene.style.pace}`,
+            `密度:${scene.style.density}`,
+            `剧情功能:${scene.plotFunction === 'twist' ? '转折' : scene.plotFunction === 'advance' ? '推进' : scene.plotFunction === 'flirt' ? '升温试探' : '缓冲日常'}`,
+        ];
+        if (dims.focus) parts.push(`焦点:${dims.focus}`);
+        if (dims.intensity) parts.push(`张力:${dims.intensity}`);
+        if (dims.tempo) parts.push(`时间:${dims.tempo}`);
+        parts.push(`钩子画面:${scene.hook}`);
+        setTendency(parts.join("，"));
+    }, [selectedDimensions]);
     
-    // 编辑场景
-    const handleEditScene = useCallback((scene: SceneRecommendation) => {
+    // 编辑预告
+    const handleEditScene = useCallback((scene: PlotPreview) => {
         setEditingScene(scene);
     }, []);
     
@@ -259,12 +272,26 @@ export function NarrativeWriterPanel() {
     const loadData = useCallback(async () => {
         setDataLoading(true);
         try {
+            const activeSession = getActiveMixSession();
+            if (!activeSession) {
+                // 没打开对局就没有归属会话，记忆/水位一律不读，避免跨场串数据
+                setDataSessionId(null);
+                setMemories([]);
+                setEmotions([]);
+                setWaterLevels({});
+                setWriterState(null);
+                setContextHierarchy(null);
+                setExtractionRules(await getExtractionRules());
+                return;
+            }
+            const sid = activeSession.id;
+            setDataSessionId(sid);
             const [mems, emos, waters, state, hierarchy, rules] = await Promise.all([
-                getMemoryCards(),
-                getEmotionCards(),
-                getWaterLevels(),
-                getWriterState(),
-                getContextHierarchy(),
+                getMemoryCards(sid),
+                getEmotionCards(sid),
+                getWaterLevels(sid),
+                getWriterState(sid),
+                getContextHierarchy(sid),
                 getExtractionRules(),
             ]);
             setMemories(mems);
@@ -330,6 +357,7 @@ export function NarrativeWriterPanel() {
             }
 
             const result = await writeNarrative({
+                sessionId: activeSession.id,
                 playerTendency: tendency.trim() || undefined,
                 characterProfile: context.characterProfile,
                 worldSettings: {
@@ -373,6 +401,7 @@ export function NarrativeWriterPanel() {
             }
 
             const options = await generateBannerOptions({
+                sessionId: activeSession.id,
                 playerTendency: tendency.trim() || undefined,
                 characterProfile: context.characterProfile,
                 worldSettings: {
@@ -463,6 +492,7 @@ export function NarrativeWriterPanel() {
                 : tendency.trim();
 
             const result = await writeWithSelectedBanner({
+                sessionId: activeSession.id,
                 playerTendency: enhancedTendency || undefined,
                 characterProfile: context.characterProfile,
                 worldSettings: {
@@ -511,6 +541,7 @@ export function NarrativeWriterPanel() {
                     : tendency.trim();
 
                 const result = await writeWithSelectedBanner({
+                    sessionId: activeSession.id,
                     playerTendency: enhancedTendency || undefined,
                     characterProfile: context.characterProfile,
                     worldSettings: {
@@ -543,19 +574,23 @@ export function NarrativeWriterPanel() {
     // 保存编辑
     const handleSaveEdit = useCallback(async () => {
         if (!editingCard) return;
+        if (!dataSessionId) {
+            console.warn("[NarrativeWriter] Save edit skipped: 当前没有归属会话");
+            return;
+        }
         
         try {
             if (editingCard.type === "memory") {
-                await updateMemoryCard(editingCard.card.id, { 内容: editContent });
+                await updateMemoryCard(dataSessionId, editingCard.card.id, { 内容: editContent });
             } else {
-                await updateEmotionCard(editingCard.card.id, { 内容: editContent } as any);
+                await updateEmotionCard(dataSessionId, editingCard.card.id, { 内容: editContent } as any);
             }
             setEditingCard(null);
             loadData();
         } catch (err) {
             console.error("[NarrativeWriter] Save edit failed:", err);
         }
-    }, [editingCard, editContent, loadData]);
+    }, [editingCard, editContent, dataSessionId, loadData]);
     
     // 记忆整理（Map-Reduce 压缩 + 分片提炼记忆卡）：
     // 步骤 = L2 分片 + L3 大纲 + 每片提炼 + 大纲提炼，每步一次 LLM 调用；
@@ -611,20 +646,25 @@ export function NarrativeWriterPanel() {
             );
             
             // 保存压缩结果
-            const hierarchy = await getContextHierarchy() || {
+            const hierarchy = await getContextHierarchy(activeSession.id) || {
                 L2_章节摘要: [],
                 L3_全局大纲: "",
                 lastCompressedAt: 0,
+                lastCompressedTurn: 0,
             };
             hierarchy.L2_章节摘要 = L2_章节摘要;
             hierarchy.L3_全局大纲 = L3_全局大纲;
             hierarchy.lastCompressedAt = Date.now();
-            await saveContextHierarchy(hierarchy);
+            // 记录本次整理覆盖到第几回合（与引擎里的轮次计数同一量纲）。
+            // lastCompressedAt 只用于界面显示时间，不能参与回合差计算。
+            hierarchy.lastCompressedTurn = computeCurrentTurn(turns);
+            await saveContextHierarchy(activeSession.id, hierarchy);
             
             // 阶段二：分片提炼记忆卡（先成"待核"，在记忆审核里确认后置为生效）
             let savedCount = 0;
             try {
                 savedCount = await extractMemoriesFromCompression(
+                    activeSession.id,
                     characterName,
                     L3_全局大纲,
                     L2_章节摘要,
@@ -679,6 +719,7 @@ export function NarrativeWriterPanel() {
         try {
             const context = await loadCharacterWorldFromSession(activeSession.id);
             const { memories, emotions } = await backfillExtraction(
+                activeSession.id,
                 dialogueTurns.map(t => ({ role: t.role, text: t.text || "" })),
                 {
                     characterName: context?.characterProfile?.charName || "角色",
@@ -745,10 +786,10 @@ export function NarrativeWriterPanel() {
             const lastTurn = recentTurns[recentTurns.length - 1];
             
             await deepExtractFromNarrativeBody(
+                activeSession.id,
                 lastTurn.text,
                 recentTurns,
                 {
-                    sessionId: activeSession.id,
                     characterName: context?.characterProfile?.charName || "角色",
                     userName: activeSession.userName || "你",
                     worldText: context?.characterProfile?.worldText || "",
@@ -812,6 +853,7 @@ export function NarrativeWriterPanel() {
                 : tendency.trim();
 
             const result = await writeWithSelectedBanner({
+                sessionId: activeSession.id,
                 playerTendency: enhancedTendency || undefined,
                 characterProfile: context.characterProfile,
                 worldSettings: {
@@ -1029,11 +1071,11 @@ export function NarrativeWriterPanel() {
                                         }}
                                         onClick={() => handleSelectScene(scene)}
                                     >
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
-                                            <div style={{ display: "flex", gap: "6px", alignItems: "center", flex: 1 }}>
-                                                <span style={{ fontSize: "16px" }}>{scene.emoji}</span>
-                                                <span style={{ fontSize: "12px", color: "#e5e7eb", fontWeight: 600 }}>{scene.name}</span>
-                                            </div>
+                                        {/* 标题行：对象 · 功能 */}
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                            <span style={{ fontSize: "12px", color: "#e5e7eb", fontWeight: 600 }}>
+                                                {scene.interactionType === 'social' ? '💕' : scene.interactionType === 'external' ? '⚡' : '🌿'} {scene.title}
+                                            </span>
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
@@ -1047,19 +1089,101 @@ export function NarrativeWriterPanel() {
                                                     cursor: "pointer",
                                                     padding: "2px 4px",
                                                 }}
-                                                title="编辑参数"
+                                                title="微调"
                                             >
                                                 ✏️
                                             </button>
                                         </div>
-                                        <div style={{ fontSize: "10px", color: "#9ca3af", marginBottom: "2px" }}>
-                                            {scene.reason}
+                                        {/* 意图说明 */}
+                                        <div style={{ fontSize: "10px", color: "#9ca3af", marginBottom: "4px" }}>
+                                            {scene.description}
                                         </div>
-                                        {scene.detail && (
-                                            <div style={{ fontSize: "10px", color: "#6b7280", fontStyle: "italic" }}>
-                                                "{scene.detail.slice(0, 40)}{scene.detail.length > 40 ? '...' : ''}"
+                                        {/* 钩子画面：具体情境描写 */}
+                                        <div style={{
+                                            fontSize: "11px",
+                                            color: "#c4b5fd",
+                                            background: "rgba(167, 139, 250, 0.08)",
+                                            borderLeft: "2px solid rgba(167, 139, 250, 0.4)",
+                                            padding: "4px 8px",
+                                            borderRadius: "0 4px 4px 0",
+                                            marginBottom: "6px",
+                                            lineHeight: "1.5",
+                                        }}>
+                                            {scene.hook}
+                                        </div>
+                                        {/* 维度切换：焦点/张力/时间 */}
+                                        {scene.dimensions && (
+                                            <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "6px" }}>
+                                                {scene.dimensions.focus && scene.dimensions.focus.length > 1 && (
+                                                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                                        {scene.dimensions.focus.map(f => (
+                                                            <button
+                                                                key={f}
+                                                                onClick={(e) => { e.stopPropagation(); handleToggleDimension(scene.id, 'focus', f); }}
+                                                                style={{
+                                                                    padding: "2px 6px",
+                                                                    background: (selectedDimensions[scene.id]?.focus || scene.defaultDimension?.focus) === f ? "rgba(167, 139, 250, 0.3)" : "rgba(255,255,255,0.05)",
+                                                                    border: `1px solid ${(selectedDimensions[scene.id]?.focus || scene.defaultDimension?.focus) === f ? "rgba(167, 139, 250, 0.6)" : "transparent"}`,
+                                                                    borderRadius: "3px",
+                                                                    color: (selectedDimensions[scene.id]?.focus || scene.defaultDimension?.focus) === f ? "#c4b5fd" : "#6b7280",
+                                                                    fontSize: "9px",
+                                                                    cursor: "pointer",
+                                                                }}
+                                                            >
+                                                                {f}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {scene.dimensions.intensity && scene.dimensions.intensity.length > 1 && (
+                                                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                                        {scene.dimensions.intensity.map(i => (
+                                                            <button
+                                                                key={i}
+                                                                onClick={(e) => { e.stopPropagation(); handleToggleDimension(scene.id, 'intensity', i); }}
+                                                                style={{
+                                                                    padding: "2px 6px",
+                                                                    background: (selectedDimensions[scene.id]?.intensity || scene.defaultDimension?.intensity) === i ? "rgba(239, 68, 68, 0.3)" : "rgba(255,255,255,0.05)",
+                                                                    border: `1px solid ${(selectedDimensions[scene.id]?.intensity || scene.defaultDimension?.intensity) === i ? "rgba(239, 68, 68, 0.6)" : "transparent"}`,
+                                                                    borderRadius: "3px",
+                                                                    color: (selectedDimensions[scene.id]?.intensity || scene.defaultDimension?.intensity) === i ? "#fca5a5" : "#6b7280",
+                                                                    fontSize: "9px",
+                                                                    cursor: "pointer",
+                                                                }}
+                                                            >
+                                                                {i}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {scene.dimensions.tempo && scene.dimensions.tempo.length > 1 && (
+                                                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                                        {scene.dimensions.tempo.map(t => (
+                                                            <button
+                                                                key={t}
+                                                                onClick={(e) => { e.stopPropagation(); handleToggleDimension(scene.id, 'tempo', t); }}
+                                                                style={{
+                                                                    padding: "2px 6px",
+                                                                    background: (selectedDimensions[scene.id]?.tempo || scene.defaultDimension?.tempo) === t ? "rgba(59, 130, 246, 0.3)" : "rgba(255,255,255,0.05)",
+                                                                    border: `1px solid ${(selectedDimensions[scene.id]?.tempo || scene.defaultDimension?.tempo) === t ? "rgba(59, 130, 246, 0.6)" : "transparent"}`,
+                                                                    borderRadius: "3px",
+                                                                    color: (selectedDimensions[scene.id]?.tempo || scene.defaultDimension?.tempo) === t ? "#93c5fd" : "#6b7280",
+                                                                    fontSize: "9px",
+                                                                    cursor: "pointer",
+                                                                }}
+                                                            >
+                                                                {t}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
+                                        {/* 预期效果 + 风格 */}
+                                        <div style={{ fontSize: "10px", color: "#6b7280", display: "flex", justifyContent: "space-between" }}>
+                                            <span>预期：{scene.expectedOutcome}</span>
+                                            <span>{scene.style.tone} · {scene.style.pace}</span>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -1703,7 +1827,7 @@ export function NarrativeWriterPanel() {
                                                             <div style={{ display: "flex", gap: "4px" }}>
                                                                 {card.状态 === "待核" && (
                                                                     <button
-                                                                        onClick={() => updateMemoryCard(card.id, { 状态: "生效" }).then(() => loadData())}
+                                                                        onClick={() => dataSessionId && updateMemoryCard(dataSessionId, card.id, { 状态: "生效" }).then(() => loadData())}
                                                                         title="确认生效"
                                                                         style={{ background: "none", border: "none", color: "#10b981", cursor: "pointer", padding: "2px", fontSize: "12px", fontWeight: 600 }}
                                                                     >
@@ -1718,14 +1842,14 @@ export function NarrativeWriterPanel() {
                                                                     ✏️
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => archiveMemoryCard(card.id).then(() => loadData())}
+                                                                    onClick={() => dataSessionId && archiveMemoryCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="归档"
                                                                     style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
                                                                 >
                                                                     📦
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => deleteMemoryCard(card.id).then(() => loadData())}
+                                                                    onClick={() => dataSessionId && deleteMemoryCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="删除"
                                                                     style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", padding: "2px", fontSize: "12px" }}
                                                                 >
@@ -1763,7 +1887,7 @@ export function NarrativeWriterPanel() {
                                                             <div style={{ display: "flex", gap: "4px" }}>
                                                                 {card.状态 === "待核" && (
                                                                     <button
-                                                                        onClick={() => updateEmotionCard(card.id, { 状态: "生效" } as any).then(() => loadData())}
+                                                                        onClick={() => dataSessionId && updateEmotionCard(dataSessionId, card.id, { 状态: "生效" } as any).then(() => loadData())}
                                                                         title="确认生效"
                                                                         style={{ background: "none", border: "none", color: "#10b981", cursor: "pointer", padding: "2px", fontSize: "12px", fontWeight: 600 }}
                                                                     >
@@ -1778,14 +1902,14 @@ export function NarrativeWriterPanel() {
                                                                     ✏️
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => archiveEmotionCard(card.id).then(() => loadData())}
+                                                                    onClick={() => dataSessionId && archiveEmotionCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="归档"
                                                                     style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: "2px", fontSize: "12px" }}
                                                                 >
                                                                     📦
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => deleteEmotionCard(card.id).then(() => loadData())}
+                                                                    onClick={() => dataSessionId && deleteEmotionCard(dataSessionId, card.id).then(() => loadData())}
                                                                     title="删除"
                                                                     style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", padding: "2px", fontSize: "12px" }}
                                                                 >

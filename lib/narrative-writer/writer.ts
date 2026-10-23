@@ -7,7 +7,7 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy } from "./storage";
+import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId } from "./storage";
 import { hotExtractFromNarrativeBody } from "./extractor";
 import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy } from "./types";
 import { createDefaultWriterState } from "./types";
@@ -106,6 +106,8 @@ const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方�
 接近输出上限时自然收尾，不留半句。`;
 
 export interface WriterInput {
+  /** 归属对局。记忆/情感/水位/执笔状态全部按会话隔离，缺这个就没法读召回池。 */
+  sessionId: string;
   playerTendency?: string; // 玩家倾向(可选)
   characterProfile: any; // 人设
   worldSettings: {
@@ -146,6 +148,85 @@ function filterByAudience<T extends { audience?: string[] }>(
     if (!item.audience || item.audience.length === 0) return true; // 兼容旧数据
     return item.audience.includes("all") || item.audience.includes("character");
   });
+}
+
+/**
+ * 计算当前会话的完成回合数
+ * 每个回合 = 1 个 user turn + 1 个 assistant turn
+ * 开场白（单独 assistant）不计入
+ */
+export function computeCurrentTurn(turns: Array<{ role: string }>): number {
+  let userCount = 0;
+  let assistantCount = 0;
+  for (const t of turns) {
+    if (t.role === "user") userCount++;
+    else if (t.role === "assistant") assistantCount++;
+  }
+  // 回合数 = min(用户发言数, AI 回复数)
+  // 如果 AI 还没回复（userCount > assistantCount），那轮不算完成
+  return Math.min(userCount, assistantCount);
+}
+
+/**
+ * 轮次数值保护：非有限数字（undefined / NaN / 脏存档）一律当 0。
+ * getWriterState 已经做过归一化，这里是第二道防线，
+ * 防止手写对象或旧数据绕过读取路径直接进入减法。
+ */
+function safeTurn(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * 递增本会话的轮次计数（幂等）
+ * 只在有新回合完成时递增，重新生成/回滚不会重复计数
+ * 计数存在会话自己的 writer_state 里，切对局不再互相覆盖
+ * @returns 是否发生了递增（用于调用方判断是否需要触发后续流程）
+ */
+export async function incrementTurnCount(
+  sessionId: string | null | undefined,
+  sessionTurns: Array<{ role: string }>
+): Promise<{ incremented: boolean; currentTurn: number; newTurns: number }> {
+  const sid = requireSessionId(sessionId, "incrementTurnCount");
+  const writerState = await getWriterState(sid);
+  const actualTurn = computeCurrentTurn(sessionTurns);
+  const previousTurn = safeTurn(writerState.currentTurn);
+  const lastExtracted = safeTurn(writerState.lastExtractedTurn);
+
+  // 如果实际回合数小于记录值（消息被删减），校准
+  if (actualTurn < previousTurn) {
+    writerState.currentTurn = actualTurn;
+    writerState.lastExtractedTurn = Math.min(lastExtracted, actualTurn);
+    await saveWriterState(sid, writerState);
+    return { incremented: false, currentTurn: actualTurn, newTurns: 0 };
+  }
+
+  // 更新当前回合数（可能因为回滚后重新生成而变大）
+  writerState.currentTurn = actualTurn;
+  writerState.lastExtractedTurn = lastExtracted;
+
+  // 计算新增回合数
+  const newTurns = Math.max(0, actualTurn - lastExtracted);
+
+  await saveWriterState(sid, writerState);
+
+  return {
+    incremented: newTurns > 0,
+    currentTurn: actualTurn,
+    newTurns,
+  };
+}
+
+/**
+ * 标记抽取已完成，更新 lastExtractedTurn
+ */
+export async function markExtractionComplete(
+  sessionId: string | null | undefined
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "markExtractionComplete");
+  const writerState = await getWriterState(sid);
+  writerState.lastExtractedTurn = safeTurn(writerState.currentTurn);
+  await saveWriterState(sid, writerState);
 }
 
 /**
@@ -264,16 +345,16 @@ function inferMetadata(banner: string, body: string): WriterOutput["metadata"] {
  */
 export async function writeNarrative(input: WriterInput): Promise<WriterOutput> {
   // 1. 召回上下文
-  const allMemories = await getMemoryCards({ status: "生效" });
-  const allEmotions = await getEmotionCards({ status: "生效" });
+  const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
+  const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
   // 防全知视角过滤
   const memories = filterByAudience(allMemories, input.characterProfile.charName);
   const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
-  const waterLevels = await getWaterLevels();
-  const writerState = await getWriterState() || createDefaultWriterState();
+  const waterLevels = await getWaterLevels(input.sessionId);
+  const writerState = await getWriterState(input.sessionId);
 
   // 2. 构建连续性上下文字符串
-  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy());
+  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy(input.sessionId));
 
   // 3. 格式化人设与世界观
   let characterWorldText = "";
@@ -356,15 +437,15 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
  * 生成多个报幕选项供用户选择（选择模式第一步）
  */
 export async function generateBannerOptions(input: WriterInput): Promise<string[]> {
-  const allMemories = await getMemoryCards({ status: "生效" });
-  const allEmotions = await getEmotionCards({ status: "生效" });
+  const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
+  const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
   // 防全知视角过滤
   const memories = filterByAudience(allMemories, input.characterProfile.charName);
   const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
-  const waterLevels = await getWaterLevels();
-  const writerState = await getWriterState() || createDefaultWriterState();
+  const waterLevels = await getWaterLevels(input.sessionId);
+  const writerState = await getWriterState(input.sessionId);
 
-  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy());
+  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy(input.sessionId));
 
   let characterWorldText = "";
   if (input.characterProfile.profileText && input.characterProfile.worldText) {
@@ -435,15 +516,15 @@ export async function writeWithSelectedBanner(
   input: WriterInput,
   selectedBanner: string
 ): Promise<WriterOutput> {
-  const allMemories = await getMemoryCards({ status: "生效" });
-  const allEmotions = await getEmotionCards({ status: "生效" });
+  const allMemories = await getMemoryCards(input.sessionId, { status: "生效" });
+  const allEmotions = await getEmotionCards(input.sessionId, { status: "生效" });
   // 防全知视角过滤
   const memories = filterByAudience(allMemories, input.characterProfile.charName);
   const emotions = filterByAudience(allEmotions, input.characterProfile.charName);
-  const waterLevels = await getWaterLevels();
-  const writerState = await getWriterState() || createDefaultWriterState();
+  const waterLevels = await getWaterLevels(input.sessionId);
+  const writerState = await getWriterState(input.sessionId);
 
-  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy());
+  const continuityContext = buildContinuityContext(memories, emotions, waterLevels, writerState, await getContextHierarchy(input.sessionId));
 
   let characterWorldText = "";
   if (input.characterProfile.profileText && input.characterProfile.worldText) {
@@ -499,7 +580,7 @@ export async function writeWithSelectedBanner(
 
   // 热轨抽取（快速版，<3 秒）
   setTimeout(() => {
-    hotExtractFromNarrativeBody(body, []).catch(err => {
+    hotExtractFromNarrativeBody(input.sessionId, body, []).catch(err => {
       console.error("[NarrativeWriter] Hot extraction failed:", err);
     });
   }, 0);
@@ -651,6 +732,7 @@ export const MEMORY_SUBTAG_VOCAB = ["喜好", "禁忌", "习惯", "地点", "物
 
 /** 调一次 LLM 从给定文本提炼记忆卡并落库（待核），返回保存条数；新卡并入去重清单 */
 async function extractCardsFromSource(
+  sessionId: string,
   apiConfig: NonNullable<ReturnType<typeof resolveMixApiConfig>>,
   characterName: string,
   sourceLabel: string,
@@ -749,7 +831,7 @@ async function extractCardsFromSource(
       createdAt: now,
       updatedAt: now,
     };
-    await saveMemoryCard(card);
+    await saveMemoryCard(sessionId, card);
     existingContents.push(内容);
     saved++;
   }
@@ -765,6 +847,7 @@ async function extractCardsFromSource(
  * 全程携带已有卡摘要去重。产出卡一律"待核"，由玩家审核。
  */
 export async function extractMemoriesFromCompression(
+  sessionId: string | null | undefined,
   characterName: string,
   L3_全局大纲: string,
   L2_章节摘要: Array<{ turnRange: [number, number]; summary: string }>,
@@ -773,6 +856,8 @@ export async function extractMemoriesFromCompression(
 ): Promise<number> {
   if (!L3_全局大纲 && L2_章节摘要.length === 0) return 0;
 
+  const sid = requireSessionId(sessionId, "extractMemoriesFromCompression");
+
   const apiConfig = resolveMixApiConfig();
   if (!apiConfig) throw new Error("未配置 API，无法提取记忆卡");
 
@@ -780,8 +865,8 @@ export async function extractMemoriesFromCompression(
 
   // 去重底账：生效 + 待核的既有卡内容（归档/陈旧的不算，允许重新记）
   const [activeCards, pendingCards] = await Promise.all([
-    getMemoryCards(),
-    getMemoryCards({ status: "待核" }),
+    getMemoryCards(sid),
+    getMemoryCards(sid, { status: "待核" }),
   ]);
   const existingContents = [...activeCards, ...pendingCards]
     .filter(c => c.状态 === "生效" || c.状态 === "待核")
@@ -796,6 +881,7 @@ export async function extractMemoriesFromCompression(
     const chunkCap = Math.max(1, Math.min(6, cap - saved));
     try {
       saved += await extractCardsFromSource(
+        sid,
         apiConfig,
         characterName,
         `第${l2.turnRange[0]}-${l2.turnRange[1]}轮章节摘要`,
@@ -815,6 +901,7 @@ export async function extractMemoriesFromCompression(
   if (saved < cap && L3_全局大纲) {
     try {
       saved += await extractCardsFromSource(
+        sid,
         apiConfig,
         characterName,
         "全局剧情大纲",

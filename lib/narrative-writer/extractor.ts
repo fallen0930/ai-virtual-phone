@@ -8,7 +8,7 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards } from "./storage";
+import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId } from "./storage";
 import type { MemoryCard, EmotionCard, WaterLevelState } from "./types";
 import { createDefaultWaterLevel, checkWaterLevelEligibility } from "./types";
 
@@ -163,8 +163,10 @@ async function callExtractorLLM(messages: LLMMessage[]): Promise<string> {
 
 /**
  * 从对话轮次中提取记忆卡与情感卡
+ * sessionId 必填：卡一律落在这一场的命名空间里，不留全局写入入口
  */
 export async function extractFromTurn(
+  sessionId: string | null | undefined,
   currentTurn: string,
   recentTurns: string[], // 最近6-8轮
   context: {
@@ -179,6 +181,7 @@ export async function extractFromTurn(
     recentTurnsWithTicket?: Array<{ role: string; text: string; ticketRaw?: string }>;
   }
 ): Promise<ExtractResult> {
+  const sid = requireSessionId(sessionId, "extractFromTurn");
   const messages: LLMMessage[] = [
     { role: "system", content: EXTRACTOR_SYSTEM_PROMPT },
     {
@@ -223,7 +226,7 @@ export async function extractFromTurn(
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
-        await saveMemoryCard(card);
+        await saveMemoryCard(sid, card);
         memories.push(card);
       } else if (item.kind === "emotion") {
         const card: EmotionCard = {
@@ -232,7 +235,7 @@ export async function extractFromTurn(
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
-        await saveEmotionCard(card);
+        await saveEmotionCard(sid, card);
         emotions.push(card);
       } else if (item.kind === "water") {
         waterLevelUpdates.push(item);
@@ -241,7 +244,7 @@ export async function extractFromTurn(
 
     // 处理水位更新
     if (waterLevelUpdates.length > 0) {
-      await applyWaterLevelUpdates(waterLevelUpdates, context.currentWaterLevels);
+      await applyWaterLevelUpdates(sid, waterLevelUpdates, context.currentWaterLevels);
     }
 
     return { memories, emotions, waterLevelUpdates };
@@ -255,9 +258,11 @@ export async function extractFromTurn(
  * 应用水位更新
  */
 async function applyWaterLevelUpdates(
+  sessionId: string | null | undefined,
   updates: Array<{ 作用域: string; 建议状态: string; 目标水位: string }>,
   currentLevels: Record<string, WaterLevelState>
 ): Promise<void> {
+  const sid = requireSessionId(sessionId, "applyWaterLevelUpdates");
   for (const update of updates) {
     const scope = update.作用域 as "戏内层" | "现实层" | "共识层";
     if (!currentLevels[scope]) continue;
@@ -269,7 +274,7 @@ async function applyWaterLevelUpdates(
       最后更新: new Date().toISOString(),
     };
 
-    await saveWaterLevel(newLevel);
+    await saveWaterLevel(sid, newLevel);
   }
 }
 
@@ -286,9 +291,11 @@ function generateId(): string {
  * 用于执笔生成后立即出基线记忆卡
  */
 export async function hotExtractFromNarrativeBody(
+    sessionId: string | null | undefined,
     body: string,
     recentTurns: string[] // 最近 3 轮正文
 ): Promise<ExtractResult> {
+    const sid = requireSessionId(sessionId, "hotExtractFromNarrativeBody");
     const start = Date.now();
     console.log(`[HotTrack:Probe] Start - body length: ${body.length}, recent turns: ${recentTurns.length}`);
     
@@ -301,16 +308,16 @@ export async function hotExtractFromNarrativeBody(
     });
     
     const extractPromise = (async () => {
-        const memories = await import("./storage").then(m => m.getMemoryCards({ status: "生效" }));
-        const emotions = await import("./storage").then(m => m.getEmotionCards({ status: "生效" }));
-        const waterLevels = await getWaterLevels();
+        const memories = await import("./storage").then(m => m.getMemoryCards(sid, { status: "生效" }));
+        const emotions = await import("./storage").then(m => m.getEmotionCards(sid, { status: "生效" }));
+        const waterLevels = await getWaterLevels(sid);
         
         const existingCardsSummary = [
             ...memories.map(m => ({ id: m.id, 主类型: m.主类型, 状态: m.状态 })),
             ...emotions.map(e => ({ id: e.id, 主类型: "瞬时情绪", 状态: e.状态 })),
         ];
 
-        const result = await extractFromTurn(body, recentTurns, {
+        const result = await extractFromTurn(sid, body, recentTurns, {
             isPlotMode: true,
             existingCardsSummary,
             currentWaterLevels: waterLevels,
@@ -330,10 +337,10 @@ export async function hotExtractFromNarrativeBody(
  * 用于深度抽取，补充热轨遗漏的细节
  */
 export async function deepExtractFromNarrativeBody(
+    sessionId: string | null | undefined,
     body: string,
     recentTurns: Array<{ role: string; text: string; ticketRaw?: string }>,
     context: {
-        sessionId: string;
         characterName: string;
         userName: string;
         worldText: string;
@@ -341,6 +348,7 @@ export async function deepExtractFromNarrativeBody(
         mechanismStore?: Record<string, any>;
     }
 ): Promise<ExtractResult> {
+    const sid = requireSessionId(sessionId, "deepExtractFromNarrativeBody");
     const logs: string[] = [];
     const log = (msg: string) => {
         logs.push(msg);
@@ -356,9 +364,9 @@ export async function deepExtractFromNarrativeBody(
     log(`Start - body length: ${body.length}, recent turns: ${recentTurns.length}, has state: ${!!context.currentState}`);
     
     log('Loading existing cards...');
-    const memories = await import("./storage").then(m => m.getMemoryCards({ status: "生效" }));
-    const emotions = await import("./storage").then(m => m.getEmotionCards({ status: "生效" }));
-    const waterLevels = await getWaterLevels();
+    const memories = await import("./storage").then(m => m.getMemoryCards(sid, { status: "生效" }));
+    const emotions = await import("./storage").then(m => m.getEmotionCards(sid, { status: "生效" }));
+    const waterLevels = await getWaterLevels(sid);
     log(`Loaded ${memories.length} memories, ${emotions.length} emotions`);
     
     const existingCardsSummary = [
@@ -388,7 +396,7 @@ export async function deepExtractFromNarrativeBody(
         }, 60000);
     });
     
-    const extractPromise = extractFromTurn(body, recentTurns.map(t => t.text), fullContext);
+    const extractPromise = extractFromTurn(sid, body, recentTurns.map(t => t.text), fullContext);
     const result = await Promise.race([extractPromise, timeoutPromise]);
     
     // 清理超时定时器
@@ -404,6 +412,7 @@ export async function deepExtractFromNarrativeBody(
  * 一次性工具，由玩家主动触发；每批前重读已有卡摘要做批间去重。
  */
 export async function backfillExtraction(
+  sessionId: string | null | undefined,
   turns: Array<{ role: string; text: string }>,
   context: {
     characterName: string;
@@ -413,6 +422,7 @@ export async function backfillExtraction(
   },
   onProgress?: (done: number, total: number) => void
 ): Promise<{ memories: number; emotions: number }> {
+  const sid = requireSessionId(sessionId, "backfillExtraction");
   const BATCH = 4;
   const batches: Array<Array<{ role: string; text: string }>> = [];
   for (let i = 0; i < turns.length; i += BATCH) {
@@ -432,11 +442,11 @@ export async function backfillExtraction(
     const recentTurns = turns.slice(0, bi * BATCH).slice(-6).map(t => t.text);
 
     // 每批重读已有卡：上一批新建的卡要进摘要，避免本批重复建
-    const existingMemories = await getMemoryCards({ status: "生效" });
-    const existingEmotions = await getEmotionCards({ status: "生效" });
-    const waterLevels = await getWaterLevels();
+    const existingMemories = await getMemoryCards(sid, { status: "生效" });
+    const existingEmotions = await getEmotionCards(sid, { status: "生效" });
+    const waterLevels = await getWaterLevels(sid);
 
-    const result = await extractFromTurn(currentTurn, recentTurns, {
+    const result = await extractFromTurn(sid, currentTurn, recentTurns, {
       isPlotMode: true,
       existingCardsSummary: [
         ...existingMemories.map(m => ({ id: m.id, 主类型: m.主类型, 状态: m.状态 })),

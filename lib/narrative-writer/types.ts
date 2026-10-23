@@ -111,9 +111,10 @@ export type NarrativeTone = "日常" | "推进" | "转折" | "缓冲" | "高潮"
 /** 执笔档位 */
 export type NarrativeGear = "轻" | "中" | "重";
 
-/** 执笔状态 */
+/** 执笔状态（每个会话一份） */
 export interface NarrativeWriterState {
-  id: "default";
+  /** 归属的会话 id。历史数据这里是字面量 "default"，读到时按旧全局数据对待。 */
+  id: string;
   当前基调: NarrativeTone;
   本轮档位: NarrativeGear;
   连续同档: number;
@@ -127,6 +128,9 @@ export interface NarrativeWriterState {
   status: "active" | "stalled" | "archived";
   specVersion: "v1.6";
   最后更新: string; // ISO date
+  // 全局轮次计数（任务 1.5 新增）
+  currentTurn: number; // 当前已完成回合数（user+assistant 对）
+  lastExtractedTurn: number; // 上次抽取完成时的回合数（用于检测新内容）
 }
 
 /** 置信档 ↔ 数值映射门槛 */
@@ -207,9 +211,9 @@ export function createDefaultWaterLevel(
 }
 
 /** 创建默认执笔状态 */
-export function createDefaultWriterState(): NarrativeWriterState {
+export function createDefaultWriterState(sessionId = "default"): NarrativeWriterState {
   return {
-    id: "default",
+    id: sessionId,
     当前基调: "缓冲",
     本轮档位: "轻",
     连续同档: 0,
@@ -222,6 +226,8 @@ export function createDefaultWriterState(): NarrativeWriterState {
     status: "active",
     specVersion: "v1.6",
     最后更新: new Date().toISOString(),
+    currentTurn: 0,
+    lastExtractedTurn: 0,
   };
 }
 
@@ -233,7 +239,10 @@ export interface ContextHierarchy {
     createdAt: number;
   }>;
   L3_全局大纲: string; // 约800-1000字主线大纲
-  lastCompressedAt: number; // 上次压缩时间戳
+  lastCompressedAt: number; // 上次压缩时间戳（Date.now()，只给界面看）
+  // 上次压缩覆盖到第几个回合。用回合数而不是时间戳判断"隔了多少轮"，
+  // 时间戳和轮次是两套量纲，混用会算出巨大负数。旧数据缺失按 0 处理。
+  lastCompressedTurn?: number;
 }
 
 /** 执笔历史记录 */
@@ -282,4 +291,35 @@ export function createDefaultExtractionRules(): ExtractionRules {
     enableWaterLevelUpdate: true,
     enableAutoCompression: false, // 默认手动触发
   };
+}
+
+// ==================== 会话隔离迁移 ====================
+
+/**
+ * 旧版本所有 narrative:* 数据是全局共用的（键名里没有会话 id）。
+ * 隔离改造后：先把旧数据整包备份，再询问用户"这批记忆属于哪场对局"。
+ * 选中 → 复制到该会话名下（复制，不移动，旧键永不删除）；
+ * 稍后 → 旧键留在原地，但因为所有读写入口都必须带 sessionId，它天然读不到、不参与生成。
+ */
+export interface NarrativeMigrationState {
+  status: "pending" | "done" | "deferred";
+  /** 用户选定的归属会话；status 为 done 时有值 */
+  chosenSessionId?: string;
+  /** 各阶段计数，方便界面向她解释"迁移了什么、有没有跳过重复" */
+  counts?: {
+    memories: number;
+    emotions: number;
+    history: number;
+    skippedDuplicates: number;
+  };
+  /** 备份写入时间 */
+  backedUpAt?: number;
+  /** 归属完成/推迟时间 */
+  at?: number;
+}
+
+/** 旧全局键的整包备份条目 */
+export interface NarrativeLegacyBackupEntry {
+  key: string;
+  value: string;
 }

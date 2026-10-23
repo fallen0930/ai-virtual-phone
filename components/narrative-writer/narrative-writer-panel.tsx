@@ -32,14 +32,23 @@ import {
   updateMemoryCard,
   updateEmotionCard,
   confirmAllPendingCards,
+  listThreadCards,
+  listForeshadowCards,
+  updateThreadCard,
+  updateForeshadowCard,
+  archiveThreadCard,
+  archiveForeshadowCard,
+  deleteThreadCard,
+  deleteForeshadowCard,
   hasLegacyNarrativeData,
   getMigrationState,
   deferLegacyMigration,
 } from "@/lib/narrative-writer/storage";
+import { applyAdoptedBanner, migrateLooseThreadsToCards } from "@/lib/narrative-writer/threads";
 import { loadMixSessions } from "@/lib/mixology/storage";
 import { mixSessionTitle } from "@/lib/mixology/types";
 import { LegacyMigrationDialog } from "@/components/narrative-writer/legacy-migration-dialog";
-import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ExtractionRules } from "@/lib/narrative-writer/types";
+import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ExtractionRules, ThreadCard, ForeshadowCard, ThreadPlotStatus } from "@/lib/narrative-writer/types";
 
 const UI_KEY = "phone_narrative_writer_ui_v2"; // v2 强制重置默认尺寸
 const CONTROL_ID = "narrative-writer" as const;
@@ -139,6 +148,9 @@ export function NarrativeWriterPanel() {
     const [activeTab, setActiveTab] = useState<"write" | "data">("write");
     const [memories, setMemories] = useState<MemoryCard[]>([]);
     const [emotions, setEmotions] = useState<EmotionCard[]>([]);
+    // 悬念台账（导演侧资产）：只在这里看和改，正文永远读不到它们
+    const [threads, setThreads] = useState<ThreadCard[]>([]);
+    const [foreshadows, setForeshadows] = useState<ForeshadowCard[]>([]);
     const [waterLevels, setWaterLevels] = useState<Record<string, WaterLevelState>>({});
     const [writerState, setWriterState] = useState<NarrativeWriterState | null>(null);
     const [contextHierarchy, setContextHierarchy] = useState<ContextHierarchy | null>(null);
@@ -205,6 +217,8 @@ export function NarrativeWriterPanel() {
             const waterLevels = await getWaterLevels(activeSession.id);
             const writerState = await getWriterState(activeSession.id);
             const hierarchy = await getContextHierarchy(activeSession.id);
+            // 环境催化卡优先抓未决线索（导演台账），没有线索才退回旧的散落线头
+            const threads = await listThreadCards(activeSession.id);
             const context = await loadCharacterWorldFromSession(activeSession.id);
             
             const currentWaterLevel = waterLevels['戏内层']?.水位 || 'L0';
@@ -218,6 +232,7 @@ export function NarrativeWriterPanel() {
                 hierarchy,
                 characterName: context?.characterProfile?.charName || "角色",
                 worldText: context?.characterProfile?.worldText || "",
+                threads,
             });
             
             setSceneRecommendations(previews);
@@ -315,6 +330,8 @@ export function NarrativeWriterPanel() {
                 setDataSessionId(null);
                 setMemories([]);
                 setEmotions([]);
+                setThreads([]);
+                setForeshadows([]);
                 setWaterLevels({});
                 setWriterState(null);
                 setContextHierarchy(null);
@@ -323,9 +340,11 @@ export function NarrativeWriterPanel() {
             }
             const sid = activeSession.id;
             setDataSessionId(sid);
-            const [mems, emos, waters, state, hierarchy, rules] = await Promise.all([
+            const [mems, emos, tds, fds, waters, state, hierarchy, rules] = await Promise.all([
                 getMemoryCards(sid),
                 getEmotionCards(sid),
+                listThreadCards(sid),
+                listForeshadowCards(sid),
                 getWaterLevels(sid),
                 getWriterState(sid),
                 getContextHierarchy(sid),
@@ -333,6 +352,8 @@ export function NarrativeWriterPanel() {
             ]);
             setMemories(mems);
             setEmotions(emos);
+            setThreads(tds);
+            setForeshadows(fds);
             setWaterLevels(waters);
             setWriterState(state);
             setContextHierarchy(hierarchy);
@@ -570,6 +591,38 @@ export function NarrativeWriterPanel() {
         setBuffer(prev => prev.map(b => b.id === id ? { ...b, note: newNote } : b));
     }, []);
     
+    /**
+     * 采纳一条走向卡：正文入对局 + 按报幕行尾标记回写悬念台账。
+     *
+     * 顺序由 applyAdoptedBanner 保证：先剥标记 → insert 成功 → 才回写；插入抛错时
+     * 台账一行都不动（否则凭空多出一段没发生的剧情）。
+     * 来源用新插入那条 assistant 消息的 id 与轮次，与引擎热轨抽取同一口径，
+     * 之后玩家重说这条回复时，这条线"因它而产生的记录"才找得回。
+     *
+     * 已知限制：回写反映的是**报幕的计划**，不是正文实际写了什么。
+     */
+    const handleAdoptBanner = useCallback(async (
+        sessionId: string,
+        body: string,
+        带标记报幕: string
+    ): Promise<{ 推进数: number; 回收数: number; 忽略数: number }> => {
+        const 结果 = await applyAdoptedBanner({
+            sessionId,
+            banner: 带标记报幕,
+            insert: async (干净报幕) => {
+                const updated = await insertNarrativeTurn(sessionId, body, 干净报幕);
+                const 最后一条 = updated.turns[updated.turns.length - 1];
+                return {
+                    消息ID: 最后一条?.id,
+                    轮次: updated.turns.filter(t => t.role === "assistant").length,
+                };
+            },
+        });
+        // 台账真的动过才刷新数据面板，避免每次执笔都多读一遍库
+        if (结果.推进数 + 结果.回收数 > 0) void loadData();
+        return 结果;
+    }, [loadData]);
+
     // 根据缓冲区中的一个报幕生成正文
     const handleWriteFromBuffer = useCallback(async (bufferItem: { text: string; note?: string }) => {
         setLoading(true);
@@ -606,14 +659,15 @@ export function NarrativeWriterPanel() {
                 recentDialogue: context.recentDialogue,
             }, bufferItem.text);
 
-            await insertNarrativeTurn(activeSession.id, result.body, result.banner);
+            // 传入带标记的报幕原文：标记只用于回写台账，入对局的文本由 applyAdoptedBanner 剥净
+            await handleAdoptBanner(activeSession.id, result.body, bufferItem.text);
         } catch (err: any) {
             console.error("[NarrativeWriter] Write from buffer failed:", err);
             setError(err.message || "执笔失败，请重试");
         } finally {
             setLoading(false);
         }
-    }, [tendency]);
+    }, [tendency, handleAdoptBanner]);
     
     // 批量生成缓冲区所有报幕
     const handleBatchWriteFromBuffer = useCallback(async () => {
@@ -655,7 +709,7 @@ export function NarrativeWriterPanel() {
                     recentDialogue: context.recentDialogue,
                 }, item.text);
 
-                await insertNarrativeTurn(activeSession.id, result.body, result.banner);
+                await handleAdoptBanner(activeSession.id, result.body, item.text);
             }
         } catch (err: any) {
             console.error("[NarrativeWriter] Batch write failed:", err);
@@ -663,7 +717,7 @@ export function NarrativeWriterPanel() {
         } finally {
             setLoading(false);
         }
-    }, [tendency, buffer]);
+    }, [tendency, buffer, handleAdoptBanner]);
     
     // 打开编辑模态框
     const handleOpenEdit = useCallback((type: "memory" | "emotion", card: MemoryCard | EmotionCard) => {
@@ -790,6 +844,97 @@ export function NarrativeWriterPanel() {
         }
     }, [loadData]);
     
+    // 悬念台账操作：剧情态只有两条升级路径——采纳回写，或这里手动改。
+    // 抽取器同名输出没有这个权力（它只能记"这条线本轮有进展"）。
+    const handleCycleThreadStatus = useCallback(async (card: ThreadCard) => {
+        if (!dataSessionId) return;
+        const 顺序: ThreadPlotStatus[] = ["潜伏", "升温", "爆发", "收束"];
+        const 下一个 = 顺序[(顺序.indexOf(card.线索状态) + 1) % 顺序.length];
+        await updateThreadCard(dataSessionId, card.id, { 线索状态: 下一个 });
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleEditThreadNextStep = useCallback(async (card: ThreadCard) => {
+        if (!dataSessionId) return;
+        const 新值 = window.prompt(`改「${card.名称}」的下一步可能（导演视角的一句提示，≤30 字最有效）`, card.下一步可能);
+        if (新值 === null) return;
+        await updateThreadCard(dataSessionId, card.id, { 下一步可能: 新值.trim() });
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleCycleForeshadowStatus = useCallback(async (card: ForeshadowCard) => {
+        if (!dataSessionId) return;
+        await updateForeshadowCard(dataSessionId, card.id, {
+            伏笔状态: card.伏笔状态 === "已收" ? "未收" : "已收",
+        });
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleConfirmThread = useCallback(async (card: ThreadCard) => {
+        if (!dataSessionId) return;
+        // 确认只改审核态：这张线进不进得了正文？——永远进不了，它只进导演上下文
+        await updateThreadCard(dataSessionId, card.id, { 状态: "生效", 归档原因: undefined });
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleConfirmForeshadow = useCallback(async (card: ForeshadowCard) => {
+        if (!dataSessionId) return;
+        await updateForeshadowCard(dataSessionId, card.id, { 状态: "生效", 归档原因: undefined });
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleArchiveThread = useCallback(async (card: ThreadCard) => {
+        if (!dataSessionId) return;
+        await archiveThreadCard(dataSessionId, card.id, "玩家在面板手动归档");
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleArchiveForeshadow = useCallback(async (card: ForeshadowCard) => {
+        if (!dataSessionId) return;
+        await archiveForeshadowCard(dataSessionId, card.id, "玩家在面板手动归档");
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleDeleteThread = useCallback(async (card: ThreadCard) => {
+        if (!dataSessionId) return;
+        if (!window.confirm(`彻底删除线索「${card.名称}」？删除不可恢复（归档会留下记录）。\n注意：删除不会回滚它已经带来的剧情。`)) return;
+        await deleteThreadCard(dataSessionId, card.id);
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    const handleDeleteForeshadow = useCallback(async (card: ForeshadowCard) => {
+        if (!dataSessionId) return;
+        if (!window.confirm(`彻底删除伏笔「${card.内容}」？删除不可恢复（归档会留下记录）。`)) return;
+        await deleteForeshadowCard(dataSessionId, card.id);
+        await loadData();
+    }, [dataSessionId, loadData]);
+
+    // 旧「散落线头」→ 线索卡：显式入口，不做读取时静默迁移（那会让一次渲染变成两次 IO，
+    // 而且分叉/删除/备份都可能触发读取，改写数据的时机就变得不可预测）。
+    const 散落线头数量 = writerState?.散落线头?.length ?? 0;
+    const handleMigrateLooseThreads = useCallback(async () => {
+        if (!dataSessionId || 散落线头数量 === 0) return;
+        if (!window.confirm(`把 ${散落线头数量} 条「散落线头」转成线索卡？\n原文直接做线索名，一律先成"待核"；同名或空白项会跳过。迁移完成后旧列表清空。`)) return;
+        try {
+            const 结果 = await migrateLooseThreadsToCards(dataSessionId);
+            setError(null);
+            alert(`迁移完成：新建 ${结果.新建} 张线索卡，跳过 ${结果.跳过} 条。`);
+            await loadData();
+        } catch (err) {
+            console.error("[NarrativeWriter] 散落线头迁移失败:", err);
+            setError("散落线头迁移失败，请稍后重试");
+        }
+    }, [dataSessionId, 散落线头数量, loadData]);
+
+    // 待核数量：四类分开算。按钮与弹窗都用同一份，改一处不会和另一处分叉。
+    const 待核数量 = {
+        记忆: memories.filter(m => m.状态 === "待核").length,
+        情感: emotions.filter(e => e.状态 === "待核").length,
+        线索: threads.filter(t => t.状态 === "待核").length,
+        伏笔: foreshadows.filter(f => f.状态 === "待核").length,
+    };
+    const 待核合计 = 待核数量.记忆 + 待核数量.情感 + 待核数量.线索 + 待核数量.伏笔;
+
     // 批量确认待核卡：把当前会话所有"待核"一次性转为"生效"。
     // 后果必须在弹窗里写清楚——生效后这些卡就进正文上下文，角色会把它们当作已知事实使用；
     // 这不是"一键清空待办"，是替角色认领一批记忆。归档/冲突/陈旧一律不碰。
@@ -802,14 +947,16 @@ export function NarrativeWriterPanel() {
             return;
         }
 
-        const 待核记忆 = memories.filter(m => m.状态 === "待核").length;
-        const 待核情感 = emotions.filter(e => e.状态 === "待核").length;
-        const 合计 = 待核记忆 + 待核情感;
+        const { 记忆: 待核记忆, 情感: 待核情感, 线索: 待核线索, 伏笔: 待核伏笔 } = 待核数量;
+        const 合计 = 待核合计;
         if (合计 === 0) return;
 
+        // 四类数量分开写：记忆/情感进正文（角色会当作已知事实），线索/伏笔只进导演上下文
+        // （确认它们不会让角色知道这条线存在）。混成一句"都会进正文"就是误导。
         if (!window.confirm(
-            `确认这 ${合计} 张待核卡（记忆 ${待核记忆} 张、情感 ${待核情感} 张）？\n` +
-            `确认后这 ${合计} 张卡将进入正文上下文，角色会把它们当作已知事实使用。\n` +
+            `确认这 ${合计} 张待核卡？\n` +
+            `· 记忆 ${待核记忆} 张、情感 ${待核情感} 张 —— 确认后进入正文上下文，角色会把它们当作已知事实使用。\n` +
+            `· 线索 ${待核线索} 张、伏笔 ${待核伏笔} 张 —— 确认后只进入导演上下文，角色永远读不到。\n` +
             `只处理当前对局；已归档 / 冲突 / 陈旧的卡不受影响。`
         )) return;
 
@@ -817,7 +964,7 @@ export function NarrativeWriterPanel() {
         setError(null);
         try {
             const done = await confirmAllPendingCards(activeSession.id);
-            console.log(`[NarrativeWriter] 批量确认待核卡：记忆 ${done.memories} 张、情感 ${done.emotions} 张转为生效`);
+            console.log(`[NarrativeWriter] 批量确认待核卡：记忆 ${done.memories}、情感 ${done.emotions}、线索 ${done.threads}、伏笔 ${done.foreshadows} 转为生效`);
             await loadData();
             void loadRecommendations();
         } catch (err) {
@@ -826,7 +973,7 @@ export function NarrativeWriterPanel() {
         } finally {
             setConfirmingPending(false);
         }
-    }, [confirmingPending, memories, emotions, loadData, loadRecommendations]);
+    }, [confirmingPending, 待核数量, 待核合计, loadData, loadRecommendations]);
 
     // 补抽历史：整局按每4轮一批喂给逐轮抽取器，恢复抽取通道损坏期间丢失的记忆。
     // 一次性工具，会真实产生多次 LLM 调用，先确认再跑；与记忆整理互斥
@@ -1006,7 +1153,8 @@ export function NarrativeWriterPanel() {
             }, selected.text);
 
             setOutput({ banner: result.banner, body: result.body });
-            await insertNarrativeTurn(activeSession.id, result.body, result.banner);
+            // selected.text 是候选列表里的原文，可能带 [推进:…] / [回收:…] 标记
+            await handleAdoptBanner(activeSession.id, result.body, selected.text);
             
             // 重置选择状态
             setBannerOptions([]);
@@ -1017,7 +1165,7 @@ export function NarrativeWriterPanel() {
         } finally {
             setLoading(false);
         }
-    }, [tendency, selectedBannerIndex, bannerOptions]);
+    }, [tendency, selectedBannerIndex, bannerOptions, handleAdoptBanner]);
 
     if (!writerEnabled) return null;
 
@@ -1814,9 +1962,10 @@ export function NarrativeWriterPanel() {
                                     {/* 卡片统计 */}
                                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", marginBottom: "10px" }}>
                                         {[
-                                            { label: "生效中", value: memories.filter(m => m.状态 === "生效").length + emotions.filter(e => e.状态 === "生效").length, color: "#10b981" },
-                                            { label: "已归档", value: memories.filter(m => m.状态 === "归档").length + emotions.filter(e => e.状态 === "归档").length, color: "#6b7280" },
-                                            { label: "待核实", value: memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length, color: "#f59e0b", warn: true },
+                                            { label: "生效中", value: memories.filter(m => m.状态 === "生效").length + emotions.filter(e => e.状态 === "生效").length + threads.filter(t => t.状态 === "生效").length + foreshadows.filter(f => f.状态 === "生效").length, color: "#10b981" },
+                                            { label: "已归档", value: memories.filter(m => m.状态 === "归档").length + emotions.filter(e => e.状态 === "归档").length + threads.filter(t => t.状态 === "归档").length + foreshadows.filter(f => f.状态 === "归档").length, color: "#6b7280" },
+                                            // 四类待核一起算，才和下面"⚠️ 待核实 (n)"与批量确认按钮对得上
+                                            { label: "待核实", value: 待核合计, color: "#f59e0b", warn: true },
                                             { label: "已删除", value: 0, color: "#ef4444" },
                                         ].map((stat) => (
                                             <div key={stat.label} style={{
@@ -1872,8 +2021,84 @@ export function NarrativeWriterPanel() {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* 悬念台账：线索卡与伏笔卡。
+                                        这一段是导演视角的东西——确认了也不会进正文，角色永远读不到。 */}
+                                    {(threads.length > 0 || foreshadows.length > 0 || 散落线头数量 > 0) && (
+                                        <div style={{ marginTop: "10px" }}>
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                                                <div style={{ fontSize: "11px", color: "#9ca3af", fontWeight: 600 }}>
+                                                    悬念台账 · 线索 {threads.filter(t => t.状态 !== "归档").length} / 伏笔 {foreshadows.filter(f => f.状态 !== "归档" && f.伏笔状态 !== "已收").length}
+                                                </div>
+                                                {散落线头数量 > 0 && (
+                                                    <button
+                                                        onClick={handleMigrateLooseThreads}
+                                                        title="把旧的「散落线头」文本转成线索卡（同名跳过，迁完清空）"
+                                                        style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: "4px", color: "#fbbf24", cursor: "pointer" }}
+                                                    >
+                                                        迁移 {散落线头数量} 条散落线头
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div style={{ fontSize: "10px", color: "#6b7280", lineHeight: 1.5, marginBottom: "6px" }}>
+                                                只进导演上下文，角色读不到；剧情态升级只来自采纳回写或这里手动改。
+                                            </div>
+                                            {threads
+                                                .filter(t => !cardFilter.status || t.状态 === cardFilter.status)
+                                                .map(t => (
+                                                    <div key={t.id} style={{ padding: "6px", marginBottom: "4px", background: "rgba(255,255,255,0.03)", borderRadius: "6px", border: t.状态 === "待核" ? "1px solid rgba(245,158,11,0.3)" : "1px solid transparent", opacity: t.状态 === "归档" ? 0.45 : 1 }}>
+                                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                                            <span style={{ fontSize: "11px", color: "#e5e7eb", fontWeight: 600, wordBreak: "break-all" }}>{t.名称}</span>
+                                                            <span style={{ fontSize: "10px", color: "#a78bfa", whiteSpace: "nowrap" }}>{t.线索状态}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: "10px", color: "#9ca3af", lineHeight: 1.5, marginTop: "2px" }}>
+                                                            第 {t.上次推进轮次} 轮推进
+                                                            {t.最近变化?.[0]?.变化 ? ` · 最近：${t.最近变化[0].变化}` : ""}
+                                                            {t.下一步可能 ? ` · 下一步：${t.下一步可能}` : " · 下一步：未填"}
+                                                            {discardedSourceHint(t) ? ` · ${discardedSourceHint(t)}` : ""}
+                                                        </div>
+                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
+                                                            <button onClick={() => handleCycleThreadStatus(t)} title="手动改线索状态（潜伏→升温→爆发→收束）" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: "pointer" }}>改状态</button>
+                                                            <button onClick={() => handleEditThreadNextStep(t)} title="编辑下一步可能" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: "pointer" }}>改下一步</button>
+                                                            {t.状态 === "待核" && (
+                                                                <button onClick={() => handleConfirmThread(t)} title="确认这条线存在（只让它进导演上下文）" style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: "4px", color: "#10b981", cursor: "pointer" }}>✅ 确认</button>
+                                                            )}
+                                                            {t.状态 !== "归档" && (
+                                                                <button onClick={() => handleArchiveThread(t)} title="归档：留内容不进台账" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#6b7280", cursor: "pointer" }}>归档</button>
+                                                            )}
+                                                            <button onClick={() => handleDeleteThread(t)} title="彻底删除" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "4px", color: "#ef4444", cursor: "pointer" }}>删</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            {foreshadows
+                                                .filter(f => !cardFilter.status || f.状态 === cardFilter.status)
+                                                .map(f => (
+                                                    <div key={f.id} style={{ padding: "6px", marginBottom: "4px", background: "rgba(255,255,255,0.03)", borderRadius: "6px", border: f.状态 === "待核" ? "1px solid rgba(245,158,11,0.3)" : "1px solid transparent", opacity: f.状态 === "归档" ? 0.45 : 1 }}>
+                                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                                            <span style={{ fontSize: "11px", color: "#e5e7eb", fontWeight: 600, wordBreak: "break-all" }}>{f.内容}</span>
+                                                            <span style={{ fontSize: "10px", color: f.伏笔状态 === "已收" ? "#6b7280" : "#f59e0b", whiteSpace: "nowrap" }}>{f.伏笔状态}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: "10px", color: "#9ca3af", lineHeight: 1.5, marginTop: "2px" }}>
+                                                            第 {f.埋下轮次} 轮埋下 · 预期第 {f.预期回收窗口.起}-{f.预期回收窗口.止} 轮收
+                                                            {f.揭示条件 ? ` · 条件：${f.揭示条件}` : ""}
+                                                            {discardedSourceHint(f) ? ` · ${discardedSourceHint(f)}` : ""}
+                                                        </div>
+                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
+                                                            <button onClick={() => handleCycleForeshadowStatus(f)} title={f.伏笔状态 === "已收" ? "改回未收" : "标记为已收（采纳 [回收:] 标记也会做这件事）"} style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: "pointer" }}>{f.伏笔状态 === "已收" ? "改回未收" : "标为已收"}</button>
+                                                            {f.状态 === "待核" && (
+                                                                <button onClick={() => handleConfirmForeshadow(f)} title="确认这个伏笔存在（只让它进导演上下文）" style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: "4px", color: "#10b981", cursor: "pointer" }}>✅ 确认</button>
+                                                            )}
+                                                            {f.状态 !== "归档" && (
+                                                                <button onClick={() => handleArchiveForeshadow(f)} title="归档：留内容不进台账" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#6b7280", cursor: "pointer" }}>归档</button>
+                                                            )}
+                                                            <button onClick={() => handleDeleteForeshadow(f)} title="彻底删除" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "4px", color: "#ef4444", cursor: "pointer" }}>删</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    )}
                                 </div>
-                                
+
                                 {/* 第二层：可操作卡片列表 */}
                                 <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "10px" }}>
                                     <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
@@ -1932,14 +2157,14 @@ export function NarrativeWriterPanel() {
                                                 fontWeight: cardFilter.status === "待核" ? 600 : 400,
                                             }}
                                         >
-                                            ⚠️ 待核实 ({memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length})
+                                            ⚠️ 待核实 ({待核合计})
                                         </button>
                                         {/* 批量确认：入口贴着"待核实"这个动作发生处，没有待核卡时不占位置 */}
-                                        {memories.filter(m => m.状态 === "待核").length + emotions.filter(e => e.状态 === "待核").length > 0 && (
+                                        {待核合计 > 0 && (
                                             <button
                                                 onClick={handleConfirmAllPending}
                                                 disabled={confirmingPending}
-                                                title="把当前对局所有待核卡一次性转为生效（角色会把这些卡当作已知事实使用）"
+                                                title="把当前对局所有待核卡一次性转为生效：记忆/情感进正文，线索/伏笔只进导演上下文"
                                                 style={{
                                                     padding: "3px 8px",
                                                     background: "rgba(16, 185, 129, 0.18)",
@@ -1951,7 +2176,7 @@ export function NarrativeWriterPanel() {
                                                     opacity: confirmingPending ? 0.6 : 1,
                                                 }}
                                             >
-                                                {confirmingPending ? "确认中…" : `✅ 全部确认 (记忆 ${memories.filter(m => m.状态 === "待核").length} / 情感 ${emotions.filter(e => e.状态 === "待核").length})`}
+                                                {confirmingPending ? "确认中…" : `✅ 全部确认 (记忆 ${待核数量.记忆} / 情感 ${待核数量.情感} / 线索 ${待核数量.线索} / 伏笔 ${待核数量.伏笔})`}
                                             </button>
                                         )}
                                     </div>

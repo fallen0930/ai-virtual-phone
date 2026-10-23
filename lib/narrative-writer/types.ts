@@ -206,6 +206,85 @@ export interface EmotionCard {
   updatedAt: number;
 }
 
+// ==================== 线索卡与伏笔卡（导演侧悬念资产） ====================
+//
+// 这两类卡与记忆卡/情感卡的根本区别：**永远不进正文上下文**。
+// 它们是导演（走向卡）手里的悬念台账——"这条线走到哪了""那个伏笔还没收"，
+// 角色读到它就会全知视角（角色不该知道自己是一条线索）。所以 buildContinuityContext
+// 只在 视角==="导演" 时渲染 [未决线索] / [待收伏笔]，角色视角一条都不给。
+//
+// 两套状态互相正交，不要混用：
+// - 状态（CardStatus）：审核态，谁来把关。新建一律"待核"，玩家核过才生效；
+// - 线索状态 / 伏笔状态：剧情态，这条线/这个伏笔在戏里走到哪一步。
+//   剧情态只能由「采纳走向卡的回写」或「玩家在面板上手动改」推进，抽取器改不了。
+
+/** 线索的剧情态 */
+export type ThreadPlotStatus = "潜伏" | "升温" | "爆发" | "收束";
+
+/** 伏笔的剧情态 */
+export type ForeshadowPlotStatus = "未收" | "已收";
+
+/** 线索的一次进展记录（只保留最近 3 条，新在前） */
+export interface ThreadChange {
+  /** 一句话：这轮这条线发生了什么 */
+  变化: string;
+  /** 发生在第几轮（由代码按写入时的会话轮次盖写） */
+  轮次?: number;
+  /** 这条进展来自哪条回复；采纳回写时是新正文的 id，抽取同名更新时是抽取来源 */
+  来源消息ID?: string;
+  时间: number;
+}
+
+/** 线索卡：一条还没收的线 */
+export interface ThreadCard {
+  id: string;
+  kind: "thread";
+  /** 线索名：导演上下文列出的名字，报幕标记 [推进:名称→…] 按归一化名称完全匹配 */
+  名称: string;
+  线索状态: ThreadPlotStatus;
+  /** 涉及的角色名（沿用执笔层只有名字、没有稳定 id 的现状，见待办 #28） */
+  关联角色: string[];
+  /** 上次推进这条线的轮次 */
+  上次推进轮次: number;
+  /** 一句"下一步可能"；渲染进导演上下文时截到 30 字 */
+  下一步可能: string;
+  /** 最近 3 条变化，新的在前 */
+  最近变化: ThreadChange[];
+  /** 审核态 */
+  状态: CardStatus;
+  来源消息ID?: string;
+  来源轮次?: number;
+  归档原因?: string;
+  audience?: Audience[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 伏笔卡：一个埋下了、等着收的钩子 */
+export interface ForeshadowCard {
+  id: string;
+  kind: "foreshadow";
+  /** 一句话伏笔内容；报幕标记 [回收:内容] 按归一化后的同一套规则匹配 */
+  内容: string;
+  埋下轮次: number;
+  /** 预期回收窗口（闭区间，单位：轮）。{起,止} */
+  预期回收窗口: { 起: number; 止: number };
+  伏笔状态: ForeshadowPlotStatus;
+  /** 挂在哪条线索上（可空）；只存名称，线索改名后按名字失配同 #28 的限制 */
+  关联线索名称?: string;
+  /** 打算靠什么揭示（可空） */
+  揭示条件?: string;
+  /** 审核态 */
+  状态: CardStatus;
+  来源消息ID?: string;
+  来源轮次?: number;
+  归档原因?: string;
+  audience?: Audience[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+
 /** 关系水位等级 */
 export type WaterLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
 
@@ -240,6 +319,11 @@ export interface NarrativeWriterState {
   目标来源: string[]; // memory card IDs
   当前弧光: string;
   阶段进度: number; // 0-1
+  /**
+   * @deprecated 悬念数据现在由 ThreadCard 承担（见 lib/narrative-writer/threads.ts 的
+   * migrateLooseThreadsToCards）。这里保留字段只为读旧数据时不丢内容：
+   * 迁移由显式函数完成（不放在读取路径里），迁完清空，此后没有任何写入方。
+   */
   散落线头: string[];
   最近一次重档?: string; // ISO date
   停滞天数: number;

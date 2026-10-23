@@ -352,7 +352,14 @@ describe("卡片来源：回复被丢弃时归档", () => {
 
     expect(typeof lifecycle.onTurnsDiscarded).toBe("function");
     const result = lifecycle.onTurnsDiscarded!(sid, [], "纯追加，没有消息被丢弃");
-    expect(result).toEqual({ memories: 0, emotions: 0 });
+    // 返回值扩到四类：线索卡/伏笔卡同样按来源归档（见 thread-foreshadow-cards 用例 14）。
+    // 本用例只关心"纯追加一张都不归档"，四类数量全 0 即成立。
+    expect(result).toEqual({
+      memories: 0,
+      emotions: 0,
+      threads: 0,
+      foreshadows: 0,
+    });
 
     const after = await memoriesOf(sid);
     expect(after.length).toBe(1);

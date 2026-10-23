@@ -7,9 +7,17 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId } from "./storage";
-import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy } from "./types";
+import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId, listThreadCards, listForeshadowCards } from "./storage";
+import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ThreadCard, ForeshadowCard } from "./types";
 import { createDefaultWriterState, visibleToCharacter, audienceLabel } from "./types";
+import {
+  FORESHADOW_INJECT_LIMIT,
+  PENDING_FORESHADOW_LIMIT,
+  PENDING_THREAD_LIMIT,
+  THREAD_INJECT_LIMIT,
+  THREAD_NEXT_STEP_MAX_CHARS,
+  stripBannerMarkers,
+} from "./threads";
 
 // 读侧的两个工具住在 types.ts（领域规则），这里转导出一次：
 // 执笔层是它们的唯一调用方，测试与后续改动都从 writer 这条入口看。
@@ -21,9 +29,9 @@ const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方�
 - 人设、世界观（最高优先级）
 - [连续性上下文]（记忆 ≤5 + 情感 ≤3）
 - [关系水位]（三作用域，含 status）
-- [执笔状态]（基调、档位、连续同档、目标、弧光、散落线头、停滞天数）
+- [未决线索] / [待收伏笔]（只在导演视角出现：导演的悬念台账，写正文时角色读不到）
 - 玩家倾向（0–N 个自然语言片段，可选）
-缺失水位按 L0 + active；缺失执笔状态按"无目标、中速"处理。
+缺失水位按 L0 + active；没有悬念台账就当作这场暂时没有待收的线。
 
 # 视角限制（最高优先级红线）
 你的知识库包含上帝视角的设定，但你只能使用你所扮演角色能听到、看到、推测到的东西。
@@ -273,6 +281,11 @@ function prioritizeSuspense<T extends { audience?: unknown }>(cards: T[]): T[] {
  * 构建连续性上下文字符串（纯函数：输入卡与参数，输出字符串；不读存储、不看时间）
  *
  * view 缺省按角色视角处理，与历史行为一致。
+ *
+ * threads / foreshadows 只在导演视角渲染（[未决线索] / [待收伏笔]），
+ * 角色视角一条都不给：线索卡讲"这条线走到哪了、下一步可能是什么"，
+ * 角色读到就等于知道自己是被编排的棋子——全知视角从这条线漏出去最直接。
+ * 因此调用方即便误传，这里也按视角丢弃，不靠调用方自觉。
  */
 export function buildContinuityContext(
   memories: MemoryCard[],
@@ -280,7 +293,9 @@ export function buildContinuityContext(
   waterLevels: Record<string, WaterLevelState>,
   writerState: NarrativeWriterState,
   hierarchy?: ContextHierarchy | null,
-  view: ContinuityView = { 视角: "角色" }
+  view: ContinuityView = { 视角: "角色" },
+  threads?: ThreadCard[],
+  foreshadows?: ForeshadowCard[]
 ): string {
   const parts: string[] = [];
   const isDirector = view.视角 === "导演";
@@ -306,12 +321,23 @@ export function buildContinuityContext(
   // 待核卡不能挤掉生效卡：哪怕它是 system 名下这种设计伏笔最好用的悬念素材也一样。
   function fill<
     T extends { 状态?: unknown; audience?: unknown; 置信度?: unknown; updatedAt?: unknown }
-  >(cards: T[], 总上限: number, 待核上限: number): Injection<T>[] {
-    const 生效卡 = prioritizeSuspense(cards.filter((c) => cardStatus(c) === "生效"));
+  >(
+    cards: T[],
+    总上限: number,
+    待核上限: number,
+    排序?: { 生效排序?: (a: T, b: T) => number; 待核排序?: (a: T, b: T) => number }
+  ): Injection<T>[] {
+    const 生效候选 = cards.filter((c) => cardStatus(c) === "生效");
+    // 记忆/情感按"悬念优先"保素材；线索/伏笔没有置信度与悬念概念，按各自的剧情态排
+    const 生效卡 = 排序?.生效排序
+      ? [...生效候选].sort(排序.生效排序)
+      : prioritizeSuspense(生效候选);
     const out: Injection<T>[] = 生效卡.slice(0, 总上限).map((card) => ({ card, 未确认: false }));
     const 剩余 = 总上限 - out.length;
     if (剩余 > 0 && 待核上限 > 0) {
-      const 待核卡 = cards.filter((c) => cardStatus(c) === "待核").sort(byConfidence);
+      const 待核卡 = cards
+        .filter((c) => cardStatus(c) === "待核")
+        .sort(排序?.待核排序 ?? byConfidence);
       for (const card of 待核卡.slice(0, Math.min(待核上限, 剩余))) {
         out.push({ card, 未确认: true });
       }
@@ -345,6 +371,64 @@ export function buildContinuityContext(
     });
   }
 
+  // 悬念台账（仅导演视角）：未决线索与待收伏笔。
+  // 名额与记忆/情感同一套口径：生效先占位，待核只填剩余名额且各自有独立上限。
+  // 每条只给"名称 + 一句 ≤30 字的下一步"：给多了模型会照着长文本复刻，
+  // 台账的价值是让导演自己决定推哪条线，不是把剧情说明书塞进提示词。
+  if (isDirector) {
+    const 可选线索 = (threads ?? []).filter((t) => {
+      const st = cardStatus(t);
+      return st !== "归档" && st !== "冲突" && st !== "陈旧";
+    });
+    const 可选伏笔 = (foreshadows ?? []).filter((f) => {
+      const st = cardStatus(f);
+      return st !== "归档" && st !== "冲突" && st !== "陈旧" && f.伏笔状态 !== "已收";
+    });
+
+    // 线索排序：状态越接近爆发越优先，同状态时最久没推进的优先（放了很久的线头观众会忘）
+    const 状态权重: Record<string, number> = { 爆发: 0, 升温: 1, 潜伏: 2, 收束: 3 };
+    const byThreadPriority = (a: ThreadCard, b: ThreadCard): number => {
+      const 差 =
+        (状态权重[a.线索状态] ?? 9) - (状态权重[b.线索状态] ?? 9);
+      if (差 !== 0) return 差;
+      return (a.上次推进轮次 ?? 0) - (b.上次推进轮次 ?? 0);
+    };
+    const byForeshadowPriority = (a: ForeshadowCard, b: ForeshadowCard): number =>
+      (a.预期回收窗口?.止 ?? 0) - (b.预期回收窗口?.止 ?? 0);
+
+    const injectThreads = fill(可选线索, THREAD_INJECT_LIMIT, PENDING_THREAD_LIMIT, {
+      生效排序: byThreadPriority,
+      待核排序: byThreadPriority,
+    });
+    const injectForeshadows = fill(
+      可选伏笔,
+      FORESHADOW_INJECT_LIMIT,
+      PENDING_FORESHADOW_LIMIT,
+      { 生效排序: byForeshadowPriority, 待核排序: byForeshadowPriority }
+    );
+
+    if (injectThreads.length > 0) {
+      parts.push("[未决线索]");
+      injectThreads.forEach(({ card: t, 未确认 }) => {
+        const 下一步 = String(t.下一步可能 ?? "").slice(0, THREAD_NEXT_STEP_MAX_CHARS);
+        parts.push(
+          `- ${t.名称}｜${t.线索状态}${下一步 ? `｜下一步：${下一步}` : ""}${未确认标记(未确认)}`
+        );
+      });
+    }
+    if (injectForeshadows.length > 0) {
+      parts.push("[待收伏笔]");
+      injectForeshadows.forEach(({ card: f, 未确认 }) => {
+        const 窗口 = f.预期回收窗口;
+        const 窗口文字 =
+          窗口 && Number.isFinite(窗口.起) && Number.isFinite(窗口.止)
+            ? `（第${窗口.起}-${窗口.止}轮）`
+            : "";
+        parts.push(`- ${f.内容}${窗口文字}${未确认标记(未确认)}`);
+      });
+    }
+  }
+
   // 剧情主线大纲（L3 记忆整理结果）：长期剧情的权威参考，防止关键设定丢失
   if (hierarchy?.L3_全局大纲) {
     parts.push("[剧情主线大纲]");
@@ -367,17 +451,11 @@ export function buildContinuityContext(
     );
   });
 
-  // 执笔状态
-  parts.push("[执笔状态]");
-  parts.push(
-    `- 当前基调：${writerState.当前基调}｜本轮档位：${writerState.本轮档位}｜连续同档：${writerState.连续同档}`
-  );
-  if (writerState.目标.length > 0) {
-    parts.push(`- 目标：${writerState.目标.join("、")}（进度 ${writerState.阶段进度}`);
-  }
-  if (writerState.散落线头.length > 0) {
-    parts.push(`- 散落线头：${writerState.散落线头.length} 条（${writerState.散落线头.join("、")}`);
-  }
+  // 这里**不再渲染 [执笔状态]**（基调/档位/连续同档/目标/弧光/阶段进度/散落线头）。
+  // 调查结论：这些字段除了这段文本没有任何读取方，等于把一份没人维护、还经常自相矛盾的
+  // 元状态塞进提示词，模型会照着它编"目标进度"。字段本身保留在类型与存储里（待办 #34：
+  // 要么给它真正的写入方与消费者，要么整段删掉）。
+  // 悬念类信息改由上面的 [未决线索] / [待收伏笔] 承担，那两份有明确的数据来源与写入方。
 
   // 导演视角的收口红线：放在全部素材与状态之后，最后读到的规则最不容易被冲掉。
   if (isDirector) {
@@ -517,7 +595,8 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
   }
 
   const lines = response.split("\n");
-  const banner = lines[0] || "（基调：自主｜场景：未知｜走向：待展开）"; // 兜底报幕
+  // 直接模式没让模型出标记，但它照抄了走向卡的样式也要兜住：标记绝不落进对局显示
+  const banner = stripBannerMarkers(lines[0] || "（基调：自主｜场景：未知｜走向：待展开）"); // 兜底报幕
   const body = lines.slice(2).join("\n") || response; // 如果格式不对,直接用全文
 
   // 6. 元数据推断
@@ -541,6 +620,11 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
   const emotions = await getEmotionCards(input.sessionId);
   const waterLevels = await getWaterLevels(input.sessionId);
   const writerState = await getWriterState(input.sessionId);
+  // 悬念台账只在这一条链路（导演视角）读进来；写正文那条链路不取，也拿不到
+  const [threads, foreshadows] = await Promise.all([
+    listThreadCards(input.sessionId),
+    listForeshadowCards(input.sessionId),
+  ]);
 
   const continuityContext = buildContinuityContext(
     memories,
@@ -548,7 +632,9 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
     waterLevels,
     writerState,
     await getContextHierarchy(input.sessionId),
-    { 视角: "导演" }
+    { 视角: "导演" },
+    threads,
+    foreshadows
   );
 
   let characterWorldText = "";
@@ -586,7 +672,7 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
 
 分析步骤（在内心完成，不输出）：
 1. 从最近对话中提取：当前场景、在场人物、未解决的 tension/冲突点、角色情绪状态
-2. 从连续性上下文中识别：散落线头、未解决冲突、水位状态、执笔目标
+2. 从连续性上下文中识别：未决线索、待收伏笔、未解决冲突、水位状态
 3. 思考3-5个可能的推进方向：日常缓冲 / 关系推进 / 冲突爆发 / 信息揭露 / 环境触发
 4. 评估每个方向的有趣性、节奏合理性、与人设/水位的兼容性
 
@@ -597,9 +683,16 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
 - 避免重复或相似的方向
 - 你现在是导演：卡片后的知情标注（[仅角色A知情]/[仅玩家知情]/[系统预埋·未揭示]）是可用素材，可以据此设计信息差与伏笔；标"未揭示"的设定不能当作已经揭示的事实写进报幕
 
+悬念回写标记（可选，只在确有推进时才加）：
+- 这条走向会推进某条未决线索 → 在那一行末尾加 [推进:线索名→新状态:变化一句话]，新状态只能是 潜伏/升温/爆发/收束
+- 这条走向会收掉某个待收伏笔 → 在那一行末尾加 [回收:伏笔内容]
+- 线索名与伏笔内容必须照抄上面台账里出现过的原文，一字不差；台账里没有的线不要标，标了也会被忽略
+- 标记只写在行尾方括号里，不要写进括号内的报幕正文；报幕正文本身仍然 ≤40 字
+
 格式示例：
 （基调：X｜场景：Y｜走向：Z）
-（基调：X｜场景：Y｜注意：这轮会有一个……）`,
+（基调：X｜场景：Y｜注意：这轮会有一个……）
+（基调：推进｜场景：旧城｜走向：查证）[推进:老桥下的硬币→升温:当铺掌柜认出了那枚硬币]`,
   });
 
   const messages: LLMMessage[] = [
@@ -609,9 +702,18 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
 
   const response = await callNarrativeLLM(messages);
   
-  // 解析报幕选项（每行一个）
-  const lines = response.split("\n").filter(line => line.trim().startsWith("（") && line.trim().endsWith("）"));
-  return lines.slice(0, 4).map(line => line.trim());
+  // 解析报幕选项（每行一个）。
+  // 过滤条件按"剥掉行尾机器标记之后"的形状判断：模型会在（…）后面追加
+  // [推进:…] / [回收:…]，直接按 endsWith("）") 过滤会把带标记的行整条丢掉，
+  // 而这些行正是要拿去回写台账的那一条。保留原文（含标记）返回给面板。
+  const lines = response
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => {
+      const 裸 = stripBannerMarkers(line);
+      return 裸.startsWith("（") && 裸.endsWith("）");
+    });
+  return lines.slice(0, 4);
 }
 
 /**
@@ -621,6 +723,10 @@ export async function writeWithSelectedBanner(
   input: WriterInput,
   selectedBanner: string
 ): Promise<WriterOutput> {
+  // 行尾的 [推进:…] / [回收:…] 是机器标记，只服务于采纳回写（见 threads.ts）。
+  // 这里第一件事就是剥掉：正文提示词里不该出现台账术语，返回的报幕更要干净——
+  // 它会作为 rawText 落进对局显示。
+  const 报幕原文 = stripBannerMarkers(selectedBanner);
   // 角色视角：报幕是导演挑的，正文由角色来演，这里要把角色不该知道的东西挡掉
   const memories = visibleToCharacter(
     await getMemoryCards(input.sessionId, { status: "生效" }),
@@ -666,7 +772,7 @@ export async function writeWithSelectedBanner(
     连续性上下文: continuityContext,
     最近对话历史: input.recentDialogue || "",
     玩家倾向: input.playerTendency || "",
-    任务: `请根据以下报幕方向生成正文内容：\n\n报幕：${selectedBanner}\n\n请严格按照执笔规范书写正文，确保内容与报幕方向一致。`,
+    任务: `请根据以下报幕方向生成正文内容：\n\n报幕：${报幕原文}\n\n请严格按照执笔规范书写正文，确保内容与报幕方向一致。`,
   });
 
   const messages: LLMMessage[] = [
@@ -682,7 +788,7 @@ export async function writeWithSelectedBanner(
   }
 
   const lines = response.split("\n");
-  const banner = selectedBanner; // 使用选中的报幕
+  const banner = 报幕原文; // 使用选中的报幕（已剥掉机器标记）
   const body = lines.slice(2).join("\n") || response;
 
   const metadata = inferMetadata(banner, body);

@@ -2,7 +2,8 @@
 // 剧情预告生成器：强制三张卡（社交拉扯/外界驱动/环境催化）+ 具体钩子画面 + 可切换维度
 // 所有 hook 从记忆库/世界观抓真实细节填充，不调用 LLM（保证速度）
 
-import type { MemoryCard, EmotionCard, NarrativeWriterState, ContextHierarchy } from "./types";
+import type { MemoryCard, EmotionCard, NarrativeWriterState, ContextHierarchy, ThreadCard } from "./types";
+import { pickPriorityThread } from "./threads";
 
 export type InteractionType = 'social' | 'external' | 'ambient';
 export type PlotFunction = 'twist' | 'advance' | 'flirt' | 'buffer';
@@ -36,6 +37,8 @@ export interface RecommendationContext {
   hierarchy: ContextHierarchy | null;
   characterName: string;
   worldText: string;
+  /** 导演台账里的线索卡（可选：没传就退回旧的「散落线头」） */
+  threads?: ThreadCard[];
 }
 
 const WATER_LABELS: Record<string, string> = {
@@ -159,9 +162,12 @@ function buildExternalCard(context: RecommendationContext): PlotPreview {
   };
 }
 
-/** 环境催化：角色 vs 环境/配角，抓散落线头/上一章摘要做氛围钩子 */
+/** 环境催化：角色 vs 环境/配角，抓未决线索/上一章摘要做氛围钩子 */
 function buildAmbientCard(context: RecommendationContext): PlotPreview {
-  const thread = context.writerState?.散落线头?.[0];
+  // 先取导演台账里优先级最高的那条线（爆发 > 升温 > 潜伏，同状态取最久没推进的）。
+  // 台账为空时回退到旧的「散落线头」，再没有就用摘要/天气兜底——无线索可抓时本函数不得抛错。
+  const 优先线索 = pickPriorityThread(context.threads ?? [])?.名称?.trim();
+  const thread = 优先线索 || context.writerState?.散落线头?.[0];
   const lastSummary = context.hierarchy?.L2_章节摘要?.slice(-1)[0];
   const charName = context.characterName || '角色';
 

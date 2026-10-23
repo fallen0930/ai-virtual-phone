@@ -4,6 +4,8 @@
 // 存储组织（按会话隔离）：
 // - narrative:{sessionId}:memory:{id}          → MemoryCard
 // - narrative:{sessionId}:emotion:{id}         → EmotionCard
+// - narrative:{sessionId}:thread:{id}          → ThreadCard（线索卡，只进导演上下文）
+// - narrative:{sessionId}:foreshadow:{id}      → ForeshadowCard（伏笔卡，只进导演上下文）
 // - narrative:{sessionId}:water                → Record<作用域, WaterLevelState>
 // - narrative:{sessionId}:writer_state         → NarrativeWriterState
 // - narrative:{sessionId}:hierarchy            → ContextHierarchy
@@ -31,6 +33,8 @@ import { getMixSession } from "@/lib/mixology/storage";
 import type {
   MemoryCard,
   EmotionCard,
+  ThreadCard,
+  ForeshadowCard,
   WaterLevelState,
   NarrativeWriterState,
   ContextHierarchy,
@@ -56,6 +60,12 @@ function memoryPrefix(sessionId: string): string {
 }
 function emotionPrefix(sessionId: string): string {
   return `${sessionRoot(sessionId)}emotion:`;
+}
+function threadPrefix(sessionId: string): string {
+  return `${sessionRoot(sessionId)}thread:`;
+}
+function foreshadowPrefix(sessionId: string): string {
+  return `${sessionRoot(sessionId)}foreshadow:`;
 }
 function historyPrefix(sessionId: string): string {
   return `${sessionRoot(sessionId)}history:`;
@@ -256,6 +266,165 @@ export async function listEmotionCards(
 // 别名导出，保持API一致性
 export const getEmotionCards = listEmotionCards;
 
+// ==================== Thread / Foreshadow Cards ====================
+//
+// 线索卡与伏笔卡是"导演的悬念台账"：只进导演上下文，永不进正文（角色读到就全知）。
+// 两套状态正交：状态（CardStatus）是审核态，线索状态/伏笔状态是剧情态。
+// 键按同一套会话命名空间布局，所以 purge（按 sessionRoot 前缀扫）与备份模块
+// （按 "narrative:" 前缀收）自动覆盖这两类，不需要额外接线；
+// 需要显式接线的只有：分叉复制、丢弃归档、批量确认、迁移导出。
+
+export async function saveThreadCard(
+  sessionId: string | null | undefined,
+  card: ThreadCard
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "saveThreadCard");
+  await nwSet(`${threadPrefix(sid)}${card.id}`, card);
+}
+
+export async function getThreadCard(
+  sessionId: string | null | undefined,
+  id: string
+): Promise<ThreadCard | null> {
+  const sid = requireSessionId(sessionId, "getThreadCard");
+  return nwGet<ThreadCard>(`${threadPrefix(sid)}${id}`);
+}
+
+export async function listThreadCards(
+  sessionId: string | null | undefined,
+  opts?: { status?: string; 线索状态?: string }
+): Promise<ThreadCard[]> {
+  const sid = requireSessionId(sessionId, "listThreadCards");
+  const keys = await kvKeysWithPrefix(threadPrefix(sid));
+  const cards: ThreadCard[] = [];
+  for (const key of keys) {
+    const card = await nwGet<ThreadCard>(key);
+    if (!card) continue;
+    if (opts?.status && card.状态 !== opts.status) continue;
+    if (opts?.线索状态 && card.线索状态 !== opts.线索状态) continue;
+    cards.push(card);
+  }
+  return cards.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export const getThreadCards = listThreadCards;
+
+export async function deleteThreadCard(
+  sessionId: string | null | undefined,
+  id: string
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "deleteThreadCard");
+  kvRemove(`${threadPrefix(sid)}${id}`);
+}
+
+/** 归档线索卡：留内容不留身份，恢复入口在面板的「已归档」筛选 */
+export async function archiveThreadCard(
+  sessionId: string | null | undefined,
+  id: string,
+  原因?: string
+): Promise<void> {
+  await updateThreadCardFields(sessionId, id, {
+    状态: "归档",
+    ...(原因 ? { 归档原因: 原因 } : {}),
+  });
+}
+
+export async function updateThreadCard(
+  sessionId: string | null | undefined,
+  id: string,
+  updates: Partial<Omit<ThreadCard, "id" | "kind" | "createdAt">>
+): Promise<void> {
+  await updateThreadCardFields(sessionId, id, updates);
+}
+
+async function updateThreadCardFields(
+  sessionId: string | null | undefined,
+  id: string,
+  updates: Partial<Omit<ThreadCard, "id" | "kind" | "createdAt">>
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "updateThreadCard");
+  const card = await getThreadCard(sid, id);
+  if (!card) return;
+  Object.assign(card, updates);
+  card.updatedAt = Date.now();
+  await saveThreadCard(sid, card);
+}
+
+export async function saveForeshadowCard(
+  sessionId: string | null | undefined,
+  card: ForeshadowCard
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "saveForeshadowCard");
+  await nwSet(`${foreshadowPrefix(sid)}${card.id}`, card);
+}
+
+export async function getForeshadowCard(
+  sessionId: string | null | undefined,
+  id: string
+): Promise<ForeshadowCard | null> {
+  const sid = requireSessionId(sessionId, "getForeshadowCard");
+  return nwGet<ForeshadowCard>(`${foreshadowPrefix(sid)}${id}`);
+}
+
+export async function listForeshadowCards(
+  sessionId: string | null | undefined,
+  opts?: { status?: string; 伏笔状态?: string }
+): Promise<ForeshadowCard[]> {
+  const sid = requireSessionId(sessionId, "listForeshadowCards");
+  const keys = await kvKeysWithPrefix(foreshadowPrefix(sid));
+  const cards: ForeshadowCard[] = [];
+  for (const key of keys) {
+    const card = await nwGet<ForeshadowCard>(key);
+    if (!card) continue;
+    if (opts?.status && card.状态 !== opts.status) continue;
+    if (opts?.伏笔状态 && card.伏笔状态 !== opts.伏笔状态) continue;
+    cards.push(card);
+  }
+  return cards.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export const getForeshadowCards = listForeshadowCards;
+
+export async function deleteForeshadowCard(
+  sessionId: string | null | undefined,
+  id: string
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "deleteForeshadowCard");
+  kvRemove(`${foreshadowPrefix(sid)}${id}`);
+}
+
+export async function archiveForeshadowCard(
+  sessionId: string | null | undefined,
+  id: string,
+  原因?: string
+): Promise<void> {
+  await updateForeshadowCardFields(sessionId, id, {
+    状态: "归档",
+    ...(原因 ? { 归档原因: 原因 } : {}),
+  });
+}
+
+export async function updateForeshadowCard(
+  sessionId: string | null | undefined,
+  id: string,
+  updates: Partial<Omit<ForeshadowCard, "id" | "kind" | "createdAt">>
+): Promise<void> {
+  await updateForeshadowCardFields(sessionId, id, updates);
+}
+
+async function updateForeshadowCardFields(
+  sessionId: string | null | undefined,
+  id: string,
+  updates: Partial<Omit<ForeshadowCard, "id" | "kind" | "createdAt">>
+): Promise<void> {
+  const sid = requireSessionId(sessionId, "updateForeshadowCard");
+  const card = await getForeshadowCard(sid, id);
+  if (!card) return;
+  Object.assign(card, updates);
+  card.updatedAt = Date.now();
+  await saveForeshadowCard(sid, card);
+}
+
 // ==================== 批量确认待核卡 ====================
 
 /**
@@ -268,15 +437,35 @@ export const getEmotionCards = listEmotionCards;
  * 确认的语义要说清楚：生效之后这张卡就进正文上下文，角色会把它当作已知事实使用。
  * 所以面板上的确认弹窗必须写明这一点，不能做成"一键清空待办"的顺手操作。
  */
+/**
+ * 把当前会话的待核卡一次性转成生效，返回四类各转了几张。
+ *
+ * 只碰「待核」：归档（历史版本）、冲突（与别的卡打架）、陈旧（过期）都有各自的
+ * 处理路径，一把梭会把玩家刻意收起来的东西又放回正文。
+ * 只碰这一个会话：键前缀就是这场对局的命名空间，别的对局的待核卡一张都不该动。
+ *
+ * 确认的语义要分两类说清楚（面板弹窗必须照这个写，不能做成"一键清空待办"）：
+ * - 记忆卡 / 情感卡：生效之后进正文上下文，角色会把它当作已知事实使用；
+ * - 线索卡 / 伏笔卡：生效与否只影响它在导演台账里的排序与显示，
+ *   两类卡都不进正文，确认它们不等于"角色知道了这条线"。
+ */
 export async function confirmAllPendingCards(
   sessionId: string | null | undefined
-): Promise<{ memories: number; emotions: number }> {
+): Promise<{
+  memories: number;
+  emotions: number;
+  threads: number;
+  foreshadows: number;
+}> {
   const sid = requireSessionId(sessionId, "confirmAllPendingCards");
 
-  const [pendingMemories, pendingEmotions] = await Promise.all([
-    listMemoryCards(sid, { status: "待核" }),
-    listEmotionCards(sid, { status: "待核" }),
-  ]);
+  const [pendingMemories, pendingEmotions, pendingThreads, pendingForeshadows] =
+    await Promise.all([
+      listMemoryCards(sid, { status: "待核" }),
+      listEmotionCards(sid, { status: "待核" }),
+      listThreadCards(sid, { status: "待核" }),
+      listForeshadowCards(sid, { status: "待核" }),
+    ]);
 
   for (const card of pendingMemories) {
     await saveMemoryCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
@@ -284,8 +473,19 @@ export async function confirmAllPendingCards(
   for (const card of pendingEmotions) {
     await saveEmotionCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
   }
+  for (const card of pendingThreads) {
+    await saveThreadCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
+  }
+  for (const card of pendingForeshadows) {
+    await saveForeshadowCard(sid, { ...card, 状态: "生效", updatedAt: Date.now() });
+  }
 
-  return { memories: pendingMemories.length, emotions: pendingEmotions.length };
+  return {
+    memories: pendingMemories.length,
+    emotions: pendingEmotions.length,
+    threads: pendingThreads.length,
+    foreshadows: pendingForeshadows.length,
+  };
 }
 
 // ==================== Water Levels ====================
@@ -406,6 +606,8 @@ export async function exportAllNarrativeDataForMigration(
   sessionId: string;
   memories: MemoryCard[];
   emotions: EmotionCard[];
+  threads: ThreadCard[];
+  foreshadows: ForeshadowCard[];
   waterLevels: Record<string, WaterLevelState>;
   writerState: NarrativeWriterState;
   hierarchy: ContextHierarchy | null;
@@ -416,6 +618,8 @@ export async function exportAllNarrativeDataForMigration(
     sessionId: sid,
     memories: await listMemoryCards(sid),
     emotions: await listEmotionCards(sid),
+    threads: await listThreadCards(sid),
+    foreshadows: await listForeshadowCards(sid),
     waterLevels: await nwGet<Record<string, WaterLevelState>>(waterKey(sid)) || {},
     writerState: await getWriterState(sid),
     hierarchy: await getContextHierarchy(sid),
@@ -611,7 +815,8 @@ export async function batchArchiveEmotionCards(
 // ==================== 会话删除清理 ====================
 
 /**
- * 清除某场对局的全部执笔数据（记忆卡、情感卡、水位、执笔状态、整理结果、历史）。
+ * 清除某场对局的全部执笔数据（记忆卡、情感卡、线索卡、伏笔卡、水位、执笔状态、整理结果、历史）。
+ * 按 sessionRoot 前缀整片扫，所以新增数据种类不需要改这里。
  *
  * 同步实现：kvRemove 本身就是同步 API，这样删除对局那条同步链路
  * （mixology/storage.ts 的 deleteMixSession）不用改成 async，
@@ -716,15 +921,27 @@ export function onTurnsDiscarded(
   sessionId: string | null | undefined,
   discardedTurnIds: string[],
   原因: string
-): { memories: number; emotions: number } {
+): {
+  memories: number;
+  emotions: number;
+  threads: number;
+  foreshadows: number;
+} {
   const sid = requireSessionId(sessionId, "onTurnsDiscarded");
   const targets = new Set(
     discardedTurnIds.filter((id) => typeof id === "string" && id.length > 0)
   );
-  if (targets.size === 0) return { memories: 0, emotions: 0 };
+  if (targets.size === 0) {
+    return { memories: 0, emotions: 0, threads: 0, foreshadows: 0 };
+  }
   return {
     memories: archiveBySource(memoryPrefix(sid), targets, 原因),
     emotions: archiveBySource(emotionPrefix(sid), targets, 原因),
+    // 线索卡/伏笔卡同理：来源那条回复没了，它新建的卡不能以生效身份留在导演台账里。
+    // 但「推进」类更新（改已有线索的 上次推进轮次 / 追加 最近变化）不在这里回退——
+    // 那些字段没有变更前快照，回退需要旧值。记为待办 #35。
+    threads: archiveBySource(threadPrefix(sid), targets, 原因),
+    foreshadows: archiveBySource(foreshadowPrefix(sid), targets, 原因),
   };
 }
 

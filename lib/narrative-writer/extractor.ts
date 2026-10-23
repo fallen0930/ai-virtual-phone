@@ -8,17 +8,19 @@
 import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
-import { saveMemoryCard, saveEmotionCard, saveWaterLevel, getWaterLevels, getMemoryCards, getEmotionCards, requireSessionId, isSourceMessageAlive, sessionCharName } from "./storage";
-import type { MemoryCard, EmotionCard, WaterLevelState, CardStatus } from "./types";
+import { saveMemoryCard, saveEmotionCard, saveWaterLevel, saveThreadCard, saveForeshadowCard, getWaterLevels, getMemoryCards, getEmotionCards, listThreadCards, listForeshadowCards, requireSessionId, isSourceMessageAlive, sessionCharName } from "./storage";
+import type { MemoryCard, EmotionCard, WaterLevelState, CardStatus, ThreadCard, ForeshadowCard, ThreadPlotStatus } from "./types";
 import { createDefaultWaterLevel, checkWaterLevelEligibility, normalizeAudience, CONFIDENCE_THRESHOLDS } from "./types";
+import { listSuspenseNames, normalizeThreadName, recordThreadProgress } from "./threads";
 
-const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只在对话出口工作，负责把对话提炼成可长期使用的记忆卡与情感卡，并检查关系水位与执笔状态是否需要更新。你不替角色回话，不写正文，不做任何扮演。
+const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只在对话出口工作，负责把对话提炼成可长期使用的记忆卡与情感卡，并检查关系水位是否需要更新。你不替角色回话，不写正文，不做任何扮演。
 
 # 输入
 - 本轮对话 + 最近 6-8 轮（含小票原文、尾调原文）
 - 上下文：当前是戏内剧情还是戏外交流
 - 已有卡摘要（卡 id / 主类型 / 状态）
-- 现有水位与执笔状态
+- 现有水位
+- 已有线索名称与已有伏笔名称（悬念台账，判重用）
 - **特调会话元数据**：角色名、用户名、世界观文本
 - **特调会话状态**：小票记住的值（如天数、位置、好感度等），这些是跨轮持续的状态变量，不得随意删除或覆盖
 
@@ -47,10 +49,18 @@ const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只�
  "建议状态":"active|frozen|degraded","目标水位":"L0|L1|L2|L3|L4|L5",
  "准入证据":[],"理由":""}
 
-执笔状态更新建议：
-{"kind":"drive","当前基调":"","本轮档位":"轻|中|重","连续同档":0,
- "目标":[],"当前弧光":"","阶段进度":0.0,
- "散落线头":[],"停滞天数":0,"status":"active|stalled|archived","理由":""}
+线索卡（一条还没收的线；只在剧情里真实存在悬着的事时输出）：
+{"kind":"thread","名称":"短名词组，如：老桥下的硬币","线索状态":"潜伏|升温|爆发|收束",
+ "关联角色":[],"下一步可能":"一句话","本轮变化":"这轮这条线发生了什么（可空）"}
+
+伏笔卡（一个埋下了、等着收的钩子）：
+{"kind":"foreshadow","内容":"一句话伏笔","埋下轮次":0,
+ "预期回收窗口":{"起":0,"止":0},"伏笔状态":"未收","关联线索名称":"","揭示条件":""}
+
+线索与伏笔的去重规则：context.已有线索名称 / context.已有伏笔名称 列出了台账里现有的名字。
+本轮这条线只是有新进展时，**用同名输出**（把进展写进"本轮变化"），不要改名也不要另起一条；
+换名字会被当成一条全新的线，台账里就会出现两条同样的线。
+线索卡与伏笔卡新建一律先成"待核"，由玩家核过才用；线索状态的升级与伏笔的回收都不由你决定。
 
 # 主类型裁决（先匹配先定）
 世界变更 → 关系共识 → 经历节点 → 自我认知 → 稳定事实 → 行为模式
@@ -110,19 +120,16 @@ L5 亲密：双方明确确认的关系共识 + 长期稳定态度 + 无未解�
 一期替代：L3 = 经历节点 + 关系共识；L4 = 关系共识 + 经历节点中的脆弱分享 + 无未解决冲突；L5 一期不开放。
 逐阶升，不可跳级；冲突/伤害/明确拒绝 → frozen 或 degraded。
 
-# 执笔状态（每轮后检查一次）
-- 更新本轮档位、连续同档计数、散落线头；
-- 新目标只能来自人设明示、世界观约束、经历节点、关系共识，须带来源卡 id；新目标先成"待核"；
-- 弧光阶段推进须有记忆卡证据；
-- 连续 3 轮无实质推进 → 建议升档；连续 3 轮重档 → 建议缓冲；
-- 停滞 ≥3 天标 stalled，≥7 天触发目标复核。
-
 # 最后
 只输出 JSON，不要解释、不要寒暄。无内容可抽时输出 []。`;
 
 export interface ExtractResult {
   memories: MemoryCard[];
   emotions: EmotionCard[];
+  /** 本轮新建的线索卡（同名进展更新的卡不重复出现在这里，只落库） */
+  threads: ThreadCard[];
+  /** 本轮新建的伏笔卡 */
+  foreshadows: ForeshadowCard[];
   waterLevelUpdates?: Array<{ 作用域: string; 建议状态: string; 目标水位: string }>;
 }
 
@@ -188,8 +195,12 @@ export async function extractFromTurn(
     console.log(
       `[NarrativeWriter] 抽取跳过：来源消息 ${来源消息ID} 已不在对局 ${sid} 中`
     );
-    return { memories: [], emotions: [] };
+    return { memories: [], emotions: [], threads: [], foreshadows: [] };
   }
+  // 悬念台账的名称列表（#32 本轮范围：只给名称，不给内容摘要）。
+  // 模型看得到现有线索名，才能用"同名输出"表达这条线有新进展，而不是每次换个名字建一张新卡。
+  // 只读名称是为了控制输入长度：整包内容摘要会把提示词撑回去，且与冲突检测一起做才有意义（仍留待办）。
+  const 悬念名称 = await listSuspenseNames(sid);
   const messages: LLMMessage[] = [
     { role: "system", content: EXTRACTOR_SYSTEM_PROMPT },
     {
@@ -201,6 +212,8 @@ export async function extractFromTurn(
           isPlotMode: context.isPlotMode,
           existingCardsSummary: context.existingCardsSummary,
           currentWaterLevels: context.currentWaterLevels,
+          已有线索名称: 悬念名称.线索,
+          已有伏笔名称: 悬念名称.伏笔,
           // 新增字段
           characterName: context.characterName,
           userName: context.userName,
@@ -219,7 +232,7 @@ export async function extractFromTurn(
     const results = JSON.parse(response);
     if (!Array.isArray(results)) {
       console.warn("[NarrativeWriter] Extraction returned non-array:", response);
-      return { memories: [], emotions: [] };
+      return { memories: [], emotions: [], threads: [], foreshadows: [] };
     }
 
     const memories: MemoryCard[] = [];
@@ -238,6 +251,26 @@ export async function extractFromTurn(
     // 两头都拿不到就留空，normalizeAudience 会把 "character" 退成 "all"。
     const 当前角色标识 =
       (context.characterName ?? "").trim() || sessionCharName(sid);
+
+    // 悬念台账的内存索引：归一化名称 → 卡片。一次抽取里模型常常连着吐同名条目，
+    // 每次都回库读会读到旧值（同名合并就会漏），所以建一份本地索引边写边更新。
+    const 线索索引 = new Map<string, ThreadCard>();
+    for (const t of await listThreadCards(sid)) {
+      const key = normalizeThreadName(t.名称);
+      // 归档的线不占名字：那条线已经收过了，重新出现同名内容就是"这条线又活了"，该新建
+      if (key && t.状态 !== "归档" && !线索索引.has(key)) 线索索引.set(key, t);
+    }
+    const 伏笔索引 = new Map<string, ForeshadowCard>();
+    for (const f of await listForeshadowCards(sid)) {
+      const key = normalizeThreadName(f.内容);
+      if (key && f.状态 !== "归档" && f.伏笔状态 !== "已收" && !伏笔索引.has(key)) {
+        伏笔索引.set(key, f);
+      }
+    }
+    const 悬念: { threads: ThreadCard[]; foreshadows: ForeshadowCard[] } = {
+      threads: [],
+      foreshadows: [],
+    };
 
     for (const item of results) {
       if (item.kind === "memory") {
@@ -278,6 +311,91 @@ export async function extractFromTurn(
         };
         await saveEmotionCard(sid, card);
         emotions.push(card);
+      } else if (item.kind === "thread") {
+        const 名称 = typeof item.名称 === "string" ? item.名称.trim() : "";
+        const key = normalizeThreadName(名称);
+        if (!key) {
+          console.warn("[NarrativeWriter] 丢弃一条没有名称的线索卡（无法进台账，也无法判重）");
+          continue;
+        }
+        const 本轮变化 =
+          typeof item.本轮变化 === "string" ? item.本轮变化.trim() : "";
+        const 已有 = 线索索引.get(key);
+        if (已有) {
+          // 同名 = "这条线本轮有进展"（栗子的决定 7）：只更新推进轮次与最近变化，
+          // **不改 线索状态**——升级只能来自采纳回写或玩家在面板上改。
+          if (来源已失效) {
+            console.log(
+              `[NarrativeWriter] 线索"${已有.名称}"的进展记录跳过：来源消息 ${来源消息ID} 已不在对局里`
+            );
+            continue;
+          }
+          const 更新后 = await recordThreadProgress(sid, 已有, 本轮变化, 来源消息ID, 来源轮次);
+          线索索引.set(key, 更新后);
+          悬念.threads.push(更新后);
+          continue;
+        }
+        const card: ThreadCard = {
+          id: generateId(),
+          kind: "thread",
+          名称,
+          线索状态: 合法线索状态(item.线索状态),
+          关联角色: 字符串数组(item.关联角色),
+          上次推进轮次: 来源轮次 ?? 0,
+          下一步可能: typeof item.下一步可能 === "string" ? item.下一步可能.trim() : "",
+          最近变化: 本轮变化
+            ? [{ 变化: 本轮变化, 轮次: 来源轮次, 来源消息ID, 时间: Date.now() }]
+            : [],
+          // 新建的悬念资产一律先待核：这条线是不是真要推，得玩家点头。
+          // 这里不看置信度门槛——门槛管的是"能不能进正文"，而线索卡根本不进正文。
+          状态: 来源已失效 ? "归档" : "待核",
+          ...(来源已失效 ? { 归档原因: 失效归档原因 } : {}),
+          audience: normalizeAudience(item.audience, 当前角色标识),
+          来源消息ID,
+          来源轮次,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await saveThreadCard(sid, card);
+        线索索引.set(key, card);
+        悬念.threads.push(card);
+      } else if (item.kind === "foreshadow") {
+        const 内容 = typeof item.内容 === "string" ? item.内容.trim() : "";
+        const key = normalizeThreadName(内容);
+        if (!key) {
+          console.warn("[NarrativeWriter] 丢弃一条没有内容的伏笔卡（无法判重，也无法被回收标记匹配）");
+          continue;
+        }
+        if (伏笔索引.has(key)) {
+          // 同一个伏笔换个说法又抽一次：不新建，也不改它的状态（回收只认采纳标记）
+          continue;
+        }
+        const card: ForeshadowCard = {
+          id: generateId(),
+          kind: "foreshadow",
+          内容,
+          埋下轮次: 合法轮次(item.埋下轮次) ?? 来源轮次 ?? 0,
+          预期回收窗口: 合法窗口(item.预期回收窗口, 来源轮次),
+          伏笔状态: "未收",
+          关联线索名称:
+            typeof item.关联线索名称 === "string" && item.关联线索名称.trim()
+              ? item.关联线索名称.trim()
+              : undefined,
+          揭示条件:
+            typeof item.揭示条件 === "string" && item.揭示条件.trim()
+              ? item.揭示条件.trim()
+              : undefined,
+          状态: 来源已失效 ? "归档" : "待核",
+          ...(来源已失效 ? { 归档原因: 失效归档原因 } : {}),
+          audience: normalizeAudience(item.audience, 当前角色标识),
+          来源消息ID,
+          来源轮次,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await saveForeshadowCard(sid, card);
+        伏笔索引.set(key, card);
+        悬念.foreshadows.push(card);
       } else if (item.kind === "water") {
         waterLevelUpdates.push(item);
       }
@@ -289,10 +407,16 @@ export async function extractFromTurn(
       await applyWaterLevelUpdates(sid, waterLevelUpdates, context.currentWaterLevels);
     }
 
-    return { memories, emotions, waterLevelUpdates };
+    return {
+      memories,
+      emotions,
+      threads: 悬念.threads,
+      foreshadows: 悬念.foreshadows,
+      waterLevelUpdates,
+    };
   } catch (e) {
     console.error("[NarrativeWriter] Extraction parse failed:", e);
-    return { memories: [], emotions: [] };
+    return { memories: [], emotions: [], threads: [], foreshadows: [] };
   }
 }
 
@@ -366,6 +490,51 @@ function gateNewCardStatus(
 }
 
 /**
+ * 线索剧情态兜底：模型给的值不在词表里就退回"潜伏"。
+ * 新建的线本来就该是从没动过的线，"升温/爆发"必须有采纳回写或玩家手动操作作依据。
+ */
+const 线索状态词表: ThreadPlotStatus[] = ["潜伏", "升温", "爆发", "收束"];
+function 合法线索状态(原始值: unknown): ThreadPlotStatus {
+  return 线索状态词表.includes(原始值 as ThreadPlotStatus)
+    ? (原始值 as ThreadPlotStatus)
+    : "潜伏";
+}
+
+/** 字符串数组字段（关联角色等）：非字符串丢弃、去空，缺失给空数组 */
+function 字符串数组(原始值: unknown): string[] {
+  if (!Array.isArray(原始值)) return [];
+  return 原始值
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+/** 轮次号：只接受有限数字，其余一律 undefined（交给调用方决定兜底值） */
+function 合法轮次(原始值: unknown): number | undefined {
+  if (typeof 原始值 !== "number" || !Number.isFinite(原始值)) return undefined;
+  return Math.max(0, Math.floor(原始值));
+}
+
+/**
+ * 预期回收窗口：模型给的 {起,止} 必须都是合理轮次号且 止 ≥ 起，否则按"这条线埋在哪、
+ * 三到五轮内该收"给个保守默认——窗口是用来提醒的，不是用来卡死剧情的。
+ */
+function 合法窗口(
+  原始值: unknown,
+  来源轮次?: number
+): { 起: number; 止: number } {
+  const 起 =
+    (原始值 && typeof 原始值 === "object"
+      ? 合法轮次((原始值 as { 起?: unknown }).起)
+      : undefined) ?? 合法轮次(来源轮次) ?? 0;
+  const 止 =
+    (原始值 && typeof 原始值 === "object"
+      ? 合法轮次((原始值 as { 止?: unknown }).止)
+      : undefined) ?? 起 + 3;
+  return { 起, 止: 止 >= 起 ? 止 : 起 };
+}
+
+/**
  * 热轨抽取（Hot Extractor）：快速版，<3 秒
  * 只传正文 + 最近 3 轮，不传小票/尾调/状态快照
  * 用于执笔生成后立即出基线记忆卡
@@ -388,7 +557,7 @@ export async function hotExtractFromNarrativeBody(
     const timeoutPromise = new Promise<ExtractResult>((resolve) => {
         setTimeout(() => {
             console.log(`[HotTrack:Probe] Timeout after 5000ms`);
-            resolve({ memories: [], emotions: [] });
+            resolve({ memories: [], emotions: [], threads: [], foreshadows: [] });
         }, 5000);
     });
     
@@ -478,7 +647,7 @@ export async function deepExtractFromNarrativeBody(
     const timeoutPromise = new Promise<ExtractResult>((resolve) => {
         timeoutId = setTimeout(() => {
             log('Timeout after 60000ms - returning empty result');
-            resolve({ memories: [], emotions: [] });
+            resolve({ memories: [], emotions: [], threads: [], foreshadows: [] });
         }, 60000);
     });
     

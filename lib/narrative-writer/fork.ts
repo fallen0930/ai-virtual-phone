@@ -7,6 +7,8 @@
 //   由玩家在执笔面板用「补抽」从保留下来的对话重建。判断拿不准时也按中间分叉处理，宁可少给不能串。
 //
 // 深拷贝时卡片 id 保持不变（命名空间已按 sessionId 分开，同 id 不冲突），关联 ID 原样带过去。
+// 记忆卡、情感卡、线索卡、伏笔卡一并按同一规则复制：悬念台账讲的就是"这场戏埋了什么没收"，
+// 属于历史而不是当前进度，末尾分叉必须整份带走。
 // 但执笔状态与上下文层级不能照搬：id 改指子会话、轮次按子会话自己的消息重算、
 // lastCompressedTurn 不得超过子会话 currentTurn。
 //
@@ -21,7 +23,9 @@ import {
   purgeNarrativeSessionData,
   saveContextHierarchy,
   saveEmotionCard,
+  saveForeshadowCard,
   saveMemoryCard,
+  saveThreadCard,
   saveWaterLevel,
   saveWriterState,
 } from "./storage";
@@ -33,6 +37,10 @@ export type ForkCopyResult = {
   copied: boolean;
   memories: number;
   emotions: number;
+  /** 复制过去的线索卡张数（悬念资产同样属于"这场戏的历史"） */
+  threads: number;
+  /** 复制过去的伏笔卡张数 */
+  foreshadows: number;
 };
 
 /** 判定末尾分叉：子会话留下了父会话的每一条消息，且父会话非空。其余一律当中间分叉。 */
@@ -58,11 +66,20 @@ export async function copyNarrativeOnFork(child: MixSession): Promise<ForkCopyRe
 
   if (!isEndFork(parent, child) || !parent) {
     // 中间分叉 / 父级已不存在 / 判断拿不准：不复制，子会话空记忆起步。
-    return { endFork: false, copied: false, memories: 0, emotions: 0 };
+    return {
+      endFork: false,
+      copied: false,
+      memories: 0,
+      emotions: 0,
+      threads: 0,
+      foreshadows: 0,
+    };
   }
 
   let memories = 0;
   let emotions = 0;
+  let threads = 0;
+  let foreshadows = 0;
   try {
     const snapshot = await exportAllNarrativeDataForMigration(parent.id);
 
@@ -74,6 +91,16 @@ export async function copyNarrativeOnFork(child: MixSession): Promise<ForkCopyRe
     for (const card of snapshot.emotions) {
       await saveEmotionCard(childId, card);
       emotions++;
+    }
+    // 线索卡 / 伏笔卡：整卡原样带走，剧情态（线索状态、伏笔状态）也照搬——
+    // 子会话继承的是父场已经演到哪一步，不是重新开始。
+    for (const card of snapshot.threads) {
+      await saveThreadCard(childId, card);
+      threads++;
+    }
+    for (const card of snapshot.foreshadows) {
+      await saveForeshadowCard(childId, card);
+      foreshadows++;
     }
 
     // 水位：父会话记录过的每个作用域原样带过去（未记录的交给子会话默认值）。
@@ -99,8 +126,8 @@ export async function copyNarrativeOnFork(child: MixSession): Promise<ForkCopyRe
       });
     }
 
-    console.log(`[NarrativeWriter] copyNarrativeOnFork: 父 ${parent.id} → 子 ${childId}，已复制 ${memories} 记忆卡 / ${emotions} 情感卡`);
-    return { endFork: true, copied: true, memories, emotions };
+    console.log(`[NarrativeWriter] copyNarrativeOnFork: 父 ${parent.id} → 子 ${childId}，已复制 ${memories} 记忆卡 / ${emotions} 情感卡 / ${threads} 线索卡 / ${foreshadows} 伏笔卡`);
+    return { endFork: true, copied: true, memories, emotions, threads, foreshadows };
   } catch (error) {
     // 复制中途失败：清掉已落进子会话命名空间的一切，不留半份；分叉本身不因此失败。
     console.error(`[NarrativeWriter] copyNarrativeOnFork 复制失败，正在清理子 ${childId} 的残留数据：`, error);
@@ -109,6 +136,13 @@ export async function copyNarrativeOnFork(child: MixSession): Promise<ForkCopyRe
     } catch (cleanupError) {
       console.error("[NarrativeWriter] copyNarrativeOnFork 清理残留数据也失败：", cleanupError);
     }
-    return { endFork: true, copied: false, memories: 0, emotions: 0 };
+    return {
+      endFork: true,
+      copied: false,
+      memories: 0,
+      emotions: 0,
+      threads: 0,
+      foreshadows: 0,
+    };
   }
 }

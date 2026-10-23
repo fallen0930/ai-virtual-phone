@@ -43,6 +43,7 @@ import {
 import { hotExtractFromNarrativeBody } from "../narrative-writer/extractor";
 import { getExtractionRules, getContextHierarchy, saveContextHierarchy, onTurnsDiscarded } from "../narrative-writer/storage";
 import { incrementTurnCount, markExtractionComplete } from "../narrative-writer/writer";
+import { stripBannerMarkers } from "../narrative-writer/threads";
 import {
     advanceMixState,
     buildMixConditionContext,
@@ -1282,9 +1283,14 @@ export async function insertNarrativeTurn(sessionId: string, narrativeBody: stri
     
     const trimmed = narrativeBody.trim();
     if (!trimmed) throw new ChatEngineError("正文内容为空。");
-    
+
+    // 报幕里的机器标记（[推进:…] / [回收:…]）绝不能进对局文本。
+    // 调用方（执笔面板）本来就该剥掉再传；这里是最后一道兜底：
+    // 漏传一次也不要在聊天记录里留下玩家看不懂的方括号。
+    const 干净报幕 = banner ? stripBannerMarkers(banner) : undefined;
+
     // 如果有报幕，将其作为元数据嵌入到 rawText 中
-    const rawText = banner ? `[执笔报幕] ${banner}\n\n${trimmed}` : undefined;
+    const rawText = 干净报幕 ? `[执笔报幕] ${干净报幕}\n\n${trimmed}` : undefined;
     
     // 从配方中提取当前激活的材料（用于装配提示词和执行机括）
     const { entries } = resolveMixRecipeMaterials(current.recipe);

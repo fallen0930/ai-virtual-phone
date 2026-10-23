@@ -613,6 +613,130 @@ describe("走向卡 · 目标由线索台账分配", () => {
     ]);
     expect(cards.every((c) => c.已替换), "换过类型却没标已替换").toBe(true);
   });
+
+  it("38. 没有爆发/升温线时主线卡换类型并如实标注，潜伏线不会被当成主线", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const 拼任务 = (await requirePlanFn("buildBannerTaskText")) as NonNullable<
+      BannerPlanApi["buildBannerTaskText"]
+    >;
+    if (typeof 分配 !== "function" || typeof 拼任务 !== "function") return;
+
+    const cards = 分配(
+      planInput({
+        threads: [mkThread("只潜伏", { 名称: "AJ旧账", 线索状态: "潜伏" })],
+        foreshadows: [
+          mkForeshadow("替补", { 内容: "AK旧物", 预期回收窗口: { 起: 1, 止: 3 } }),
+        ],
+      })
+    );
+    const 主线位 = cards.find((c) => c.计划类型 === "主线")!;
+    expect(主线位, "第一组里找不到主线那一格").toBeDefined();
+    expect(主线位.已替换, "没有爆发/升温线却按主线出卡").toBe(true);
+    expect(主线位.类型, "潜伏线不能顶替主线").not.toBe("主线");
+    expect(主线位.类型, "有可回收伏笔时应按替补表换成伏笔回收").toBe("伏笔回收");
+    expect(主线位.目标?.名称, "不该把潜伏线绑成主线目标").not.toBe("AJ旧账");
+    expect(cards.some((c) => c.类型 === "主线"), "整批不该出现主线卡").toBe(false);
+
+    const 文本 = 拼任务(cards);
+    expect(文本, "替换没在任务文本里如实留痕").toContain("已改为伏笔回收");
+  });
+
+  it("39. 一批里同一条线最多绑一张卡；关系卡的目标被占时改为不绑线、只靠水位上限", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    if (typeof 分配 !== "function") return;
+
+    const 升温 = mkThread("同线", {
+      名称: "AL升温",
+      线索状态: "升温",
+      关联角色: ["角色A"],
+    });
+    const cards = 分配(planInput({ threads: [升温] }));
+    const 主线 = cards.find((c) => c.类型 === "主线")!;
+    expect(主线.目标?.id, "主线该先拿到这条醒着的线").toBe(升温.id);
+    const 关系 = cards.find((c) => c.类型 === "关系")!;
+    expect(关系.目标, "同一条线已被主线绑走，关系卡不该再绑一次").toBeUndefined();
+    expect(关系.回写, "不绑线的关系卡不该回写台账").toBeUndefined();
+    expect(关系.上限.length, "关系卡必须仍带一句话上限").toBeGreaterThan(4);
+    expect(
+      cards.filter((c) => c.目标?.kind === "thread").map((c) => c.目标!.id),
+      "同一批里一条线绑了多张卡"
+    ).toEqual([升温.id]);
+
+    // 三条线都在时，三张需要线的卡各绑一条，不出现复用
+    const 潜伏 = mkThread("支线", { 名称: "AM潜伏", 线索状态: "潜伏" });
+    const 爆发甲 = mkThread("爆发甲", { 名称: "AN爆发", 线索状态: "爆发" });
+    const 爆发乙 = mkThread("爆发乙", { 名称: "AO爆发", 线索状态: "爆发" });
+    const 第三批 = 分配(planInput({ threads: [潜伏, 爆发甲, 爆发乙], 批次序号: 2 }));
+    const 绑线 = 第三批
+      .filter((c) => c.目标?.kind === "thread")
+      .map((c) => c.目标!.id);
+    expect(绑线.length, "三条线都在，三张卡该各绑一条").toBe(3);
+    expect(new Set(绑线).size, "同一批里有卡复用了同一条线").toBe(绑线.length);
+  });
+
+  it("40. 水位句很长时优先压缩水位句而不是从尾部硬截，三张卡的说明都完整", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const 拼任务 = (await requirePlanFn("buildBannerTaskText")) as NonNullable<
+      BannerPlanApi["buildBannerTaskText"]
+    >;
+    if (typeof 分配 !== "function" || typeof 拼任务 !== "function") return;
+    const api = await bannerPlanModule();
+    const 上限字数 = api.BANNER_TASK_MAX_CHARS ?? 600;
+
+    const cards = 分配(
+      planInput({
+        threads: [
+          mkThread("长目标一", {
+            名称: `AP${"长".repeat(40)}线`,
+            线索状态: "升温",
+            上次推进轮次: 1,
+            关联角色: ["角色A"],
+          }),
+          mkThread("长目标二", {
+            名称: `AQ${"长".repeat(40)}线`,
+            线索状态: "升温",
+            上次推进轮次: 2,
+            关联角色: ["角色A"],
+          }),
+        ],
+        foreshadows: [
+          mkForeshadow("长目标三", {
+            内容: `AR${"旧".repeat(40)}物`,
+            预期回收窗口: { 起: 1, 止: 2 },
+          }),
+        ],
+        waterLevels: {
+          戏内层: mkWater("戏内层", "L4", {
+            status: "degraded",
+            未解决冲突: ["借的钱一直没还上", "那晚失约也没解释"],
+            冻结项: ["不提前任的名字", "不谈父亲的事"],
+          }),
+          共识层: mkWater("共识层", "L4", { 未解决冲突: ["说好的事谁也没兑现"] }),
+          现实层: mkWater("现实层", "L1"),
+        },
+      })
+    );
+
+    const 文本 = 拼任务(cards);
+    expect(文本.length, "任务文本仍超出上限").toBeLessThanOrEqual(上限字数);
+    const 行 = 文本.split("\n").filter((line) => /^\d+ /.test(line));
+    expect(行, "三张卡的说明没有完整保留").toHaveLength(3);
+    cards.forEach((card, i) => {
+      expect(行[i], `第${i + 1}行不是这张卡`).toContain(`${i + 1} ${card.类型}`);
+      if (card.目标) expect(行[i], `第${i + 1}行丢了目标`).toContain(card.目标.名称);
+      expect(行[i], `第${i + 1}行的水位句被整句砍掉`).toContain("可出现");
+    });
+    expect(文本, "压缩时该先砍最不伤分寸的戏外克制").not.toContain("戏外克制");
+    expect(文本, "次要的冻结项与旧账该在水位句里被压缩掉").not.toContain("别碰");
+    expect(文本, "压缩后不该留下残缺的水位句").not.toContain("旧账未了");
+    expect(文本, "压完还得交代输出格式").toContain("只输出这三行");
+  });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -965,15 +1089,18 @@ describe("走向卡 · 代码标记与采纳回写", () => {
     ).find((c) => c.类型 === "伏笔回收")!;
     expect(标记(回收卡, "任何变化"), "回收标记只带伏笔内容").toBe("[回收:T旧账]");
 
+    // 同一条线一批只绑一张卡：升支线先占潜伏线，缓冲占第一条爆发线，
+    // 要给意外转折留一条爆发线才能验到"爆发封顶"
     const 潜伏 = mkThread("升一级", { 名称: "AG潜伏", 线索状态: "潜伏", 上次推进轮次: 1 });
-    const 爆发 = mkThread("封顶", { 名称: "AH爆发", 线索状态: "爆发", 上次推进轮次: 1 });
-    const 第三批 = 分配(planInput({ threads: [潜伏, 爆发], 批次序号: 2 }));
+    const 爆发甲 = mkThread("封顶甲", { 名称: "AH爆发", 线索状态: "爆发", 上次推进轮次: 1 });
+    const 爆发乙 = mkThread("封顶乙", { 名称: "AI爆发", 线索状态: "爆发", 上次推进轮次: 1 });
+    const 第三批 = 分配(planInput({ threads: [潜伏, 爆发甲, 爆发乙], 批次序号: 2 }));
     const 升支线 = 第三批.find((c) => c.类型 === "升支线")!;
     expect(标记(升支线, "翻出了钥匙"), "潜伏只能升到升温").toBe(
       "[推进:AG潜伏→升温:翻出了钥匙]"
     );
     const 转折 = 第三批.find((c) => c.类型 === "意外转折带因果")!;
-    expect(转折.目标?.名称, "资产都被占用时允许复用，不该因此换掉类型").toBe("AH爆发");
+    expect(转折.目标?.名称, "三条线各绑一张卡，转折该拿到剩下那条爆发线").toBe("AI爆发");
     expect(标记(转折, "摊牌"), "爆发已经是顶点，不能再往上").toContain("→爆发:");
   });
 
@@ -1101,6 +1228,8 @@ describe("走向卡 · 正文提示词的边界", () => {
   it("31. 写正文时不出现「线索」「伏笔」二字，也不出现变化/代价文本与标记", async () => {
     const sid = makeSessionId("body-boundary");
     await seedThreads(sid, [
+      // 一条醒着的线：第一批的主线卡会绑它，伏笔回收才留得到第二批
+      mkThread("正文边界暖线", { 名称: "AA暖线", 线索状态: "升温", 上次推进轮次: 1 }),
       mkThread("正文边界", { 名称: "AA旧事", 线索状态: "潜伏", 上次推进轮次: 1 }),
     ]);
     await seedForeshadows(sid, [

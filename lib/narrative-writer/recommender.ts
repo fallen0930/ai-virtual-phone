@@ -1,8 +1,14 @@
 // lib/narrative-writer/recommender.ts
-// 剧情预告生成器：强制三张卡（社交拉扯/外界驱动/环境催化）+ 具体钩子画面 + 可切换维度
+// 素材库生成器：强制三张卡（社交拉扯/外界驱动/环境催化）+ 具体钩子画面 + 可切换维度
 // 所有 hook 从记忆库/世界观抓真实细节填充，不调用 LLM（保证速度）
+//
+// 定位（走向卡重写后）：这里是「素材库」，不是方向候选。
+// 它不调模型、不看悬念台账的优先级、也不带任何回写能力，点一下只是把钩子拼进玩家倾向。
+// 唯一的方向候选出口是走向卡（lib/narrative-writer/banner-plan.ts + writer.generateBannerOptions）。
+// 所以界面上这一组的标题、说明、空态文案都不再说"推荐/可以这样发展"。
 
 import type { MemoryCard, EmotionCard, NarrativeWriterState, ContextHierarchy, ThreadCard } from "./types";
+import { WATER_LABELS } from "./water-language";
 import { pickPriorityThread } from "./threads";
 
 export type InteractionType = 'social' | 'external' | 'ambient';
@@ -15,7 +21,7 @@ export interface DimensionOptions {
   tempo?: string[];      // 时间跨度：即时/几小时后/几天后
 }
 
-export interface PlotPreview {
+export interface MaterialCard {
   id: string;
   interactionType: InteractionType;
   plotFunction: PlotFunction;
@@ -41,11 +47,6 @@ export interface RecommendationContext {
   threads?: ThreadCard[];
 }
 
-const WATER_LABELS: Record<string, string> = {
-  'L0': '刚认识', 'L1': '有点熟了', 'L2': '已经挺熟',
-  'L3': '关系不错', 'L4': '很亲密了', 'L5': '最亲密',
-};
-
 const FUNCTION_LABELS: Record<PlotFunction, string> = {
   twist: '转折', advance: '推进', flirt: '升温', buffer: '缓冲',
 };
@@ -54,7 +55,7 @@ const TYPE_LABELS: Record<InteractionType, string> = {
   social: '角色与主控', external: '主控与外界', ambient: '环境与日常',
 };
 
-export function generatePlotPreviews(context: RecommendationContext): PlotPreview[] {
+export function generateMaterialCards(context: RecommendationContext): MaterialCard[] {
   const waterLabel = WATER_LABELS[context.waterLevel] || '普通';
   return [
     buildSocialCard(context, waterLabel),
@@ -64,7 +65,7 @@ export function generatePlotPreviews(context: RecommendationContext): PlotPrevie
 }
 
 /** 社交拉扯：角色 vs 主控，抓情感卡/关系共识的细节做反差钩子 */
-function buildSocialCard(context: RecommendationContext, waterLabel: string): PlotPreview {
+function buildSocialCard(context: RecommendationContext, waterLabel: string): MaterialCard {
   const charName = context.characterName || '角色';
   const recentEmotion = context.emotions[0];
   const relationMemory = context.memories.find(m => m.主类型 === '关系共识');
@@ -121,7 +122,7 @@ function buildSocialCard(context: RecommendationContext, waterLabel: string): Pl
 }
 
 /** 外界驱动：主控 vs 外界，抓世界变更/未探索元素做新变量钩子 */
-function buildExternalCard(context: RecommendationContext): PlotPreview {
+function buildExternalCard(context: RecommendationContext): MaterialCard {
   const worldChange = context.memories.find(m => m.主类型 === '世界变更');
   const pendingChange = context.pendingMemories.find(m => m.主类型 === '世界变更');
   const unexplored = extractWorldKeywords(context.worldText)
@@ -163,7 +164,7 @@ function buildExternalCard(context: RecommendationContext): PlotPreview {
 }
 
 /** 环境催化：角色 vs 环境/配角，抓未决线索/上一章摘要做氛围钩子 */
-function buildAmbientCard(context: RecommendationContext): PlotPreview {
+function buildAmbientCard(context: RecommendationContext): MaterialCard {
   // 先取导演台账里优先级最高的那条线（爆发 > 升温 > 潜伏，同状态取最久没推进的）。
   // 台账为空时回退到旧的「散落线头」，再没有就用摘要/天气兜底——无线索可抓时本函数不得抛错。
   const 优先线索 = pickPriorityThread(context.threads ?? [])?.名称?.trim();

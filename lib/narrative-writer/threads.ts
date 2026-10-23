@@ -126,6 +126,32 @@ function pushChange(最近变化: ThreadChange[], change: ThreadChange): ThreadC
   return [change, ...最近变化].slice(0, THREAD_CHANGE_KEEP);
 }
 
+/**
+ * 剧情态的顺序与自动回写的天花板。
+ *
+ * 报幕说的是"计划"，正文实际写到什么程度由模型发挥，所以自动回写绝不能按报幕声称的状态落账：
+ * - 每次采纳最多升一级（潜伏→升温→爆发）；
+ * - 「收束」永不由回写产生——一条线收没收束是导演的判断，只能玩家在面板上手动改；
+ * - 也不因为报幕把状态写小了就把已经爆发的线退回去。
+ */
+const 剧情态顺序: ThreadPlotStatus[] = ["潜伏", "升温", "爆发", "收束"];
+
+function 自动升一级的上限(当前: ThreadPlotStatus): ThreadPlotStatus {
+  const i = 剧情态顺序.indexOf(当前);
+  if (i < 0) return 当前;
+  if (当前 === "收束") return "收束"; // 已经收掉的线不再由回写动它
+  return 剧情态顺序[Math.min(i + 1, 剧情态顺序.indexOf("爆发"))];
+}
+
+/** 把报幕声称的状态压回"最多升一级、永不自动收束"的范围 */
+function 回写后的剧情态(当前: ThreadPlotStatus, 声称: unknown): ThreadPlotStatus {
+  const 声称索引 = 剧情态顺序.indexOf(声称 as ThreadPlotStatus);
+  if (声称索引 < 0) return 当前;
+  const 上限索引 = 剧情态顺序.indexOf(自动升一级的上限(当前));
+  const 当前索引 = 剧情态顺序.indexOf(当前);
+  return 剧情态顺序[Math.max(当前索引, Math.min(声称索引, 上限索引))];
+}
+
 /** 插入回调的返回值：允许调用方把新消息的归属信息带回来（面板就是这么用的）。 */
 export type InsertResult = { 消息ID?: string; 轮次?: number } | void | unknown;
 
@@ -193,23 +219,31 @@ export async function applyAdoptedBanner(
       );
       continue;
     }
-    const 新状态 = 线索状态词表.includes(标记.新状态 as ThreadPlotStatus)
-      ? (标记.新状态 as ThreadPlotStatus)
-      : undefined;
-    if (!新状态) {
+    const 声称有效 = 线索状态词表.includes(标记.新状态 as ThreadPlotStatus);
+    if (!声称有效) {
       console.warn(
         `[NarrativeWriter] 采纳回写：线索"${命中.名称}"的新状态"${标记.新状态}"不在词表（潜伏/升温/爆发/收束）里，保持原状态`
       );
     }
+    const 新状态 = 声称有效
+      ? 回写后的剧情态(命中.线索状态, 标记.新状态)
+      : 命中.线索状态;
+    if (声称有效 && 新状态 !== 标记.新状态) {
+      console.warn(
+        `[NarrativeWriter] 采纳回写：报幕声称把线索"${命中.名称}"推到"${标记.新状态}"，按"每次最多升一级、永不自动收束"压回"${新状态}"`
+      );
+    }
     await saveThreadCard(input.sessionId, {
       ...命中,
-      // 剧情态只在这里升级：抽取器同名输出没有这个权力
-      线索状态: 新状态 ?? 命中.线索状态,
+      // 剧情态只在这里升一级：抽取器同名输出没有这个权力，收束也没有
+      线索状态: 新状态,
       上次推进轮次: 来源轮次 ?? 命中.上次推进轮次,
       最近变化: pushChange(命中.最近变化 ?? [], {
         变化: 标记.变化 || 命中.名称,
         轮次: 来源轮次,
         来源消息ID,
+        // 计划 = 这条变化来自报幕的安排，不代表正文真写到了这个程度
+        计划: true,
         时间: Date.now(),
       }),
       updatedAt: Date.now(),

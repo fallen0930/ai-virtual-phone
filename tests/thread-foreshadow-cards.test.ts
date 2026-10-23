@@ -831,7 +831,10 @@ describe("采纳走向卡：报幕标记回写", () => {
     expect(线程.最近变化).toEqual([]);
   });
 
-  it("12. 带标记的报幕通过（…）过滤；正文提示词与返回报幕都不含标记", async () => {
+  // 走向卡重写后的口径（见 tests/banner-plan-structured-cards.test.ts）：
+  // 一次生成恒为三张结构化候选，不再是 string[]；标记归代码生成，
+  // 模型自己在行尾追加的 [推进:…] 不该让这一行作废，也不该原样带进正文。
+  it("12. 模型行尾自带标记时这张卡不作废；标记不进正文，返回报幕是干净的", async () => {
     const sid = makeSessionId("banner-marker");
     await seedThreads(sid, [mkThread("标记", { 名称: "老桥下的硬币" })]);
     const 带标记 =
@@ -840,17 +843,20 @@ describe("采纳走向卡：报幕标记回写", () => {
     llmMock.respond = () =>
       [
         "（基调：日常｜场景：旧城｜走向：闲聊）",
-        "（基调：推进｜场景：旧城｜走向：查证）[推进:老桥下的硬币→升温:掌柜认出硬币]",
+        带标记,
         "（基调：转折｜场景：旧城｜注意：会有揭示）",
-        "（基调：缓冲｜场景：旧城｜走向：独处）",
       ].join("\n");
 
     const options = await writerModule.generateBannerOptions(
       writerInput(sid, "角色A") as never
     );
-    // 现状：只保留（…）整行的过滤会把带标记的行丢掉
-    expect(options).toHaveLength(4);
-    expect(options).toContain(带标记);
+    expect(options).toHaveLength(3);
+    // 带标记的那一行仍然出得来，只是标记被剥掉、报幕留原文
+    const 命中 = options.find((o: { 报幕: string }) => o.报幕 === "（基调：推进｜场景：旧城｜走向：查证）");
+    expect(命中, "模型行尾带标记的报幕被作废了").toBeDefined();
+    for (const 一张 of options as Array<{ 文本: string }>) {
+      expect(一张.文本, "模型写的标记不该原样透传").not.toContain("[推进:");
+    }
 
     llmMock.respond = () => "（基调：推进｜场景：旧城｜走向：查证）\n\n正文一段。";
     const written = await writerModule.writeWithSelectedBanner(

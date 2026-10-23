@@ -92,6 +92,8 @@ type CandidateLike = {
   代价: string;
   报幕: string;
   文本: string;
+  /** 类型平铺一份（= 卡.类型），面板与落盘都用它 */
+  类型: string;
   形态: string;
   可回写: boolean;
 };
@@ -433,7 +435,8 @@ afterEach(() => {
 describe("走向卡 · 类型三组轮换", () => {
   it("1. 三组类型按栗子给的顺序固定，且组内不重复", async () => {
     const api = await bannerPlanModule();
-    expect(api.BANNER_GROUPS, "BANNER_GROUPS 尚未实现").toBeTypeOf("array");
+    // vitest 的 toBeTypeOf 对数组给 "object"（跟 typeof 一致），这里只能用 Array.isArray
+    expect(Array.isArray(api.BANNER_GROUPS), "BANNER_GROUPS 尚未实现").toBe(true);
     expect(api.BANNER_GROUPS).toEqual([
       ["主线", "关系", "变数"],
       ["世界动向", "伏笔回收", "人物内心"],
@@ -857,8 +860,8 @@ describe("走向卡 · 解析与兜底", () => {
     llmMock.respond = () => "";
     await generate(sid).catch(() => undefined);
     const 失败后 = await 读状态(sid);
-    expect((失败后 as Record<string, unknown>)["走向批次序号"], "失败也推进了批次").toBe(0);
-    expect((失败后 as Record<string, unknown>)["最近走向类型"]).toEqual([]);
+    expect((失败后 as unknown as Record<string, unknown>)["走向批次序号"], "失败也推进了批次").toBe(0);
+    expect((失败后 as unknown as Record<string, unknown>)["最近走向类型"]).toEqual([]);
 
     llmMock.respond = () =>
       [
@@ -868,9 +871,9 @@ describe("走向卡 · 解析与兜底", () => {
       ].join("\n");
     const 批 = await generate(sid);
     const 成功后 = await 读状态(sid);
-    expect((成功后 as Record<string, unknown>)["走向批次序号"], "成功后没推进批次").toBe(1);
+    expect((成功后 as unknown as Record<string, unknown>)["走向批次序号"], "成功后没推进批次").toBe(1);
     expect(
-      (成功后 as Record<string, unknown>)["最近走向类型"],
+      (成功后 as unknown as Record<string, unknown>)["最近走向类型"],
       "落盘的最近类型应与本批实际出的类型一致"
     ).toEqual(批.map((c) => c.类型));
   });
@@ -918,16 +921,16 @@ describe("走向卡 · 解析与兜底", () => {
     await 存(sid, 原始);
     // 直接写脏数据：先清掉归一化可能被覆盖的键，再落盘
     const 状态 = await 读(sid);
-    expect((状态 as Record<string, unknown>)["走向批次序号"], "批次指针该是 0-2 的数字").toBe(
+    expect((状态 as unknown as Record<string, unknown>)["走向批次序号"], "批次指针该是 0-2 的数字").toBe(
       1
     );
-    expect((状态 as Record<string, unknown>)["最近走向类型"], "脏类型该被丢掉、重复该被压掉").toEqual(
+    expect((状态 as unknown as Record<string, unknown>)["最近走向类型"], "脏类型该被丢掉、重复该被压掉").toEqual(
       ["主线"]
     );
 
     const 干净 = await 读(makeSessionId("fresh-state"));
-    expect((干净 as Record<string, unknown>)["走向批次序号"]).toBe(0);
-    expect((干净 as Record<string, unknown>)["最近走向类型"]).toEqual([]);
+    expect((干净 as unknown as Record<string, unknown>)["走向批次序号"]).toBe(0);
+    expect((干净 as unknown as Record<string, unknown>)["最近走向类型"]).toEqual([]);
   });
 });
 

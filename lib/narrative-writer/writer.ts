@@ -8,7 +8,7 @@ import { sendLLMRequest } from "@/lib/chat-engine";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveMixApiConfig } from "@/lib/mixology/engine";
 import { getMemoryCards, getEmotionCards, getWaterLevels, getWriterState, saveWriterState, saveMemoryCard, getContextHierarchy, requireSessionId, listThreadCards, listForeshadowCards } from "./storage";
-import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ThreadCard, ForeshadowCard } from "./types";
+import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ThreadCard, ForeshadowCard, BannerType } from "./types";
 import { createDefaultWriterState, visibleToCharacter, audienceLabel } from "./types";
 import {
   FORESHADOW_INJECT_LIMIT,
@@ -18,6 +18,17 @@ import {
   THREAD_NEXT_STEP_MAX_CHARS,
   stripBannerMarkers,
 } from "./threads";
+import {
+  assignBannerPlan,
+  bannerMarker,
+  bannerTypeAlias,
+  buildBannerTaskText,
+  canWriteBack,
+  nextBannerBatch,
+  parseBannerLines,
+  skeletonBanner,
+} from "./banner-plan";
+import type { BannerLineForm, BannerPlanCard } from "./banner-plan";
 
 // 读侧的两个工具住在 types.ts（领域规则），这里转导出一次：
 // 执笔层是它们的唯一调用方，测试与后续改动都从 writer 这条入口看。
@@ -609,9 +620,40 @@ export async function writeNarrative(input: WriterInput): Promise<WriterOutput> 
 }
 
 /**
- * 生成多个报幕选项供用户选择（选择模式第一步）
+ * 一张走向卡候选。
+ *
+ * 为什么不再是 string[]：走向卡要承担"这条线推进到哪一步"的回写，
+ * 只给一段文本就得让模型照抄台账原文当标记，抄错一个字就静默失效（旧实现的实际状况）。
+ * 现在类型与目标由 banner-plan 分配，标记由 bannerMarker 生成，
+ * 面板拿的是整张卡：新增的 标题/变化/代价 只在候选列表展示，绝不进正文提示词。
  */
-export async function generateBannerOptions(input: WriterInput): Promise<string[]> {
+export interface BannerCandidate {
+  /** = 分配卡的 id；缓冲区的去重键用它 */
+  id: string;
+  卡: BannerPlanCard;
+  标题: string;
+  变化: string;
+  代价: string;
+  /** 干净的报幕文本：对局里显示的就是它，不带任何机器标记 */
+  报幕: string;
+  /** 候选列表与回写用的文本：报幕 +（可回写时）代码生成的标记 */
+  文本: string;
+  /** 类型平铺一份：面板列表和落盘"最近走向类型"都只要这个，不必绕 卡.类型 */
+  类型: BannerType;
+  形态: BannerLineForm;
+  可回写: boolean;
+}
+
+/**
+ * 生成走向卡（选择模式第一步）：代码分配类型与目标 → 模型填三行 → 按行序绑回卡片。
+ *
+ * 保证：返回长度恒为 3，不抛"格式不对"，不返回空数组。
+ * 批次指针与最近类型只在真的拿到报幕后才落盘（见函数尾），
+ * 否则一次网络抖动或一段乱格式就会白跳一组方向。
+ */
+export async function generateBannerOptions(
+  input: WriterInput
+): Promise<BannerCandidate[]> {
   // 导演视角：走向卡是在替整场戏挑方向，不是角色在自言自语，所以不按角色过滤。
   // 全场卡都交给导演，每张标注知情范围；现实层与 5+3 上限由 buildContinuityContext 处理。
   // 这里读全部状态（不再只读生效）：待核卡是导演很好用的线索素材，
@@ -626,7 +668,7 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
     listForeshadowCards(input.sessionId),
   ]);
 
-  const continuityContext = buildContinuityContext(
+  const 连续性上下文 = buildContinuityContext(
     memories,
     emotions,
     waterLevels,
@@ -636,6 +678,19 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
     threads,
     foreshadows
   );
+
+  // 排片：这一批出哪三类、每类盯台账里哪一条，全在这里定下来，模型没有决定权
+  const 分配卡 = assignBannerPlan({
+    threads,
+    foreshadows,
+    memories,
+    emotions,
+    waterLevels,
+    当前角色: input.characterProfile?.charName,
+    当前轮次: writerState.currentTurn,
+    批次序号: writerState.走向批次序号,
+    最近走向类型: writerState.最近走向类型,
+  });
 
   let characterWorldText = "";
   if (input.characterProfile.profileText && input.characterProfile.worldText) {
@@ -665,34 +720,13 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
   const userContent = JSON.stringify({
     人设与世界观: characterWorldText,
     其他提示词: worldSettingsParts.join("\n\n"),
-    连续性上下文: continuityContext,
+    连续性上下文: 连续性上下文,
     最近对话历史: input.recentDialogue || "",
     玩家倾向: input.playerTendency || "",
-    任务: `请深度分析当前剧情状态后，生成4个不同的剧情发展方向报幕。
-
-分析步骤（在内心完成，不输出）：
-1. 从最近对话中提取：当前场景、在场人物、未解决的 tension/冲突点、角色情绪状态
-2. 从连续性上下文中识别：未决线索、待收伏笔、未解决冲突、水位状态
-3. 思考3-5个可能的推进方向：日常缓冲 / 关系推进 / 冲突爆发 / 信息揭露 / 环境触发
-4. 评估每个方向的有趣性、节奏合理性、与人设/水位的兼容性
-
-生成4个报幕（每行一个，用括号包裹，≤40字）：
-- 1-2个基于玩家倾向（如果有）
-- 其余由你自主判断，优先选择能推动剧情或深化关系的选项
-- 至少包含1个转折预告（用"注意："标记）
-- 避免重复或相似的方向
-- 你现在是导演：卡片后的知情标注（[仅角色A知情]/[仅玩家知情]/[系统预埋·未揭示]）是可用素材，可以据此设计信息差与伏笔；标"未揭示"的设定不能当作已经揭示的事实写进报幕
-
-悬念回写标记（可选，只在确有推进时才加）：
-- 这条走向会推进某条未决线索 → 在那一行末尾加 [推进:线索名→新状态:变化一句话]，新状态只能是 潜伏/升温/爆发/收束
-- 这条走向会收掉某个待收伏笔 → 在那一行末尾加 [回收:伏笔内容]
-- 线索名与伏笔内容必须照抄上面台账里出现过的原文，一字不差；台账里没有的线不要标，标了也会被忽略
-- 标记只写在行尾方括号里，不要写进括号内的报幕正文；报幕正文本身仍然 ≤40 字
-
-格式示例：
-（基调：X｜场景：Y｜走向：Z）
-（基调：X｜场景：Y｜注意：这轮会有一个……）
-（基调：推进｜场景：旧城｜走向：查证）[推进:老桥下的硬币→升温:当铺掌柜认出了那枚硬币]`,
+    // 任务文本只含分配结果：类型 + 绑到的目标 + 一句话上限。
+    // 水位 JSON、"照抄台账原文一字不差"那一段全删了——标记由代码生成，
+    // 模型只需要把每一格写成「标题｜发生的变化｜代价｜（报幕）」。
+    任务: buildBannerTaskText(分配卡),
   });
 
   const messages: LLMMessage[] = [
@@ -701,32 +735,80 @@ export async function generateBannerOptions(input: WriterInput): Promise<string[
   ];
 
   const response = await callNarrativeLLM(messages);
-  
-  // 解析报幕选项（每行一个）。
-  // 过滤条件按"剥掉行尾机器标记之后"的形状判断：模型会在（…）后面追加
-  // [推进:…] / [回收:…]，直接按 endsWith("）") 过滤会把带标记的行整条丢掉，
-  // 而这些行正是要拿去回写台账的那一条。保留原文（含标记）返回给面板。
-  const lines = response
+
+  // 空响应必须给中文错误：这条链路上她能看到的只有面板上那行红字，
+  // 一句 "Cannot read properties of undefined" 等于没提示。
+  if (!response || typeof response !== "string" || !response.trim()) {
+    throw new Error("走向卡内容为空，请重试或换一批");
+  }
+
+  const 解析行 = parseBannerLines(response, 分配卡);
+  // 三行全废（模型完全没按格式来）时整批降级成纯文本：仍然给她三张可读的卡，
+  // 但一张都不回写——按没解析出来的东西记台账就是记虚账。
+  const 拿到报幕 = 解析行.some(
+    (行) => 行.形态 === "结构化" || 行.形态 === "宽松"
+  );
+  const 裸行列表 = response
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => {
-      const 裸 = stripBannerMarkers(line);
-      return 裸.startsWith("（") && 裸.endsWith("）");
+    .map((行) => 行.trim())
+    .filter((行) => 行 !== "" && !/^\s*```/.test(行));
+  const 全文 = stripBannerMarkers(response).trim();
+
+  const 候选: BannerCandidate[] = 分配卡.map((卡, i) => {
+    const 行 = 解析行[i];
+    const 形态: BannerLineForm = 拿到报幕 ? 行.形态 : "纯文本";
+    const 报幕 = 拿到报幕
+      ? 行.报幕
+      : stripBannerMarkers(裸行列表[i] ?? 全文.slice(0, 40)).trim() ||
+        skeletonBanner(卡);
+    const 可回写 = 拿到报幕 && canWriteBack(卡, 行.形态, 行.变化);
+    const 标记 = 可回写 ? bannerMarker(卡, 行.变化) : "";
+    return {
+      id: 卡.id,
+      卡: { ...卡, 骨架: 形态 === "骨架" },
+      标题: 行.标题,
+      变化: 行.变化,
+      代价: 行.代价,
+      报幕,
+      文本: 标记 ? `${报幕}${标记}` : 报幕,
+      类型: 卡.类型,
+      形态,
+      可回写,
+    };
+  });
+
+  if (拿到报幕) {
+    // 只有真出了这批卡才消耗批次：抛错或全废都不推进，下一次"换一批"仍是同一组
+    await saveWriterState(input.sessionId, {
+      ...writerState,
+      走向批次序号: nextBannerBatch(writerState.走向批次序号),
+      最近走向类型: 候选.map((一张卡) => 一张卡.卡.类型),
+      最后更新: new Date().toISOString(),
     });
-  return lines.slice(0, 4);
+  }
+
+  return 候选;
 }
 
 /**
- * 根据选中的报幕生成正文（选择模式第二步）
+ * 根据选中的走向卡生成正文（选择模式第二步）。
+ *
+ * 入参可以是整张卡，也可以是一段纯报幕文本——旧缓冲区里的无类型条目和对局里的
+ * 「按这条走向再写一轮」都只有文本，走后者这条路。
+ * 卡带来的信息只有两样进提示词：类型的中性说法 + 一句话水位上限。
+ * 标题/变化/代价/绑到的线索名都不进：那些是导演的台账，角色读不到（定稿要求 5）。
  */
 export async function writeWithSelectedBanner(
   input: WriterInput,
-  selectedBanner: string
+  selected: string | BannerCandidate
 ): Promise<WriterOutput> {
+  const 卡 = typeof selected === "string" ? undefined : selected?.卡;
   // 行尾的 [推进:…] / [回收:…] 是机器标记，只服务于采纳回写（见 threads.ts）。
   // 这里第一件事就是剥掉：正文提示词里不该出现台账术语，返回的报幕更要干净——
   // 它会作为 rawText 落进对局显示。
-  const 报幕原文 = stripBannerMarkers(selectedBanner);
+  const 报幕原文 = stripBannerMarkers(
+    typeof selected === "string" ? selected : selected?.报幕 || selected?.文本 || ""
+  );
   // 角色视角：报幕是导演挑的，正文由角色来演，这里要把角色不该知道的东西挡掉
   const memories = visibleToCharacter(
     await getMemoryCards(input.sessionId, { status: "生效" }),
@@ -772,7 +854,11 @@ export async function writeWithSelectedBanner(
     连续性上下文: continuityContext,
     最近对话历史: input.recentDialogue || "",
     玩家倾向: input.playerTendency || "",
-    任务: `请根据以下报幕方向生成正文内容：\n\n报幕：${报幕原文}\n\n请严格按照执笔规范书写正文，确保内容与报幕方向一致。`,
+    // 走向卡进正文只带两样东西：类型的中性说法、一句话水位上限。
+    // 目标线索名与"发生的变化/代价"留在导演侧——角色不知道自己是一条线索。
+    任务: `请根据以下报幕方向生成正文内容：\n\n报幕：${报幕原文}${
+      卡 ? `\n\n这一张的分寸：${bannerTypeAlias(卡.类型)}${卡.上限 ? `。${卡.上限}` : ""}` : ""
+    }\n\n请严格按照执笔规范书写正文，确保内容与报幕方向一致。`,
   });
 
   const messages: LLMMessage[] = [

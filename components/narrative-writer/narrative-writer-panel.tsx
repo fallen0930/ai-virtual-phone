@@ -13,10 +13,10 @@ import {
     subscribeControlDockState,
 } from "@/lib/floating-controls-store";
 import { loadCharacterWorldFromSession, getActiveMixSession } from "@/lib/narrative-writer/context-loader";
-import { writeNarrative, generateBannerOptions, writeWithSelectedBanner, compressNarrativeMemory, extractMemoriesFromCompression, computeCurrentTurn, NARRATIVE_CHUNK_SIZE } from "@/lib/narrative-writer/writer";
+import { writeNarrative, generateBannerOptions, writeWithSelectedBanner, compressNarrativeMemory, extractMemoriesFromCompression, computeCurrentTurn, NARRATIVE_CHUNK_SIZE, type BannerCandidate } from "@/lib/narrative-writer/writer";
 import { insertNarrativeTurn } from "@/lib/mixology/engine";
 import { backfillExtraction, deepExtractFromNarrativeBody } from "@/lib/narrative-writer/extractor";
-import { generatePlotPreviews, type PlotPreview } from "@/lib/narrative-writer/recommender";
+import { generateMaterialCards, type MaterialCard } from "@/lib/narrative-writer/recommender";
 import {
   getMemoryCards,
   getEmotionCards,
@@ -44,7 +44,7 @@ import {
   getMigrationState,
   deferLegacyMigration,
 } from "@/lib/narrative-writer/storage";
-import { applyAdoptedBanner, migrateLooseThreadsToCards } from "@/lib/narrative-writer/threads";
+import { applyAdoptedBanner, migrateLooseThreadsToCards, stripBannerMarkers } from "@/lib/narrative-writer/threads";
 import { loadMixSessions } from "@/lib/mixology/storage";
 import { mixSessionTitle } from "@/lib/mixology/types";
 import { LegacyMigrationDialog } from "@/components/narrative-writer/legacy-migration-dialog";
@@ -109,6 +109,54 @@ function archiveTitle(card: { 状态?: string; 归档原因?: string }): string 
     return card.归档原因 ? `归档原因：${card.归档原因}` : "已归档";
 }
 
+/**
+ * 走向卡在面板里的形状（候选列表与缓冲区共用）。
+ *
+ * 为什么不再是 { text }：一张卡要同时给出「可编辑的报幕」和「代码生成的回写标记」，
+ * 合成一个 text 字段就会出现——她改一个字，标记跟着错位、台账静默记错。
+ * 现在编辑只动 报幕，标记原样保留；采纳时再拼回去（带标记文本）。
+ *
+ * 旧缓冲区（narrative_writer_buffer）里的条目只有 text：按无类型卡处理，
+ * 标记一律清空 → 不回写，也绝不删她存的东西（定稿要求 7）。
+ */
+type BannerCardItem = {
+    /** = 分配卡 id，缓冲区的去重键 */
+    id: string;
+    /** 引擎返回的整张候选；旧缓冲条目没有它 */
+    候选?: BannerCandidate;
+    报幕: string;
+    标记: string;
+    note?: string;
+};
+
+/** 入对局与回写用的文本：编辑后的报幕 + 代码生成的标记 */
+function 带标记文本(item: BannerCardItem): string {
+    return `${item.报幕}${item.标记}`;
+}
+
+/** 交给 writeWithSelectedBanner 的入参：有卡就传整张卡，旧条目只传报幕文本 */
+function 正文入参(item: BannerCardItem): string | BannerCandidate {
+    if (!item.候选) return item.报幕;
+    return { ...item.候选, 报幕: item.报幕, 文本: 带标记文本(item) };
+}
+
+/** 读旧 localStorage：兼容 { text } 与 { 报幕, 标记 } 两种条目 */
+function 归一缓冲条目(raw: unknown): BannerCardItem | null {
+    if (!raw || typeof raw !== "object") return null;
+    const 条目 = raw as Record<string, unknown>;
+    const 文本候选 = typeof 条目.报幕 === "string" ? 条目.报幕 : typeof 条目.text === "string" ? 条目.text : null;
+    if (文本候选 === null) return null;
+    const 候选 = 条目.候选 && typeof 条目.候选 === "object" ? (条目.候选 as BannerCandidate) : undefined;
+    return {
+        id: typeof 条目.id === "string" && 条目.id ? 条目.id : `legacy_${Math.random().toString(36).slice(2, 10)}`,
+        ...(候选 ? { 候选 } : {}),
+        // 旧条目可能把标记写进了 text，先剥干净；标记只有新条目（带候选）才认
+        报幕: stripBannerMarkers(文本候选),
+        标记: 候选 && typeof 条目.标记 === "string" ? 条目.标记 : "",
+        note: typeof 条目.note === "string" ? 条目.note : undefined,
+    };
+}
+
 export function NarrativeWriterPanel() {
     const [open, setOpen] = useState(false);
     const [rect, setRect] = useState<Rect>(DEFAULT_RECT);
@@ -128,16 +176,17 @@ export function NarrativeWriterPanel() {
     });
     
     // 选择模式相关状态
-    const [bannerOptions, setBannerOptions] = useState<Array<{ text: string; note?: string }>>([]);
+    const [bannerOptions, setBannerOptions] = useState<BannerCardItem[]>([]);
     const [selectedBannerIndex, setSelectedBannerIndex] = useState<number | null>(null);
     const [generatingBanners, setGeneratingBanners] = useState(false);
     
-    // 报幕缓冲区：用户勾选后暂存的报幕（可编辑、可批量生成）
-    const [buffer, setBuffer] = useState<Array<{ text: string; note?: string; id: string }>>(() => {
+    // 报幕缓冲区：用户勾选后暂存的走向卡（可编辑、可批量生成）
+    const [buffer, setBuffer] = useState<BannerCardItem[]>(() => {
         if (typeof window === "undefined") return [];
         try {
             const saved = window.localStorage.getItem("narrative_writer_buffer");
-            return saved ? JSON.parse(saved) : [];
+            const 列表 = saved ? (JSON.parse(saved) as unknown[]) : [];
+            return Array.isArray(列表) ? 列表.map(归一缓冲条目).filter((b): b is BannerCardItem => b !== null) : [];
         } catch {
             return [];
         }
@@ -187,11 +236,11 @@ export function NarrativeWriterPanel() {
     const ETA_ROLLING_WINDOW = 3; // 取最近 3 步的均值
     const ETA_CAP_MS = 30 * 60 * 1000; // 预估上限 30 分钟，避免吓人
 
-    // 剧情预告相关状态
-    const [sceneRecommendations, setSceneRecommendations] = useState<PlotPreview[]>([]);
+    // 素材库（代码从记忆库拼的钩子，不是方向候选；方向候选只有走向卡）
+    const [sceneRecommendations, setSceneRecommendations] = useState<MaterialCard[]>([]);
     const [loadingRecommendations, setLoadingRecommendations] = useState(false);
     const [selectedScene, setSelectedScene] = useState<string | null>(null);
-    const [editingScene, setEditingScene] = useState<PlotPreview | null>(null);
+    const [editingScene, setEditingScene] = useState<MaterialCard | null>(null);
     // 每张卡当前选中的维度
     const [selectedDimensions, setSelectedDimensions] = useState<Record<string, { focus?: string; intensity?: string; tempo?: string }>>({});
     
@@ -204,7 +253,7 @@ export function NarrativeWriterPanel() {
         });
     }, []);
     
-    // 加载剧情预告
+    // 加载素材库卡片
     const loadRecommendations = useCallback(async () => {
         setLoadingRecommendations(true);
         try {
@@ -223,7 +272,7 @@ export function NarrativeWriterPanel() {
             
             const currentWaterLevel = waterLevels['戏内层']?.水位 || 'L0';
             
-            const previews = generatePlotPreviews({
+            const previews = generateMaterialCards({
                 memories,
                 pendingMemories,
                 emotions,
@@ -251,7 +300,7 @@ export function NarrativeWriterPanel() {
     }, [open, loadRecommendations]);
     
     // 选择预告：把功能+风格+钩子画面+维度拼进倾向文本
-    const handleSelectScene = useCallback((scene: PlotPreview) => {
+    const handleSelectScene = useCallback((scene: MaterialCard) => {
         setSelectedScene(scene.id);
         const dims = selectedDimensions[scene.id] || scene.defaultDimension || {};
         const parts = [
@@ -268,7 +317,7 @@ export function NarrativeWriterPanel() {
     }, [selectedDimensions]);
     
     // 编辑预告
-    const handleEditScene = useCallback((scene: PlotPreview) => {
+    const handleEditScene = useCallback((scene: MaterialCard) => {
         setEditingScene(scene);
     }, []);
     
@@ -502,7 +551,7 @@ export function NarrativeWriterPanel() {
         }
     }, [tendency]);
     
-    // 生成报幕选项（选择模式第一步）
+    // 生成走向卡（选择模式第一步）。换一批 = 再调一次：先清空旧卡，绝不累积（定稿要求 8）
     const handleGenerateBanners = useCallback(async () => {
         setGeneratingBanners(true);
         setError(null);
@@ -522,7 +571,7 @@ export function NarrativeWriterPanel() {
                 return;
             }
 
-            const options = await generateBannerOptions({
+            const 候选 = await generateBannerOptions({
                 sessionId: activeSession.id,
                 playerTendency: tendency.trim() || undefined,
                 characterProfile: context.characterProfile,
@@ -536,25 +585,31 @@ export function NarrativeWriterPanel() {
                 recentDialogue: context.recentDialogue,
             });
 
-            if (options.length === 0) {
-                setError("未能生成报幕选项，请重试");
+            if (候选.length === 0) {
+                setError("未能生成走向卡，请重试");
                 return;
             }
 
-            // 转换为可编辑格式
-            setBannerOptions(options.map(text => ({ text, note: "" })));
+            setBannerOptions(候选.map((一张) => ({
+                id: 一张.id,
+                候选: 一张,
+                报幕: 一张.报幕,
+                // 标记由代码生成，跟着卡走；报幕后面那段就是它
+                标记: 一张.文本.startsWith(一张.报幕) ? 一张.文本.slice(一张.报幕.length) : "",
+                note: "",
+            })));
         } catch (err: any) {
             console.error("[NarrativeWriter] Generate banners failed:", err);
-            setError(err.message || "生成报幕失败，请重试");
+            setError(err.message || "生成走向卡失败，请重试");
         } finally {
             setGeneratingBanners(false);
         }
     }, [tendency]);
     
-    // 更新报幕文本
+    // 更新报幕文本（只动 报幕，标记原样保留）
     const updateBannerText = useCallback((index: number, newText: string) => {
         setBannerOptions(prev => prev.map((opt, i) => 
-            i === index ? { ...opt, text: newText } : opt
+            i === index ? { ...opt, 报幕: newText } : opt
         ));
     }, []);
     
@@ -565,14 +620,14 @@ export function NarrativeWriterPanel() {
         ));
     }, []);
     
-    // 将报幕加入/移出缓冲区
-    const toggleBuffer = useCallback((option: { text: string; note?: string }) => {
+    // 将走向卡加入/移出缓冲区（去重键 = 卡 id，不再比文本）
+    const toggleBuffer = useCallback((option: BannerCardItem) => {
         setBuffer(prev => {
-            const exists = prev.find(b => b.text === option.text);
+            const exists = prev.some(b => b.id === option.id);
             if (exists) {
-                return prev.filter(b => b.text !== option.text);
+                return prev.filter(b => b.id !== option.id);
             }
-            return [...prev, { ...option, id: Date.now().toString() + Math.random().toString(36).slice(2, 9) }];
+            return [...prev, { ...option }];
         });
     }, []);
     
@@ -583,7 +638,7 @@ export function NarrativeWriterPanel() {
     
     // 更新缓冲区中的报幕文本
     const updateBufferText = useCallback((id: string, newText: string) => {
-        setBuffer(prev => prev.map(b => b.id === id ? { ...b, text: newText } : b));
+        setBuffer(prev => prev.map(b => b.id === id ? { ...b, 报幕: newText } : b));
     }, []);
     
     // 更新缓冲区中的批注
@@ -623,8 +678,8 @@ export function NarrativeWriterPanel() {
         return 结果;
     }, [loadData]);
 
-    // 根据缓冲区中的一个报幕生成正文
-    const handleWriteFromBuffer = useCallback(async (bufferItem: { text: string; note?: string }) => {
+    // 根据缓冲区中的一张走向卡生成正文
+    const handleWriteFromBuffer = useCallback(async (bufferItem: BannerCardItem) => {
         setLoading(true);
         setError(null);
 
@@ -657,25 +712,28 @@ export function NarrativeWriterPanel() {
                     strengthPrompts: context.strengthPrompts,
                 },
                 recentDialogue: context.recentDialogue,
-            }, bufferItem.text);
+            }, 正文入参(bufferItem));
 
-            // 传入带标记的报幕原文：标记只用于回写台账，入对局的文本由 applyAdoptedBanner 剥净
-            await handleAdoptBanner(activeSession.id, result.body, bufferItem.text);
+            // 带标记文本只用于回写台账，入对局的正文由 applyAdoptedBanner 剥净
+            await handleAdoptBanner(activeSession.id, result.body, 带标记文本(bufferItem));
         } catch (err: any) {
             console.error("[NarrativeWriter] Write from buffer failed:", err);
             setError(err.message || "执笔失败，请重试");
         } finally {
             setLoading(false);
         }
-    }, [tendency, handleAdoptBanner]);
+    }, [tendency, handleAdoptBanner, removeFromBuffer]);
     
-    // 批量生成缓冲区所有报幕
+    // 批量生成缓冲区所有走向卡
     const handleBatchWriteFromBuffer = useCallback(async () => {
         if (buffer.length === 0) return;
         
         setLoading(true);
         setError(null);
 
+        // 中途失败仍是"停在这里"（她定的：是否继续只汇报现状，不改行为），
+        // 但要把第几条报出来——否则她不知道是前面已经写进去了还是整批没跑。
+        let 已完成 = 0;
         try {
             const activeSession = getActiveMixSession();
             if (!activeSession) {
@@ -690,7 +748,9 @@ export function NarrativeWriterPanel() {
             }
 
             // 逐个生成
-            for (const item of buffer) {
+            for (let i = 0; i < buffer.length; i += 1) {
+                const item = buffer[i];
+                已完成 = i;
                 const enhancedTendency = item.note 
                     ? `${tendency.trim()}。特别说明：${item.note}`
                     : tendency.trim();
@@ -707,13 +767,16 @@ export function NarrativeWriterPanel() {
                         strengthPrompts: context.strengthPrompts,
                     },
                     recentDialogue: context.recentDialogue,
-                }, item.text);
+                }, 正文入参(item));
 
-                await handleAdoptBanner(activeSession.id, result.body, item.text);
+                await handleAdoptBanner(activeSession.id, result.body, 带标记文本(item));
+                已完成 = i + 1;
             }
         } catch (err: any) {
             console.error("[NarrativeWriter] Batch write failed:", err);
-            setError(err.message || "批量执笔失败，请重试");
+            setError(
+                `第 ${已完成 + 1} 条生成失败：${err.message || "执笔失败"}。已生成的 ${已完成} 条已入对局，后面的没跑。`
+            );
         } finally {
             setLoading(false);
         }
@@ -1150,11 +1213,11 @@ export function NarrativeWriterPanel() {
                     strengthPrompts: context.strengthPrompts,
                 },
                 recentDialogue: context.recentDialogue,
-            }, selected.text);
+            }, 正文入参(selected));
 
             setOutput({ banner: result.banner, body: result.body });
-            // selected.text 是候选列表里的原文，可能带 [推进:…] / [回收:…] 标记
-            await handleAdoptBanner(activeSession.id, result.body, selected.text);
+            // 带标记文本：标记只用于回写台账，入对局的正文由 applyAdoptedBanner 剥净
+            await handleAdoptBanner(activeSession.id, result.body, 带标记文本(selected));
             
             // 重置选择状态
             setBannerOptions([]);
@@ -1353,10 +1416,11 @@ export function NarrativeWriterPanel() {
                             </button>
                         </div>
                         
-                        {/* 场景推荐卡片 */}
+                        {/* 素材库：代码从记忆库拼的钩子，点一下只往「自定义补充」里填一句话。
+                            它不是方向候选——方向候选只有走向卡（先选报幕那一步）。 */}
                         <div>
                             <label style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <span>📖 接下来可以这样发展（基于记忆库）</span>
+                                <span>🧩 素材库（代码从记忆库拼的画面，不是推荐方向）</span>
                                 <button
                                     onClick={loadRecommendations}
                                     disabled={loadingRecommendations}
@@ -1375,7 +1439,7 @@ export function NarrativeWriterPanel() {
                             
                             {sceneRecommendations.length === 0 && !loadingRecommendations && (
                                 <div style={{ fontSize: "11px", color: "#6b7280", padding: "8px", textAlign: "center" }}>
-                                    暂无推荐，试试手动输入或让 AI 决定
+                                    暂无素材，直接手写补充，或者用上面的走向卡挑方向
                                 </div>
                             )}
                             
@@ -1604,11 +1668,11 @@ export function NarrativeWriterPanel() {
                             ) : null
                         )}
                         
-                        {/* 选择模式：报幕选项列表 */}
+                        {/* 选择模式：走向卡列表。类型与目标由代码分配，报幕可编辑 */}
                         {mode === "select" && bannerOptions.length > 0 && (
                             <div style={{ marginTop: "8px" }}>
                                 <label style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "6px", display: "block" }}>
-                                    选择一个剧情方向（可编辑报幕文字，添加批注说明你的想法）
+                                    走向卡（类型与目标由代码分配；报幕可改，批注写你想看到的细节）
                                 </label>
                                 {selectedBannerIndex === null && (
                                     <div style={{ fontSize: "11px", color: "#a78bfa", marginBottom: "8px", padding: "6px 8px", background: "rgba(167, 139, 250, 0.1)", borderRadius: "4px" }}>
@@ -1617,7 +1681,8 @@ export function NarrativeWriterPanel() {
                                 )}
                                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                                     {bannerOptions.map((option, idx) => {
-                                        const inBuffer = buffer.some(b => b.text === option.text);
+                                        const inBuffer = buffer.some(b => b.id === option.id);
+                                        const 卡 = option.候选?.卡;
                                         return (
                                             <div
                                                 key={idx}
@@ -1680,9 +1745,61 @@ export function NarrativeWriterPanel() {
                                                 </div>
                                             )}
                                             
+                                            {/* 卡的身份：类型/变化/代价/目标/分寸。
+                                                这些都留在候选列表里，绝不进正文提示词（角色读不到台账）。 */}
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", marginBottom: "6px" }}>
+                                                <span style={{
+                                                    fontSize: "10px",
+                                                    fontWeight: 700,
+                                                    color: "#c4b5fd",
+                                                    background: "rgba(167, 139, 250, 0.18)",
+                                                    border: "1px solid rgba(167, 139, 250, 0.4)",
+                                                    borderRadius: "4px",
+                                                    padding: "1px 6px",
+                                                }}>
+                                                    {option.候选?.类型 ?? "无类型"}
+                                                </span>
+                                                {option.候选?.形态 === "骨架" && (
+                                                    <span
+                                                        title="模型没写这一行，报幕是代码补的占位；这张卡采纳时不会回写台账"
+                                                        style={{ fontSize: "10px", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.5)", borderRadius: "4px", padding: "1px 6px" }}
+                                                    >
+                                                        骨架
+                                                    </span>
+                                                )}
+                                                {option.候选?.形态 === "纯文本" && (
+                                                    <span
+                                                        title="模型完全没按格式写，整批只展示不回写"
+                                                        style={{ fontSize: "10px", color: "#9ca3af", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "4px", padding: "1px 6px" }}
+                                                    >
+                                                        纯文本 · 不回写
+                                                    </span>
+                                                )}
+                                                {option.候选?.可回写 && (
+                                                    <span
+                                                        title="采纳后这条线会往前推进一级（每次最多一级，永不自动收束）"
+                                                        style={{ fontSize: "10px", color: "#34d399", border: "1px solid rgba(16,185,129,0.4)", borderRadius: "4px", padding: "1px 6px" }}
+                                                    >
+                                                        可回写
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {卡 && (
+                                                <div style={{ fontSize: "10px", color: "#9ca3af", lineHeight: 1.6, marginBottom: "6px" }}>
+                                                    <div style={{ color: "#e5e7eb", fontWeight: 600 }}>{option.候选?.标题 || "（模型没给标题）"}</div>
+                                                    {option.候选?.变化 ? <div>发生的变化：{option.候选.变化}</div> : null}
+                                                    {option.候选?.代价 ? <div>代价：{option.候选.代价}</div> : null}
+                                                    <div>
+                                                        目标：{卡.目标?.名称 ?? "没有具体对象，按当前场面自由发挥"}
+                                                        {卡.已替换 ? `（本批没有${卡.计划类型}的对象，已改为${卡.类型}）` : ""}
+                                                    </div>
+                                                    {卡.上限 ? <div>分寸：{卡.上限}</div> : null}
+                                                </div>
+                                            )}
+
                                             {/* 报幕文本编辑框 */}
                                             <textarea
-                                                value={option.text}
+                                                value={option.报幕}
                                                 onChange={(e) => updateBannerText(idx, e.target.value)}
                                                 onClick={(e) => e.stopPropagation()}
                                                 placeholder="报幕内容..."
@@ -1728,6 +1845,25 @@ export function NarrativeWriterPanel() {
                                     );
                                     })}
                                 </div>
+                                {/* 换一批：再调一次生成，按下一组类型重排；旧卡由 handleGenerateBanners 清空，不累积 */}
+                                <button
+                                    onClick={handleGenerateBanners}
+                                    disabled={generatingBanners || loading}
+                                    title="按下一组类型重新生成三张，旧的这一批会清掉（已放进缓冲区的保留）"
+                                    style={{
+                                        marginTop: "10px",
+                                        width: "100%",
+                                        padding: "8px 12px",
+                                        background: "rgba(255, 255, 255, 0.05)",
+                                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                                        borderRadius: "6px",
+                                        color: generatingBanners ? "#6b7280" : "#c4b5fd",
+                                        fontSize: "12px",
+                                        cursor: generatingBanners || loading ? "not-allowed" : "pointer",
+                                    }}
+                                >
+                                    {generatingBanners ? "换一批中..." : "🔄 换一批（下一组类型）"}
+                                </button>
                             </div>
                         )}
                         
@@ -1799,7 +1935,7 @@ export function NarrativeWriterPanel() {
                                 borderRadius: "8px",
                             }}>
                                 <div style={{ fontSize: "11px", color: "#9ca3af", marginBottom: "8px" }}>
-                                    已暂存 {buffer.length} 个报幕，可编辑后逐个或批量生成
+                                    已暂存 {buffer.length} 张走向卡，可编辑后逐个或批量生成
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "12px" }}>
                                     {buffer.map((item) => (
@@ -1809,9 +1945,29 @@ export function NarrativeWriterPanel() {
                                             border: "1px solid rgba(255, 255, 255, 0.1)",
                                             borderRadius: "6px",
                                         }}>
+                                            {/* 卡的类型/来源：旧缓冲区条目没有候选 → 无类型、不回写 */}
+                                            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "6px" }}>
+                                                <span style={{
+                                                    fontSize: "10px",
+                                                    fontWeight: 700,
+                                                    color: item.候选 ? "#c4b5fd" : "#6b7280",
+                                                    background: item.候选 ? "rgba(167, 139, 250, 0.18)" : "rgba(255,255,255,0.05)",
+                                                    border: `1px solid ${item.候选 ? "rgba(167, 139, 250, 0.4)" : "rgba(255,255,255,0.15)"}`,
+                                                    borderRadius: "4px",
+                                                    padding: "1px 6px",
+                                                }}>
+                                                    {item.候选?.类型 ?? "旧条目 · 无类型"}
+                                                </span>
+                                                {item.候选?.形态 === "骨架" && (
+                                                    <span style={{ fontSize: "10px", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.5)", borderRadius: "4px", padding: "1px 6px" }}>骨架</span>
+                                                )}
+                                                {!item.候选 && (
+                                                    <span style={{ fontSize: "10px", color: "#6b7280" }}>采纳时不回写台账</span>
+                                                )}
+                                            </div>
                                             {/* 报幕编辑 */}
                                             <textarea
-                                                value={item.text}
+                                                value={item.报幕}
                                                 onChange={(e) => updateBufferText(item.id, e.target.value)}
                                                 placeholder="报幕内容..."
                                                 style={{
@@ -2053,7 +2209,7 @@ export function NarrativeWriterPanel() {
                                                         </div>
                                                         <div style={{ fontSize: "10px", color: "#9ca3af", lineHeight: 1.5, marginTop: "2px" }}>
                                                             第 {t.上次推进轮次} 轮推进
-                                                            {t.最近变化?.[0]?.变化 ? ` · 最近：${t.最近变化[0].变化}` : ""}
+                                                            {t.最近变化?.[0]?.变化 ? ` · 最近：${t.最近变化[0].计划 ? "（计划）" : ""}${t.最近变化[0].变化}` : ""}
                                                             {t.下一步可能 ? ` · 下一步：${t.下一步可能}` : " · 下一步：未填"}
                                                             {discardedSourceHint(t) ? ` · ${discardedSourceHint(t)}` : ""}
                                                         </div>

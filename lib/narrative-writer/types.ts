@@ -232,6 +232,12 @@ export interface ThreadChange {
   轮次?: number;
   /** 这条进展来自哪条回复；采纳回写时是新正文的 id，抽取同名更新时是抽取来源 */
   来源消息ID?: string;
+  /**
+   * true = 这条变化是**走向卡里计划的**，不是正文实际写到的。
+   * 采纳时正文由模型发挥，报幕说"这条线升温了"，正文未必写到那个程度；
+   * 台账必须能区分"计划的"和"抽取器在正文里真看到的"，否则回写就是在记虚账。
+   */
+  计划?: boolean;
   时间: number;
 }
 
@@ -285,9 +291,71 @@ export interface ForeshadowCard {
 }
 
 
+// ==================== 走向卡类型词表 ====================
+//
+// 词表放在 types.ts（领域词表、无依赖），是因为有两个读取方：
+// banner-plan 用它分配类型，storage 用它归一化旧存档里的脏值。
+// 放在 banner-plan 里会让 storage → banner-plan → threads → storage 形成环。
+
+/** 走向卡的九种类型（三组轮换，每组三张） */
+export type BannerType =
+  | "主线"
+  | "关系"
+  | "变数"
+  | "世界动向"
+  | "伏笔回收"
+  | "人物内心"
+  | "升支线"
+  | "缓冲日常带暗线"
+  | "意外转折带因果";
+
+/** 类型全集：读取处按它剔除脏值 */
+export const BANNER_TYPE_LIST: BannerType[] = [
+  "主线",
+  "关系",
+  "变数",
+  "世界动向",
+  "伏笔回收",
+  "人物内心",
+  "升支线",
+  "缓冲日常带暗线",
+  "意外转折带因果",
+];
+
+/** 一批三张，三组轮换 → 批次指针取值 0..2 */
+export const BANNER_BATCH_COUNT = 3;
+
+/** 最近几条类型要避开（一批三张，6 条 ≈ 两批） */
+export const BANNER_RECENT_TYPES_KEEP = 6;
+
+/**
+ * 批次指针归一：脏值不进取模。
+ * 旧存档可能没有这个字段，也可能被写成字符串或超出组数的数字；
+ * 直接当索引会让 BANNER_GROUPS[批次] 取到 undefined，整批方向消失。
+ */
+export function normalizeBannerBatch(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n) % BANNER_BATCH_COUNT;
+}
+
+/** 最近类型归一：只认词表内的字符串，压掉重复，最多留 BANNER_RECENT_TYPES_KEEP 条 */
+export function normalizeRecentBannerTypes(value: unknown): BannerType[] {
+  if (!Array.isArray(value)) return [];
+  const out: BannerType[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const item = raw.trim();
+    if (!item) continue;
+    if (!(BANNER_TYPE_LIST as readonly string[]).includes(item)) continue;
+    if (out.includes(item as BannerType)) continue;
+    out.push(item as BannerType);
+  }
+  return out.slice(0, BANNER_RECENT_TYPES_KEEP);
+}
+
 /** 关系水位等级 */
 export type WaterLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
-
 /** 水位状态（与卡片五态正交） */
 export type WaterStatus = "active" | "frozen" | "degraded";
 
@@ -333,6 +401,14 @@ export interface NarrativeWriterState {
   // 全局轮次计数（任务 1.5 新增）
   currentTurn: number; // 当前已完成回合数（user+assistant 对）
   lastExtractedTurn: number; // 上次抽取完成时的回合数（用于检测新内容）
+  /**
+   * 走向卡批次指针（0/1/2）：下一次"换一批"该用第几组类型。
+   * 只在生成成功后推进——失败也推进的话，一次网络抖动就会白跳一整组方向。
+   * 旧存档没有这个字段，由 storage.getWriterState 在读取处归一化，不做读路径迁移。
+   */
+  走向批次序号: number;
+  /** 最近 RECENT_TYPES_KEEP 条实际出过的类型；用于避开连续重复 */
+  最近走向类型: BannerType[];
 }
 
 /** 置信档 ↔ 数值映射门槛 */
@@ -430,6 +506,8 @@ export function createDefaultWriterState(sessionId = "default"): NarrativeWriter
     最后更新: new Date().toISOString(),
     currentTurn: 0,
     lastExtractedTurn: 0,
+    走向批次序号: 0,
+    最近走向类型: [],
   };
 }
 

@@ -47,6 +47,8 @@ import {
   createDefaultWaterLevel,
   createDefaultWriterState,
   createDefaultExtractionRules,
+  normalizeBannerBatch,
+  normalizeRecentBannerTypes,
 } from "./types";
 
 // ==================== 键名 ====================
@@ -556,6 +558,11 @@ export async function getWriterState(
   if (state.lastExtractedTurn > state.currentTurn) {
     state.lastExtractedTurn = state.currentTurn;
   }
+  // 走向卡的两个指针同样在读取处归一：旧存档里根本没有这两个字段，
+  // 也可能被脚本或旧版本写成字符串 / 词表外的类型名。脏值直接参与
+  // 取模与 includes 会静默出错（批次越界、避重失效），所以这里收干净再交给调用方。
+  state.走向批次序号 = normalizeBannerBatch(state.走向批次序号);
+  state.最近走向类型 = normalizeRecentBannerTypes(state.最近走向类型);
   return state;
 }
 

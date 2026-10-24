@@ -127,6 +127,32 @@ const WRITER_SYSTEM_PROMPT = `你是「执笔」，一个独自完成剧情方�
 正文按内部节拍顺序连续书写，节拍之间不加小标题、不加"节拍N"标记。
 接近输出上限时自然收尾，不留半句。`;
 
+/**
+ * 走向卡的系统提示词：导演视角，只挑方向，不写成稿。
+ *
+ * 为什么必须和上面那份分开（真机试玩的第一个问题）：
+ * 生成走向卡曾经复用 WRITER_SYSTEM_PROMPT，那份的「输出格式」写着"第一行报幕…空一行，正文"，
+ * 系统提示词的优先级高于任务文本，模型就照着写了一段成稿出来——三行契约只拿到一行，
+ * 两张卡退化成代码骨架，token 还白烧了一大段。两份提示词对"输出什么"要求互相矛盾时，
+ * 输的那半永远是任务文本。
+ *
+ * 所以这份只留导演需要的五件事：角色定位、输出契约、视角规则、关系分寸、三张之间不得雷同。
+ * 正文侧的节拍结构、四道闸门、反水检查、输出三档一条都不带，也不出现"正文"这个字。
+ */
+export const BANNER_SYSTEM_PROMPT = `你是这场戏的导演，只挑方向，不写成稿。走向卡是"接下来可以往哪儿走"的三个可能，不是已经发生的事。
+
+# 输出契约
+只输出三行，一行一张卡，字段与顺序照任务文本给的样子写。三行之外一个字都不许多说：不写分析、不写说明、不写在稿。
+
+# 视角
+你在导演视角，可以利用在场者之间的知情差异设计悬念，但不得把尚未揭示的内容写成既成事实。
+
+# 分寸
+每一张卡后面都跟了一句关系上限。报幕只能写到那一步为止，越界的举动只能停在念头里，不能当成已经做了。
+
+# 三张之间
+三张卡的场景不得相同：换一个地点、换一个时间、或换一批在场者，让它们真的是三个方向。`;
+
 export interface WriterInput {
   /** 归属对局。记忆/情感/水位/执笔状态全部按会话隔离，缺这个就没法读召回池。 */
   sessionId: string;
@@ -731,7 +757,7 @@ export async function generateBannerOptions(
   });
 
   const messages: LLMMessage[] = [
-    { role: "system", content: WRITER_SYSTEM_PROMPT },
+    { role: "system", content: BANNER_SYSTEM_PROMPT },
     { role: "user", content: userContent },
   ];
 
@@ -744,24 +770,18 @@ export async function generateBannerOptions(
   }
 
   const 解析行 = parseBannerLines(response, 分配卡);
-  // 三行全废（模型完全没按格式来）时整批降级成纯文本：仍然给她三张可读的卡，
-  // 但一张都不回写——按没解析出来的东西记台账就是记虚账。
+  // 三行全废（模型完全没按格式来，比如又去写成稿了）时整批降级成纯文本：
+  // 仍然给她三张可读的卡，但一张都不回写——按没解析出来的东西记台账就是记虚账。
   const 拿到报幕 = 解析行.some(
     (行) => 行.形态 === "结构化" || 行.形态 === "宽松"
   );
-  const 裸行列表 = response
-    .split("\n")
-    .map((行) => 行.trim())
-    .filter((行) => 行 !== "" && !/^\s*```/.test(行));
-  const 全文 = stripBannerMarkers(response).trim();
 
   const 候选: BannerCandidate[] = 分配卡.map((卡, i) => {
     const 行 = 解析行[i];
     const 形态: BannerLineForm = 拿到报幕 ? 行.形态 : "纯文本";
-    const 报幕 = 拿到报幕
-      ? 行.报幕
-      : stripBannerMarkers(裸行列表[i] ?? 全文.slice(0, 40)).trim() ||
-        skeletonBanner(卡);
+    // 模型输出了成稿段落时，报幕用代码骨架补，绝不把那些段落当报幕展示给她：
+    // parseBannerLines 已经把它们从行对齐里丢掉了，这里再兜一次，两条路都不漏。
+    const 报幕 = 拿到报幕 ? 行.报幕 : skeletonBanner(卡);
     const 可回写 = 拿到报幕 && canWriteBack(卡, 行.形态, 行.变化);
     const 标记 = 可回写 ? bannerMarker(卡, 行.变化) : "";
     return {

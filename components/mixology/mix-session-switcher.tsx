@@ -9,7 +9,7 @@
 // - 点击展开/收起对局列表面板
 // - 列表项前的圆点标识生成状态（生成中/排队/完成/错误）
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { GlassWater, X } from "lucide-react";
 import {
     subscribeMixSessionRuntime,
@@ -17,7 +17,7 @@ import {
     getMixSessionGenStatus,
     type MixGenStatus,
 } from "@/lib/mixology/session-runtime";
-import { loadMixSessions, getMixMaterial } from "@/lib/mixology/storage";
+import { buildMixSessionTreeStats, loadMixSessions, getMixMaterial } from "@/lib/mixology/storage";
 import { mixRoundCount } from "@/lib/mixology/engine";
 import { mixSlotFirstId, type MixCharacterCard, type MixSession } from "@/lib/mixology/types";
 import { CONTROL_DOCK_ACTIVATE_EVENT, isDockManaged } from "@/lib/floating-controls-store";
@@ -140,6 +140,9 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
     const refreshSessions = useCallback(() => {
         setSessions(loadMixSessions());
     }, []);
+
+    // 谱系角标：切换列表里也能一眼看见每场对局分了多少支线、开了多少番外
+    const treeStats = useMemo(() => buildMixSessionTreeStats(sessions), [sessions]);
 
     // 受统一控制坞驱动：坞里点「对局切换」时切换本面板开合
     useEffect(() => {
@@ -434,6 +437,14 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
                                     const status = getMixSessionGenStatus(s.id);
                                     const isActive = s.id === sessionId;
                                     const cover = sessionCover(s);
+                                    const stats = treeStats.get(s.id);
+                                    // 这一行是番外就标番外；是对局/支线就把谱系数挂在后面
+                                    const lineage = s.spinoff
+                                        ? (s.spinoff.memory === "inherit" ? " 番外 · 继承记忆" : " 番外 · 只有人设")
+                                        : [
+                                            stats?.branches ? `支线 ${stats.branches}` : "",
+                                            stats?.spinoffs ? `番外 ${stats.spinoffs}` : "",
+                                        ].filter(Boolean).join(" · ");
                                     return (
                                         <button
                                             type="button"
@@ -465,7 +476,7 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
                                                     {sessionDisplayName(s)}
                                                 </div>
                                                 <div className="mix-switcher-item-sub">
-                                                    {mixRoundCount(s.turns)} 轮
+                                                    {mixRoundCount(s.turns)} 轮{lineage ? ` · ${lineage}` : ""}
                                                 </div>
                                             </div>
                                         </button>

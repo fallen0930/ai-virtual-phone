@@ -6,8 +6,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-    Archive, Bookmark, ChevronLeft, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
+    Archive, Bookmark, ChevronLeft, Clapperboard, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Network, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
 import {
+    buildMixSessionTreeStats,
     clearMixMaterialPublished,
     clearMixRecipePublished,
     deleteMixFavorite,
@@ -16,12 +17,15 @@ import {
     deleteMixRecipe,
     deleteMixSession,
     deleteMixSessionFolder,
+    filterMixSessionRoots,
     findRecipeFolderId,
     findSessionFolderId,
     getMixBuiltin,
     getMixMaterial,
     isMixBuiltinId,
+    listMixOrphanSpinoffs,
     listMixPickables,
+    listMixSpinoffs,
     MIX_CABINET_UPDATED_EVENT,
     loadMixCabinet,
     loadMixFavorites,
@@ -46,7 +50,8 @@ import {
     saveMixRecipe,
     type MixProfile,
 } from "@/lib/mixology/storage";
-import { mixRoundCount, runMixSessionStart, startMixSession } from "@/lib/mixology/engine";
+import { requestMixWorldTreeOpen } from "@/lib/mixology/world-tree-intent";
+import { mixRoundCount, runMixSessionStart, startMixSession, startMixSpinoff } from "@/lib/mixology/engine";
 import { disposeMixSandboxesForMaterial } from "@/lib/mixology/mechanism-runtime";
 import { mixKindRunsActiveCode, MIX_SLOT_STACK } from "@/lib/mixology/types";
 import {
@@ -66,6 +71,9 @@ import {
     type MixSessionFolder,
     mixSlotEntries,
     mixSlotFirstId,
+    mixSessionTitle,
+    isMixSpinoff,
+    type MixSpinoffMemory,
     type MixSlotEntry,
 } from "@/lib/mixology/types";
 import { fetchCurrentAccount } from "@/lib/account-client";
@@ -122,9 +130,11 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [tab, setTab] = useState<MixTab>("bar");
     const [cabinet, setCabinet] = useState<MixMaterial[]>(() => loadMixCabinet());
     const [recipes, setRecipes] = useState<MixRecipe[]>(() => loadMixRecipes());
-    // 酒局列表只列「根对局」：分叉出来的支线（有 parentId）不在这里出现，
-    // 只能进对局后从 🌳 世界树查看/切换，避免"开个支线就多出一场对局"的观感。
-    const [sessions, setSessions] = useState<MixSession[]>(() => loadMixSessions().filter((s) => !s.parentId));
+    // 酒局列表只列「门面局」：分叉出来的支线（有 parentId）与番外都不在这里出现，
+    // 支线看行上的「支线 N」角标，番外看「番外 M」角标开的抽屉。
+    // allSessions 留全量，专门用来算这两个数（计数不能只看列表里那几场）。
+    const [sessions, setSessions] = useState<MixSession[]>(() => filterMixSessionRoots(loadMixSessions()));
+    const [allSessions, setAllSessions] = useState<MixSession[]>(() => loadMixSessions());
     const [favorites, setFavorites] = useState<MixFavoritePreset[]>(() => loadMixFavorites());
     const [folders, setFolders] = useState<MixRecipeFolder[]>(() => loadMixFolders());
     const [sessionFolders, setSessionFolders] = useState<MixSessionFolder[]>(() => loadMixSessionFolders());
@@ -174,6 +184,12 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [expandedSessionFolders, setExpandedSessionFolders] = useState<Set<string>>(new Set());
     // 对局菜单（重命名 / 移动到文件夹 / 删除）
     const [sessionMenu, setSessionMenu] = useState<MixSession | null>(null);
+    // 番外抽屉：从对局行的「番外 M」角标打开，列这一棵世界树开过的番外
+    const [spinoffDrawer, setSpinoffDrawer] = useState<MixSession | null>(null);
+    // 开番外弹层：从对局行的「开番外」角标打开（入口贴着动作发生处，不做全局按钮）
+    const [spinoffCreate, setSpinoffCreate] = useState<MixSession | null>(null);
+    const [spinoffCreateName, setSpinoffCreateName] = useState("");
+    const [spinoffCreateMemory, setSpinoffCreateMemory] = useState<MixSpinoffMemory>("inherit");
     // 对局重命名
     const [sessionRenameSheetOpen, setSessionRenameSheetOpen] = useState(false);
     const [sessionRenameTarget, setSessionRenameTarget] = useState<MixSession | null>(null);
@@ -256,7 +272,8 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const refresh = useCallback(() => {
         setCabinet(loadMixCabinet());
         setRecipes(loadMixRecipes());
-        setSessions(loadMixSessions().filter((s) => !s.parentId));
+        setSessions(filterMixSessionRoots(loadMixSessions()));
+        setAllSessions(loadMixSessions());
         setFavorites(loadMixFavorites());
         setFolders(loadMixFolders());
         setSessionFolders(loadMixSessionFolders());
@@ -532,10 +549,23 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const sessionDisplayName = (session: MixSession): string =>
         session.name?.trim() || `${session.charName} · ${session.recipe.name}`;
 
+    // 支线数 / 番外数：全量对局算一次，列表每行查表（一次 loadMixSessions 一遍图遍历）
+    const treeStats = useMemo(() => buildMixSessionTreeStats(allSessions), [allSessions]);
+    // 来源对局已被删除的番外：不属于任何一棵树，单独成组摆在列表末尾，别变成看不见的孤儿
+    const orphanSpinoffs = useMemo(() => listMixOrphanSpinoffs(allSessions), [allSessions]);
+
+    /** 点行上的「支线 N」：进这场对局并把世界树展开（世界树挂在详情页，靠一次性意图传话） */
+    const openSessionWorldTree = (session: MixSession) => {
+        requestMixWorldTreeOpen(session.id);
+        setPlaying(session.id);
+    };
+
     // ── 对局行渲染（对局列表和文件夹内共用） ──
     const renderSessionRow = (session: MixSession) => {
         const sessionCardId = mixSlotFirstId(session.recipe.slots, "character");
         const card = sessionCardId ? cabinet.find((m) => m.id === sessionCardId) : null;
+        const stats = treeStats.get(session.id);
+        const 是番外 = isMixSpinoff(session);
         return (
             <div className="mix-session-row" key={session.id} onClick={() => setPlaying(session.id)}>
                 {card?.cover ? (
@@ -547,6 +577,56 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                 <div className="mix-session-info">
                     <div className="mix-session-name">{sessionDisplayName(session)}</div>
                     <div className="mix-session-sub">{mixRoundCount(session.turns)} 轮 · {formatMixTime(session.updatedAt)}</div>
+                </div>
+                {/* 一眼看见分了多少支线、开了多少番外，不用先点进对局再点世界树；
+                    「开番外」也贴在这一行——入口跟着动作发生的地方，不做全局按钮 */}
+                <div className="mix-session-chips">
+                    {stats && (stats.branches > 0 || stats.spinoffs > 0) ? (
+                        <>
+                            {stats.branches > 0 ? (
+                                <button
+                                    type="button"
+                                    className="mix-session-chip"
+                                    title="进入这局并展开世界树"
+                                    onClick={(e) => { e.stopPropagation(); openSessionWorldTree(session); }}
+                                >
+                                    <Network size={12} /> 支线 {stats.branches}
+                                </button>
+                            ) : null}
+                            {stats.spinoffs > 0 ? (
+                                <button
+                                    type="button"
+                                    className="mix-session-chip"
+                                    data-tone="spinoff"
+                                    title="这棵世界树开过的番外"
+                                    onClick={(e) => { e.stopPropagation(); setSpinoffDrawer(session); }}
+                                >
+                                    <Clapperboard size={12} /> 番外 {stats.spinoffs}
+                                </button>
+                            ) : null}
+                        </>
+                    ) : null}
+                    {是番外 ? (
+                        <span className="mix-session-chip" data-tone="spinoff">
+                            <Clapperboard size={12} /> {session.spinoff?.memory === "inherit" ? "番外 · 继承记忆" : "番外 · 只有人设"}
+                        </span>
+                    ) : (
+                        <button
+                            type="button"
+                            className="mix-session-chip"
+                            data-tone="spinoff"
+                            data-ghost="true"
+                            title="不复制任何内容，按这一局的配方开一篇番外"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSpinoffCreateName("");
+                                setSpinoffCreateMemory("inherit");
+                                setSpinoffCreate(session);
+                            }}
+                        >
+                            <Clapperboard size={12} /> 开番外
+                        </button>
+                    )}
                 </div>
                 <button
                     type="button"
@@ -588,6 +668,34 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
             setPlaying(session.id);
         } catch (error) {
             showToast(error instanceof Error ? error.message : "开局失败");
+        }
+    };
+
+    /**
+     * 开番外：按来源那一份配方新建一局，正文与记忆一张都不复制。
+     * 记忆模式二选一（口径见 lib/narrative-writer/spinoff.ts）：
+     * inherit = 只读引用来源对局当前的记忆卡；none = 只有人设和世界书，从空开始。
+     * 番外不写记忆卡，所以开多少篇都动不了主线；省下来的正是她要的存储与积分。
+     */
+    const handleCreateSpinoff = () => {
+        const source = spinoffCreate;
+        if (!source) return;
+        try {
+            const spin = startMixSpinoff(source.id, spinoffCreateMemory, {
+                branchName: spinoffCreateName.trim() || "番外",
+            });
+            // 和普通开局一样：跳转不等机括钩子，让它在后台补一笔
+            void runMixSessionStart(spin.id);
+            setSpinoffCreate(null);
+            refresh();
+            showToast(
+                spinoffCreateMemory === "inherit"
+                    ? `已开番外「${sessionDisplayName(spin)}」，记忆只读继承「${sessionDisplayName(source)}」——番外写的正文不进记忆卡，主线也不受影响。`
+                    : `已开番外「${sessionDisplayName(spin)}」，只带人设和世界书，不复制任何内容。`
+            );
+            setPlaying(spin.id);
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : "开番外失败");
         }
     };
 
@@ -1320,6 +1428,18 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                         </div>
                                     );
                                 })()}
+
+                                {/* 来源对局已被删除的番外：不进任何一棵树，单独列一组，免得点不到 */}
+                                {orphanSpinoffs.length > 0 ? (
+                                    <div className="mix-folder-group">
+                                        <div className="mix-folder-header" data-uncategorized>
+                                            <Clapperboard size={18} />
+                                            <span className="mix-folder-name">来源已删除的番外</span>
+                                            <span className="mix-folder-count">{orphanSpinoffs.length} 篇</span>
+                                        </div>
+                                        {orphanSpinoffs.map((session) => renderSessionRow(session))}
+                                    </div>
+                                ) : null}
                             </>
                         )}
                     </>
@@ -2205,6 +2325,92 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                             >
                                 <Trash2 size={17} />
                                 <span>删除这场<i>对话无法找回</i></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {/* 番外抽屉：这一棵世界树开过的番外，点一行直接续玩 */}
+            {spinoffDrawer ? (() => {
+                const spinoffs = listMixSpinoffs(allSessions, spinoffDrawer.id);
+                return (
+                    <div className="mix-sheet-mask" onClick={() => setSpinoffDrawer(null)}>
+                        <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                            <div className="mix-sheet-head">
+                                <div className="mix-sheet-title">番外 · {sessionDisplayName(spinoffDrawer)}</div>
+                                <button type="button" className="mix-icon-btn" onClick={() => setSpinoffDrawer(null)} aria-label="关闭"><X size={18} /></button>
+                            </div>
+                            <div className="mix-sheet-body">
+                                {spinoffs.length === 0 ? (
+                                    <div className="mix-folder-empty">这棵世界树还没开过番外。番外不占支线的位置，也不写记忆卡。</div>
+                                ) : spinoffs.map((s) => (
+                                    <button
+                                        type="button"
+                                        key={s.id}
+                                        className="mix-action-row"
+                                        onClick={() => { setSpinoffDrawer(null); setPlaying(s.id); }}
+                                    >
+                                        <Clapperboard size={17} />
+                                        <span>
+                                            {mixSessionTitle(s)}
+                                            <i>
+                                                {s.spinoff?.memory === "inherit" ? "继承来源记忆（只读）" : "只有人设和世界书"}
+                                                {" · "}{mixRoundCount(s.turns)} 轮 · {formatMixTime(s.updatedAt)}
+                                            </i>
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })() : null}
+
+            {/* 开番外：先问记忆怎么拿，其余一概不复制 */}
+            {spinoffCreate ? (
+                <div className="mix-sheet-mask" onClick={() => setSpinoffCreate(null)}>
+                    <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="mix-sheet-head">
+                            <div className="mix-sheet-title">从「{sessionDisplayName(spinoffCreate)}」开一篇番外</div>
+                            <button type="button" className="mix-icon-btn" onClick={() => setSpinoffCreate(null)} aria-label="关闭"><X size={18} /></button>
+                        </div>
+                        <div className="mix-sheet-body">
+                            <div className="mix-detail-label">番外名</div>
+                            <input
+                                className="mix-input"
+                                value={spinoffCreateName}
+                                onChange={(e) => setSpinoffCreateName(e.target.value)}
+                                placeholder="如：灯塔之夜 · 三人视角"
+                                maxLength={24}
+                                autoFocus
+                            />
+                            <div className="mix-detail-label">记忆怎么拿</div>
+                            <div className="mix-chip-row">
+                                <button
+                                    type="button"
+                                    className="mix-chip"
+                                    data-active={spinoffCreateMemory === "inherit" ? "true" : undefined}
+                                    onClick={() => setSpinoffCreateMemory("inherit")}
+                                >
+                                    继承记忆（只读）
+                                </button>
+                                <button
+                                    type="button"
+                                    className="mix-chip"
+                                    data-active={spinoffCreateMemory === "none" ? "true" : undefined}
+                                    onClick={() => setSpinoffCreateMemory("none")}
+                                >
+                                    只有人设和世界书
+                                </button>
+                            </div>
+                            <p className="mix-detail-note">
+                                {spinoffCreateMemory === "inherit"
+                                    ? "番外读的是这一局当前的记忆，跟着主线往后走；番外里发生的正文一张卡都不写，改不动主线，也不额外占存储。"
+                                    : "这场番外只带人设与世界书，记忆从空开始；正文同样不写记忆卡。"}
+                            </p>
+                            <button type="button" className="mix-btn mix-btn-primary mix-sheet-cta" onClick={handleCreateSpinoff}>
+                                创建番外并进入
                             </button>
                         </div>
                     </div>

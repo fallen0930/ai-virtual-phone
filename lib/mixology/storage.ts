@@ -386,6 +386,47 @@ export function saveMixSession(session: MixSession): void {
 
 export function deleteMixSession(id: string): void {
     const list = readJson<MixSession[]>(SESSIONS_KEY, []);
+    const node = list.find((s) => s.id === id);
+
+    // 删除前先把挂在它名下的支线**上提一级**（子树整体跟着下移一层，进度不丢）。
+    // 为什么这一步不能只留给世界树那条路径：只把自己摘掉的话，孩子的 parentId
+    // 指向一个已经不存在的对局——世界树把断链当根画出来，酒局列表却只把
+    // parentId 为空的当门面局，这局就既不在树上也不在列表里，等于被她删父级时弄丢了。
+    // 所以两条删除路径共用这一套动作（deleteMixSessionBranch 已退化成委托）。
+    if (node) {
+        const byId = new Map(list.map((s) => [s.id, s] as const));
+        const 祖父 = node.parentId ? byId.get(node.parentId) : undefined;
+
+        // 上提后的新根：原来指的就是被删这一场（或压根没记）→ 换成挂在谁下面就是谁，
+        // 挂在空里就自己成根；否则保持原树不变，免得把中间节点删成两棵树。
+        const 新根 = (child: MixSession, fallback: string) =>
+            !child.rootId || child.rootId === id ? fallback : child.rootId;
+
+        const 下移 = (
+            childId: string,
+            newParentId: string | undefined,
+            newRootId: string,
+            newDepth: number,
+            seen: Set<string>
+        ) => {
+            const child = byId.get(childId);
+            // seen 只为一件事：谱系是手改过 + 旧版本写出来的，父子互指的脏数据不能把这里拖进死循环
+            if (!child || seen.has(childId)) return;
+            seen.add(childId);
+            child.parentId = newParentId;
+            child.rootId = newRootId;
+            child.depth = newDepth;
+            for (const grand of list.filter((s) => s.parentId === childId)) {
+                下移(grand.id, childId, newRootId, newDepth + 1, seen);
+            }
+        };
+
+        for (const child of list.filter((s) => s.parentId === id)) {
+            if (祖父) 下移(child.id, 祖父.id, 新根(child, 祖父.id), (祖父.depth ?? 0) + 1, new Set([id]));
+            else 下移(child.id, undefined, 新根(child, child.id), 0, new Set([id]));
+        }
+    }
+
     writeJson(SESSIONS_KEY, list.filter((s) => s.id !== id));
     // 顺手从所有对局文件夹里摘掉这场，文件夹的 sessionIds 不会越攒越脏
     const folders = loadMixSessionFolders();
@@ -631,40 +672,15 @@ export function updateMixSessionTreeMeta(id: string, patch: MixSessionTreeMetaPa
 }
 
 /**
- * 删除一条支线：它的直接子支线"上提一级"挂到被删节点的父节点（根被删则子支线各自成根），
- * 整棵子树层级随之下移一层，进度不丢、树不散。然后才真正删掉该节点。
+ * 删除一条支线：直接子支线"上提一级"挂到被删节点的父节点（根被删则各自成根），
+ * 整棵子树层级随之下移一层，进度不丢、树不散。
+ *
+ * 这套动作现在住在 deleteMixSession 里，两个删除入口因此**必然同构**：
+ * 从前只有世界树这条路径会上提，列表那边直接摘掉自己，于是删掉父级时
+ * 子支线的 parentId 指向已经不存在的对局，成了既不在树上也不在列表里的孤儿（待办 #39）。
+ * 导出名保留是给世界树调用点看的——它表达的是"删一条支线"，语义比 deleteMixSession 准。
  */
 export function deleteMixSessionBranch(id: string): void {
-    const list = readJson<MixSession[]>(SESSIONS_KEY, []);
-    const node = list.find((s) => s.id === id);
-    if (!node) return;
-
-    const byId = new Map(list.map((s) => [s.id, s] as const));
-    const children = list.filter((s) => s.parentId === id);
-
-    // 递归把 subtree 重挂到 newParent（含根重置），并整体下移一层
-    const reparent = (childId: string, newParentId: string | undefined, newRootId: string, newDepth: number) => {
-        const child = byId.get(childId);
-        if (!child) return;
-        child.parentId = newParentId;
-        child.rootId = newRootId;
-        child.depth = newDepth;
-        for (const grand of list.filter((s) => s.parentId === childId)) {
-            reparent(grand.id, childId, newRootId, newDepth + 1);
-        }
-    };
-
-    const grandParentId = node.parentId;
-    const grandParent = grandParentId ? byId.get(grandParentId) : undefined;
-    for (const child of children) {
-        if (grandParent) {
-            reparent(child.id, grandParentId, child.rootId ?? child.id, (grandParent.depth ?? 0) + 1);
-        } else {
-            reparent(child.id, undefined, child.id, 0);
-        }
-    }
-
-    writeJson(SESSIONS_KEY, list);
     deleteMixSession(id);
 }
 
@@ -704,6 +720,143 @@ export function buildMixSessionForest(sessions: MixSession[]): MixSessionTreeNod
     roots.sort(sortFn);
     roots.forEach(sortRec);
     return roots;
+}
+
+// ---------- 支线 / 番外 计数（对局列表一眼可见） ----------
+
+/** 一场对局在谱系里的两个数：支线数与番外数 */
+export type MixSessionTreeStats = {
+    /** 挂在它下面的支线总数（全部后代，含孙子支线；番外不算支线） */
+    branches: number;
+    /** 这一棵世界树里的番外数（来源落在本节点或其祖先链上都会记进来） */
+    spinoffs: number;
+};
+
+/**
+ * 酒局列表要列的「门面局」：根对局与无谱系的老对局。
+ * 支线只进 🌳 世界树，番外只进行上的「番外」角标抽屉——两者都不单独占一行，
+ * 免得开一条线就多出一场对局。
+ */
+export function filterMixSessionRoots(sessions: MixSession[]): MixSession[] {
+    const 在场 = new Set(sessions.map((s) => s.id));
+    // 支线只有"父还在"时才藏在父节点那一行里。父早已不存在的断链按根显示：
+    // 世界树本来就把断链当根画（buildMixSessionForest 同口径），列表再把它藏起来，
+    // 这局就两头看不见。删除路径已经改成上提（不再制造断链），这里兜的是
+    // 断链已经躺在她数据里的存量。
+    return sessions.filter((s) => (!s.parentId || !在场.has(s.parentId)) && !s.spinoff);
+}
+
+/** 沿 parentId 往下收整棵支线子树的 id（含自己）。番外不入树，永远收不到。 */
+export function collectMixSessionSubtreeIds(sessions: MixSession[], rootId: string): string[] {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    if (!byId.has(rootId)) return [];
+    const childrenOf = new Map<string, MixSession[]>();
+    for (const s of sessions) {
+        if (s.spinoff || !s.parentId || !byId.has(s.parentId)) continue;
+        if (!childrenOf.has(s.parentId)) childrenOf.set(s.parentId, []);
+        childrenOf.get(s.parentId)!.push(s);
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const visit = (id: string) => {
+        if (seen.has(id)) return;      // 脏数据成环时立刻收手
+        seen.add(id);
+        out.push(id);
+        for (const child of childrenOf.get(id) ?? []) visit(child.id);
+    };
+    visit(rootId);
+    return out;
+}
+
+/**
+ * 一个番外会记在哪些节点上：它的来源（番外套番外时把沿途的番外也算上），
+ * 再加来源所在支线树往上到根的整条祖先链。
+ * 来源已被删除、或整条链都是对不上的脏数据时返回空数组——那就是游离番外。
+ */
+function spinoffFootprint(session: MixSession, byId: Map<string, MixSession>): string[] {
+    const info = session.spinoff;
+    if (!info) return [];
+    const touched: string[] = [];
+    const seen = new Set<string>([session.id]);
+    let cur = byId.get(info.sourceId);
+    while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        touched.push(cur.id);
+        if (!cur.spinoff) {
+            // 落到正经节点了：继续沿支线父链上溯，让这棵树的每一层都数得到这个番外
+            let parent = cur.parentId ? byId.get(cur.parentId) : undefined;
+            const guard = new Set([cur.id]);
+            while (parent && !guard.has(parent.id)) {
+                guard.add(parent.id);
+                touched.push(parent.id);
+                parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+            }
+            break;
+        }
+        cur = byId.get(cur.spinoff.sourceId);
+    }
+    return touched;
+}
+
+/** 逐节点统计支线数与番外数（一次算完整片森林，列表渲染直接查表） */
+export function buildMixSessionTreeStats(sessions: MixSession[]): Map<string, MixSessionTreeStats> {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    const stats = new Map<string, MixSessionTreeStats>();
+    for (const s of sessions) stats.set(s.id, { branches: 0, spinoffs: 0 });
+
+    for (const s of sessions) {
+        if (s.spinoff) continue;
+        stats.get(s.id)!.branches = collectMixSessionSubtreeIds(sessions, s.id).length - 1;
+    }
+
+    for (const s of sessions) {
+        if (!s.spinoff) continue;
+        for (const id of spinoffFootprint(s, byId)) {
+            const entry = stats.get(id);
+            if (entry) entry.spinoffs += 1;
+        }
+    }
+    return stats;
+}
+
+/** 一场对局所在世界树的根 id（支线往上到顶；番外先看它的来源落在哪棵树上） */
+export function mixSessionTreeRootId(sessions: MixSession[], sessionId: string): string | null {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    let cur = byId.get(sessionId);
+    if (!cur) return null;
+    // 番外没有 parentId，先跳到它的来源节点再往上爬
+    const spinoffGuard = new Set<string>();
+    while (cur?.spinoff && !spinoffGuard.has(cur.id)) {
+        spinoffGuard.add(cur.id);
+        cur = byId.get(cur.spinoff.sourceId);
+    }
+    if (!cur) return null;
+    const guard = new Set<string>([cur.id]);
+    while (cur?.parentId) {
+        const parent = byId.get(cur.parentId);
+        if (!parent || guard.has(parent.id)) break;
+        guard.add(parent.id);
+        cur = parent;
+    }
+    return cur?.id ?? null;
+}
+
+/** 某一棵世界树的全部番外（按创建先后）；从树上任何一个节点进来都拿到同一批 */
+export function listMixSpinoffs(sessions: MixSession[], sessionId: string): MixSession[] {
+    const rootId = mixSessionTreeRootId(sessions, sessionId);
+    if (!rootId) return [];
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    return sessions
+        .filter((s) => s.spinoff && spinoffFootprint(s, byId).includes(rootId))
+        .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+}
+
+/** 来源已被删除的番外：不属于任何一棵世界树，得单独给个入口，别变成看不见的孤儿数据 */
+export function listMixOrphanSpinoffs(sessions: MixSession[]): MixSession[] {
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    return sessions
+        .filter((s) => s.spinoff && spinoffFootprint(s, byId).length === 0)
+        .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 }
 
 

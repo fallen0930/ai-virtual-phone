@@ -26,6 +26,7 @@ import {
   saveThreadCard,
   saveWriterState,
 } from "./storage";
+import { isNarrativeReadOnlySession } from "./spinoff";
 import type {
   ForeshadowCard,
   ThreadCard,
@@ -189,6 +190,17 @@ export async function applyAdoptedBanner(
 
   // 插入失败 → 异常原样抛给调用方（面板按原有失败提示处理），下面这些一行都不执行
   const inserted = await input.insert(干净报幕);
+
+  // 番外：正文照写，台账一行都不回写。
+  // 这里必须是"跳过"，不能省事让 storage 那道闸抛错——insert 已经成功了，
+  // 抛错会让面板提示"采纳失败"，玩家以为正文没写进去，实际已经写进去了。
+  // 标记按"忽略"计数：不是匹配不上，是番外没有可写的台账，面板的提示语据此区分。
+  if (isNarrativeReadOnlySession(input.sessionId)) {
+    console.log(
+      `[NarrativeWriter] 采纳回写跳过：番外不进记忆卡（对局 ${input.sessionId}），${推进.length + 回收.length} 条标记只落正文`
+    );
+    return { 干净报幕, 推进数: 0, 回收数: 0, 忽略数: 推进.length + 回收.length };
+  }
 
   let 来源消息ID = input.来源消息ID;
   let 来源轮次 = input.来源轮次;

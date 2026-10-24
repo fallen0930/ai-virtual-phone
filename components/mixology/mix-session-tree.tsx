@@ -9,7 +9,7 @@
 // 悬浮按钮（🌳）开合面板；面板里也提供"从当前进度开新支线"。
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { GitBranch, Network, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Clapperboard, GitBranch, Network, Pencil, Plus, Trash2, X } from "lucide-react";
 import {
     subscribeMixSessionRuntime,
     getMixSessionRuntimeState,
@@ -22,13 +22,14 @@ import {
     deleteMixSessionBranch,
     type MixSessionTreeNode,
 } from "@/lib/mixology/storage";
-import { forkMixSession, mixRoundCount } from "@/lib/mixology/engine";
+import { forkMixSession, mixRoundCount, startMixSpinoff } from "@/lib/mixology/engine";
 import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
-import { mixSessionLatestSummary, mixSessionTitle, type MixSession } from "@/lib/mixology/types";
+import { mixSessionLatestSummary, mixSessionTitle, type MixSession, type MixSpinoffMemory } from "@/lib/mixology/types";
 import {
     isDockManaged,
     CONTROL_DOCK_ACTIVATE_EVENT,
 } from "@/lib/floating-controls-store";
+import { consumeMixWorldTreeOpen } from "@/lib/mixology/world-tree-intent";
 
 const NODE_W = 188;
 const NODE_H = 112;
@@ -117,6 +118,8 @@ type Props = {
 export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
     const [open, setOpen] = useState(false);
     const [sessions, setSessions] = useState<MixSession[]>([]);
+    // 番外不进上下级拓扑（画布上没有它的节点），单独收在面板底部一节里
+    const [spinoffs, setSpinoffs] = useState<MixSession[]>([]);
     const [positions, setPositions] = useState<Map<string, Pos>>(new Map());
     const [dragId, setDragId] = useState<string | null>(null);
     const [edit, setEdit] = useState<{ id: string; name: string; note: string } | null>(null);
@@ -151,6 +154,13 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
         const rootValue = current?.rootId ?? current?.id ?? sessionId;
         const scoped = collectSubtree(list, rootValue);
         setSessions(scoped);
+        // 挂在这棵树任意节点上的番外（含支线开的），按来源在这棵树里筛
+        const inTree = new Set(scoped.map((s) => s.id));
+        setSpinoffs(
+            list
+                .filter((s) => s.spinoff && inTree.has(s.spinoff.sourceId))
+                .sort((a, b) => a.createdAt - b.createdAt)
+        );
         const roots = buildMixSessionForest(scoped);
         const layout = computeForestLayout(roots);
         const next = new Map<string, Pos>();
@@ -168,6 +178,11 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
     useEffect(() => {
         if (open) reload();
     }, [open, reload]);
+
+    // 对局列表上点「支线 N」带过来的意图：进这局就把世界树展开，不用再点一次 🌳
+    useEffect(() => {
+        if (consumeMixWorldTreeOpen(sessionId)) setOpen(true);
+    }, [sessionId]);
 
     const roots = useMemo(() => buildMixSessionForest(sessions), [sessions]);
     const byId = useMemo(() => indexById(sessions), [sessions]);
@@ -235,6 +250,28 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
         (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
     };
 
+    /**
+     * 从这棵树上的某个节点开番外：不复制正文、不复制记忆卡，只按同一份配方开一局。
+     * 两个记忆模式各一个按钮，点哪个就是哪个——省掉一次"确认口径"的弹窗往返。
+     */
+    const quickSpinoff = (node: MixSession, memory: MixSpinoffMemory) => {
+        try {
+            const spin = startMixSpinoff(node.id, memory, {
+                branchName: `${mixSessionTitle(node)} · 番外`,
+            });
+            onToast?.(
+                `已开番外「${mixSessionTitle(spin)}」。` +
+                (memory === "inherit"
+                    ? `记忆只读继承「${mixSessionTitle(node)}」，番外写的正文不进记忆卡。`
+                    : "只带人设和世界书，记忆从空开始。") +
+                "当前对局不变，可在下方番外一节点开继续玩。"
+            );
+            reload();
+        } catch (err) {
+            onToast?.(err instanceof Error ? err.message : "开番外失败");
+        }
+    };
+
     const quickFork = async (node: MixSession) => {
         try {
             const child = forkMixSession(node.id, node.turns.length - 1, {
@@ -280,7 +317,10 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
             <div className="mix-tree-panel" style={{ pointerEvents: "auto" } as CSSProperties}>
                 <div className="mix-tree-head">
                     <div className="mix-tree-title">世界树</div>
-                    <div className="mix-tree-sub">仅当前这一局的支线分岔 · 点节点续玩 · 拖拽排版</div>
+                    <div className="mix-tree-sub">
+                        {sessions.length > 1 ? `这一局共有 ${sessions.length - 1} 条支线 · ` : "这一局还没有支线 · "}
+                        点节点续玩 · 拖拽排版
+                    </div>
                     <button type="button" className="mix-tree-op" style={{ flex: "none", padding: "6px 12px" } as CSSProperties} onClick={() => { const cur = sessions.find((s) => s.id === sessionId); if (cur) quickFork(cur); }}>
                         <Plus size={13} /> 当前开新支线
                     </button>
@@ -353,6 +393,52 @@ export function MixSessionTree({ sessionId, onSwitch, onToast }: Props) {
                         })}
                     </div>
                 )}
+
+                {/* 番外单独一节：它们没有父子关系，混进画布只会把树画歪 */}
+                <div className="mix-tree-spinoffs">
+                    <div className="mix-tree-spinoffs-head">
+                        <span className="mix-tree-spinoffs-title"><Clapperboard size={12} /> 番外 {spinoffs.length}</span>
+                        <span className="mix-tree-spinoffs-hint">不复制内容 · 不写记忆卡</span>
+                    </div>
+                    <div className="mix-tree-spinoffs-actions">
+                        <button
+                            type="button"
+                            className="mix-tree-op"
+                            onClick={() => {
+                                const cur = sessions.find((s) => s.id === sessionId) ?? sessions[0];
+                                if (cur) quickSpinoff(cur, "inherit");
+                            }}
+                        >
+                            <Plus size={12} /> 继承记忆开番外
+                        </button>
+                        <button
+                            type="button"
+                            className="mix-tree-op"
+                            onClick={() => {
+                                const cur = sessions.find((s) => s.id === sessionId) ?? sessions[0];
+                                if (cur) quickSpinoff(cur, "none");
+                            }}
+                        >
+                            <Plus size={12} /> 只带人设开番外
+                        </button>
+                    </div>
+                    {spinoffs.length === 0 ? (
+                        <div className="mix-tree-spinoffs-empty">这棵树还没有番外。</div>
+                    ) : spinoffs.map((s) => (
+                        <button
+                            type="button"
+                            key={s.id}
+                            className="mix-tree-spinoff-row"
+                            data-current={s.id === sessionId ? "" : undefined}
+                            onClick={() => handleSwitch(s.id)}
+                        >
+                            <span className="mix-tree-spinoff-name">{mixSessionTitle(s)}</span>
+                            <span className="mix-tree-spinoff-meta">
+                                {s.spinoff?.memory === "inherit" ? "记忆只读继承" : "只有人设和世界书"} · 第 {mixRoundCount(s.turns)} 轮
+                            </span>
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {edit ? (

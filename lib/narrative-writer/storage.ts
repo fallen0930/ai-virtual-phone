@@ -30,6 +30,13 @@ import { kvGet, kvSet, kvSetAsync, kvRemove, kvKeysWithPrefix } from "@/lib/kv-d
 // 两边的调用都只发生在函数体里，ESM 的函数声明在链接阶段就已就绪，
 // 模块求值顺序不会让 getMixSession 变成 undefined——但别再往这两个模块的顶层加互相调用的逻辑。
 import { getMixSession } from "@/lib/mixology/storage";
+// 番外的记忆口径（只读继承）在这一层落地：读重定向 + 写闸门。
+// 单独一个模块是因为 threads / extractor / writer / 面板都各自要问"这场是不是番外"，
+// 而它们全都 import 本模块，逻辑放这里会形成更大的环。
+import {
+  assertNarrativeWritable,
+  narrativeReadSessionId,
+} from "./spinoff";
 import type {
   MemoryCard,
   EmotionCard,
@@ -117,6 +124,24 @@ export function requireSessionId(
   return trimmed;
 }
 
+/**
+ * 番外在这里的两条规矩（口径见 spinoff.ts 顶部）：
+ *
+ * 1) **记忆类读取一律过 narrativeReadSessionId**：番外（继承模式）读的是来源那一份，
+ *    自己不留键。放在这一层而不是调用方，是因为读卡入口散在 writer / threads /
+ *    台账初始化 / 面板四处，逐处接线迟早漏一个，漏掉的那个表现为"番外没有记忆"，
+ *    比抛错难查得多。
+ * 2) **卡与水位的写一律过 assertNarrativeWritable**：番外拒绝，抛错说清原因。
+ *    注意闸门必须在"读旧值→改→写回"这类组合拳的**最外层**，
+ *    否则读重定向会把来源的卡读进来、再顺着写回来源——那是最坏的一种串数据。
+ *
+ * 反过来，这些入口**刻意不重定向、不加闸门**，用的都是传进来的原始 sessionId：
+ * - 执笔状态 / 上下文层级 / 整理历史：番外自己这一场的进度，该写自己的键；
+ * - purgeNarrativeSessionData / isSourceMessageAlive / onTurnsDiscarded：
+ *   按命名空间清理与按来源归档，找的就是"这一场自己的键"，番外的键本来就是空的，
+ *   所以删番外动不到主线一张卡（这正是只读继承最想要的性质）。
+ */
+
 // ── JSON 序列化读写 ──
 // kv-db 是同步字符串 API（kvGet 返回 string | null，kvSet 只收 string），
 // 执笔的数据全是对象，必须统一走 JSON 序列化，否则存取全部失效。
@@ -150,6 +175,7 @@ export async function saveMemoryCard(
   card: MemoryCard
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "saveMemoryCard");
+  assertNarrativeWritable(sid, "saveMemoryCard");
   await nwSet(`${memoryPrefix(sid)}${card.id}`, card);
 }
 
@@ -157,7 +183,7 @@ export async function getMemoryCard(
   sessionId: string | null | undefined,
   id: string
 ): Promise<MemoryCard | null> {
-  const sid = requireSessionId(sessionId, "getMemoryCard");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "getMemoryCard"));
   return nwGet<MemoryCard>(`${memoryPrefix(sid)}${id}`);
 }
 
@@ -166,6 +192,7 @@ export async function deleteMemoryCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "deleteMemoryCard");
+  assertNarrativeWritable(sid, "deleteMemoryCard");
   kvRemove(`${memoryPrefix(sid)}${id}`);
 }
 
@@ -177,7 +204,7 @@ export async function listMemoryCards(
     主体?: string;
   }
 ): Promise<MemoryCard[]> {
-  const sid = requireSessionId(sessionId, "listMemoryCards");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "listMemoryCards"));
   const keys = await kvKeysWithPrefix(memoryPrefix(sid));
   const cards: MemoryCard[] = [];
 
@@ -205,6 +232,7 @@ export async function updateMemoryCardStatus(
   newStatus: MemoryCard["状态"]
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "updateMemoryCardStatus");
+  assertNarrativeWritable(sid, "updateMemoryCardStatus");
   const card = await getMemoryCard(sid, id);
   if (!card) return;
 
@@ -220,6 +248,7 @@ export async function saveEmotionCard(
   card: EmotionCard
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "saveEmotionCard");
+  assertNarrativeWritable(sid, "saveEmotionCard");
   await nwSet(`${emotionPrefix(sid)}${card.id}`, card);
 }
 
@@ -227,7 +256,7 @@ export async function getEmotionCard(
   sessionId: string | null | undefined,
   id: string
 ): Promise<EmotionCard | null> {
-  const sid = requireSessionId(sessionId, "getEmotionCard");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "getEmotionCard"));
   return nwGet<EmotionCard>(`${emotionPrefix(sid)}${id}`);
 }
 
@@ -236,6 +265,7 @@ export async function deleteEmotionCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "deleteEmotionCard");
+  assertNarrativeWritable(sid, "deleteEmotionCard");
   kvRemove(`${emotionPrefix(sid)}${id}`);
 }
 
@@ -247,7 +277,7 @@ export async function listEmotionCards(
     主体?: string;
   }
 ): Promise<EmotionCard[]> {
-  const sid = requireSessionId(sessionId, "listEmotionCards");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "listEmotionCards"));
   const keys = await kvKeysWithPrefix(emotionPrefix(sid));
   const cards: EmotionCard[] = [];
 
@@ -281,6 +311,7 @@ export async function saveThreadCard(
   card: ThreadCard
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "saveThreadCard");
+  assertNarrativeWritable(sid, "saveThreadCard");
   await nwSet(`${threadPrefix(sid)}${card.id}`, card);
 }
 
@@ -288,7 +319,7 @@ export async function getThreadCard(
   sessionId: string | null | undefined,
   id: string
 ): Promise<ThreadCard | null> {
-  const sid = requireSessionId(sessionId, "getThreadCard");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "getThreadCard"));
   return nwGet<ThreadCard>(`${threadPrefix(sid)}${id}`);
 }
 
@@ -296,7 +327,7 @@ export async function listThreadCards(
   sessionId: string | null | undefined,
   opts?: { status?: string; 线索状态?: string }
 ): Promise<ThreadCard[]> {
-  const sid = requireSessionId(sessionId, "listThreadCards");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "listThreadCards"));
   const keys = await kvKeysWithPrefix(threadPrefix(sid));
   const cards: ThreadCard[] = [];
   for (const key of keys) {
@@ -316,6 +347,7 @@ export async function deleteThreadCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "deleteThreadCard");
+  assertNarrativeWritable(sid, "deleteThreadCard");
   kvRemove(`${threadPrefix(sid)}${id}`);
 }
 
@@ -345,6 +377,7 @@ async function updateThreadCardFields(
   updates: Partial<Omit<ThreadCard, "id" | "kind" | "createdAt">>
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "updateThreadCard");
+  assertNarrativeWritable(sid, "updateThreadCard");
   const card = await getThreadCard(sid, id);
   if (!card) return;
   Object.assign(card, updates);
@@ -357,6 +390,7 @@ export async function saveForeshadowCard(
   card: ForeshadowCard
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "saveForeshadowCard");
+  assertNarrativeWritable(sid, "saveForeshadowCard");
   await nwSet(`${foreshadowPrefix(sid)}${card.id}`, card);
 }
 
@@ -364,7 +398,7 @@ export async function getForeshadowCard(
   sessionId: string | null | undefined,
   id: string
 ): Promise<ForeshadowCard | null> {
-  const sid = requireSessionId(sessionId, "getForeshadowCard");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "getForeshadowCard"));
   return nwGet<ForeshadowCard>(`${foreshadowPrefix(sid)}${id}`);
 }
 
@@ -372,7 +406,7 @@ export async function listForeshadowCards(
   sessionId: string | null | undefined,
   opts?: { status?: string; 伏笔状态?: string }
 ): Promise<ForeshadowCard[]> {
-  const sid = requireSessionId(sessionId, "listForeshadowCards");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "listForeshadowCards"));
   const keys = await kvKeysWithPrefix(foreshadowPrefix(sid));
   const cards: ForeshadowCard[] = [];
   for (const key of keys) {
@@ -392,6 +426,7 @@ export async function deleteForeshadowCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "deleteForeshadowCard");
+  assertNarrativeWritable(sid, "deleteForeshadowCard");
   kvRemove(`${foreshadowPrefix(sid)}${id}`);
 }
 
@@ -420,6 +455,7 @@ async function updateForeshadowCardFields(
   updates: Partial<Omit<ForeshadowCard, "id" | "kind" | "createdAt">>
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "updateForeshadowCard");
+  assertNarrativeWritable(sid, "updateForeshadowCard");
   const card = await getForeshadowCard(sid, id);
   if (!card) return;
   Object.assign(card, updates);
@@ -460,6 +496,7 @@ export async function confirmAllPendingCards(
   foreshadows: number;
 }> {
   const sid = requireSessionId(sessionId, "confirmAllPendingCards");
+  assertNarrativeWritable(sid, "confirmAllPendingCards");
 
   const [pendingMemories, pendingEmotions, pendingThreads, pendingForeshadows] =
     await Promise.all([
@@ -497,6 +534,7 @@ export async function saveWaterLevel(
   water: WaterLevelState
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "saveWaterLevel");
+  assertNarrativeWritable(sid, "saveWaterLevel");
   const existing =
     (await nwGet<Record<string, WaterLevelState>>(waterKey(sid))) || {};
   existing[water.作用域] = water;
@@ -506,7 +544,7 @@ export async function saveWaterLevel(
 export async function getWaterLevels(
   sessionId: string | null | undefined
 ): Promise<Record<"戏内层" | "现实层" | "共识层", WaterLevelState>> {
-  const sid = requireSessionId(sessionId, "getWaterLevels");
+  const sid = narrativeReadSessionId(requireSessionId(sessionId, "getWaterLevels"));
   const existing =
     (await nwGet<Record<string, WaterLevelState>>(waterKey(sid))) || {};
 
@@ -586,6 +624,7 @@ export async function batchDeleteMemoryCards(
   ids: string[]
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "batchDeleteMemoryCards");
+  assertNarrativeWritable(sid, "batchDeleteMemoryCards");
   for (const id of ids) {
     await deleteMemoryCard(sid, id);
   }
@@ -597,6 +636,7 @@ export async function batchDeleteEmotionCards(
   ids: string[]
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "batchDeleteEmotionCards");
+  assertNarrativeWritable(sid, "batchDeleteEmotionCards");
   for (const id of ids) {
     await deleteEmotionCard(sid, id);
   }
@@ -745,6 +785,7 @@ export async function archiveMemoryCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "archiveMemoryCard");
+  assertNarrativeWritable(sid, "archiveMemoryCard");
   const card = await getMemoryCard(sid, id);
   if (!card) return;
 
@@ -759,6 +800,7 @@ export async function archiveEmotionCard(
   id: string
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "archiveEmotionCard");
+  assertNarrativeWritable(sid, "archiveEmotionCard");
   const card = await getEmotionCard(sid, id);
   if (!card) return;
 
@@ -774,6 +816,7 @@ export async function updateMemoryCard(
   updates: Partial<Omit<MemoryCard, "id" | "kind" | "createdAt">>
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "updateMemoryCard");
+  assertNarrativeWritable(sid, "updateMemoryCard");
   const card = await getMemoryCard(sid, id);
   if (!card) return;
 
@@ -789,6 +832,7 @@ export async function updateEmotionCard(
   updates: Partial<Omit<EmotionCard, "id" | "kind" | "createdAt">>
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "updateEmotionCard");
+  assertNarrativeWritable(sid, "updateEmotionCard");
   const card = await getEmotionCard(sid, id);
   if (!card) return;
 
@@ -803,6 +847,7 @@ export async function batchArchiveMemoryCards(
   ids: string[]
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "batchArchiveMemoryCards");
+  assertNarrativeWritable(sid, "batchArchiveMemoryCards");
   for (const id of ids) {
     await archiveMemoryCard(sid, id);
   }
@@ -814,6 +859,7 @@ export async function batchArchiveEmotionCards(
   ids: string[]
 ): Promise<void> {
   const sid = requireSessionId(sessionId, "batchArchiveEmotionCards");
+  assertNarrativeWritable(sid, "batchArchiveEmotionCards");
   for (const id of ids) {
     await archiveEmotionCard(sid, id);
   }

@@ -32,6 +32,7 @@ import {
     type MixMechanismMaterial,
     type MixRecipe,
     type MixSession,
+    type MixSpinoffMemory,
     type MixState,
     type MixTextMaterial,
     type MixTicketMaterial,
@@ -673,6 +674,13 @@ async function runMixGeneration(
             const turnResult = await incrementTurnCount(updated.id, updated.turns);
             
             if (!(await shouldExtract())) return;
+            // 番外不抽：正文再怎么写都不该变成记忆卡（口径见 narrative-writer/spinoff.ts）。
+            // 闸门放在这里而不是只放抽取器里，是为了连 shouldExtract 之后的
+            // markExtractionComplete 一起跳过——省的是真积分，也不给番外留半套水位进度。
+            if (updated.spinoff) {
+                console.log(`[Mixology] 跳过抽取：${updated.id} 是番外，记忆只读继承来源对局`);
+                return;
+            }
             
             // 获取最后一轮 assistant 回复的文本
             const lastAssistantTurn = updated.turns.filter(t => t.role === "assistant").pop();
@@ -870,6 +878,41 @@ export function forkMixSession(
     };
     saveMixSession(child);
     return child;
+}
+
+/**
+ * 开番外：**新建一场独立对局，什么都不复制**。
+ *
+ * 与分叉的区别正是要害（她要这条的起因是"每次开番外都要整段复制，太吃存储，
+ * 而且番外开多了会回头影响主线记忆"）：
+ * - 分叉 forkMixSession 深拷贝 turns[0..n] + 全部执笔卡（copyNarrativeOnFork）；
+ * - 开番外只按来源对局的**配方快照**新建一局，正文只有开场白那一条，
+ *   记忆卡一张都不写——"继承记忆"靠的是读的时候去来源那一份读（narrative-writer/spinoff.ts），
+ *   "不继承"就是字面意思：只带人设和世界书，记忆从空开始。
+ *
+ * 人设与世界书本来就按材料 id 引用酒柜里的同一份材料，不占额外存储，所以两种模式
+ * 都不需要复制材料。
+ *
+ * 番外刻意不带 rootId/parentId/depth：它不进世界树的上下级拓扑，
+ * 分叉的"子支线上提"重挂逻辑也不该被它牵动。归属关系全在 spinoff 这一个字段里。
+ */
+export function startMixSpinoff(
+    sourceId: string,
+    memory: MixSpinoffMemory,
+    opts: { branchName?: string } = {},
+): MixSession {
+    const source = getMixSession(sourceId);
+    if (!source) throw new ChatEngineError("来源对局不存在，开不了这场番外。");
+    // 走 startMixSession 而不是自己拼：角色校验、面具里的用户名、小票初值、开场白
+    // 全按同一套规则来，番外和普通开局唯一的差别就是下面那个 spinoff 标记。
+    const session = startMixSession(source.recipe, {
+        openingIndex: source.openingIndex,
+        userName: source.userName,
+    });
+    session.spinoff = { sourceId: source.id, memory };
+    session.branchName = opts.branchName?.trim() || undefined;
+    saveMixSession(session);
+    return session;
 }
 
 function withRolledBackState(session: MixSession, turns: MixTurn[]): MixSession {
@@ -1359,6 +1402,8 @@ export async function insertNarrativeTurn(sessionId: string, narrativeBody: stri
     // 只读 updated，不写 session state（规范：异步抽取不得覆盖小票状态）
     setTimeout(async () => {
         try {
+            // 番外不抽：执笔正文每轮都抽一次，这是番外最烧积分的一条路，进门就断掉。
+            if (updated.spinoff) return;
             const rules = await getExtractionRules();
             if (!rules.enableMemoryExtraction && !rules.enableEmotionExtraction) return;
             

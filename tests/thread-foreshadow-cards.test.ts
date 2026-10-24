@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { kvKeysWithPrefix, kvRemove } from "@/lib/kv-db";
 import * as storageModule from "@/lib/narrative-writer/storage";
 import { extractFromTurn } from "@/lib/narrative-writer/extractor";
 import * as writerModule from "@/lib/narrative-writer/writer";
+import { saveMixSession } from "@/lib/mixology/storage";
+import type { MixSession } from "@/lib/mixology/types";
 import { createDefaultWriterState } from "@/lib/narrative-writer/types";
 import type {
   EmotionCard,
@@ -884,6 +887,78 @@ describe("采纳走向卡：报幕标记回写", () => {
     expect(api.pickPriorityThread!([爆发, 爆发旧])?.名称).toBe("E线");
     expect(api.pickPriorityThread!([])).toBeNull();
     expect(api.pickPriorityThread!([归档, 收束])).toBeNull();
+  });
+
+  // 番外（不写记忆）里点「采纳」：正文必须照常进对局，台账一行都不动。
+  // 关键不在于"回写失败"，而在于**不能失败**——storage 那道闸是抛错的，
+  // 如果 applyAdoptedBanner 不做跳过，正文已经写进去了却把异常抛给面板，
+  // 玩家看到的是"采纳失败"，实际对局里多了一条回复。所以这里先验插入成功。
+  it("14. 番外里采纳：正文照写、来源台账不动、不抛错", async () => {
+    const 源 = makeSessionId("spin-src");
+    const 本篇 = makeSessionId("spin-self");
+    const seed = (id: string, spinoff?: MixSession["spinoff"]) =>
+      saveMixSession({
+        id,
+        recipe: { id: `r_${id}`, name: "番外采纳测试配方", slots: {}, createdAt: 1, updatedAt: 1 },
+        charName: "番外采纳测试角色",
+        openingIndex: 0,
+        turns: [],
+        createdAt: 1,
+        updatedAt: 1,
+        ...(spinoff ? { spinoff } : {}),
+      } as MixSession);
+
+    try {
+      seed(源);
+      seed(本篇, { sourceId: 源, memory: "inherit" });
+
+      const api = await threadsModule();
+      expect(typeof api.applyAdoptedBanner).toBe("function");
+      const 线 = mkThread("番外", { 名称: "老桥下的硬币", 线索状态: "潜伏", 上次推进轮次: 1 });
+      const 伏 = mkForeshadow("番外", { 内容: "雨夜未接的电话", 伏笔状态: "未收" });
+      // 卡挂在来源那一场：番外读的就是这一份
+      await seedThreads(源, [线]);
+      await seedForeshadows(源, [伏]);
+
+      const 插入收到: string[] = [];
+      const result = await api.applyAdoptedBanner!({
+        sessionId: 本篇,
+        banner:
+          "（基调：推进｜场景：旧城｜走向：查证）[推进:老桥下的硬币→升温:当铺掌柜认出了那枚硬币] [回收:雨夜未接的电话]",
+        来源消息ID: "mixturn_spin",
+        来源轮次: 3,
+        insert: async (干净报幕: string) => {
+          插入收到.push(干净报幕);
+          return "inserted";
+        },
+      });
+
+      // 正文这一半照常：insert 收到的是剥了标记的报幕
+      expect(插入收到).toHaveLength(1);
+      expect(插入收到[0]).not.toContain("[推进:");
+      expect(插入收到[0]).toContain("（基调：推进｜场景：旧城｜走向：查证）");
+      // 回写这一半整段跳过：两条标记都按"忽略"计数，绝不是"推进失败"
+      expect(result.推进数).toBe(0);
+      expect(result.回收数).toBe(0);
+      expect(result.忽略数).toBe(2);
+
+      // 来源的台账原样不动（这才是"番外不影响记忆"）
+      const [线程] = await listThreads(源);
+      expect(线程.线索状态).toBe("潜伏");
+      expect(线程.上次推进轮次).toBe(1);
+      expect(线程.最近变化).toEqual([]);
+      const [伏笔] = await listForeshadows(源);
+      expect(伏笔.伏笔状态).toBe("未收");
+
+      // 番外自己也没偷偷写一份：它连 thread/foreshadow 键都不该有
+      const 本篇键 = kvKeysWithPrefix(`narrative:${本篇}:`).filter(
+        (k) => /:(thread|foreshadow|memory|emotion|water)(:|$)/.test(k)
+      );
+      expect(本篇键).toEqual([]);
+    } finally {
+      // 对局表是这一份文件里只有本用例用到的全局键，跑完清掉，别漏给后面的用例
+      kvRemove("mixology_sessions_v1");
+    }
   });
 });
 

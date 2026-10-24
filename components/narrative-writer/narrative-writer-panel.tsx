@@ -45,6 +45,7 @@ import {
   deferLegacyMigration,
 } from "@/lib/narrative-writer/storage";
 import { applyAdoptedBanner, migrateLooseThreadsToCards, stripBannerMarkers } from "@/lib/narrative-writer/threads";
+import { spinoffSourceOf } from "@/lib/narrative-writer/spinoff";
 import {
     prepareLedgerTask,
     initThreadLedgerFromOutline,
@@ -57,7 +58,7 @@ import {
     FORESHADOW_CONTENT_MAX,
     线索进度文案,
 } from "@/lib/narrative-writer/ledger-init";
-import { loadMixSessions } from "@/lib/mixology/storage";
+import { getMixSession, loadMixSessions } from "@/lib/mixology/storage";
 import { mixSessionTitle } from "@/lib/mixology/types";
 import { LegacyMigrationDialog } from "@/components/narrative-writer/legacy-migration-dialog";
 import type { MemoryCard, EmotionCard, WaterLevelState, NarrativeWriterState, ContextHierarchy, ExtractionRules, ThreadCard, ForeshadowCard, ThreadPlotStatus } from "@/lib/narrative-writer/types";
@@ -293,6 +294,26 @@ export function NarrativeWriterPanel() {
     const ETA_ROLLING_WINDOW = 3; // 取最近 3 步的均值
     const ETA_CAP_MS = 30 * 60 * 1000; // 预估上限 30 分钟，避免吓人
 
+    // ── 番外（这一场不写记忆）────────────────────────────────────────────
+    // 她的口径（2026-10-24）：番外只读继承来源对局的记忆，自己一张卡也不产——
+    // 省存储，而且"番外开多了会影响记忆"这条路从根上关掉。
+    // 判据只有 spinoff 标记本身：两种模式（继承 / 只有人设和世界书）都算只读。
+    // 数据页看刚载入的那一场（dataSessionId），书写页看当前活动对局。
+    const 面板对局 = dataSessionId ?? getActiveMixSession()?.id ?? "";
+    const 番外模式 = 面板对局 ? (getMixSession(面板对局)?.spinoff?.memory ?? null) : null;
+    const 记忆只读 = 番外模式 !== null;
+    // 继承模式下真正去读那一场叫什么；来源被删/断链时为 null（横幅换成另一套话）
+    const 番外继承自 = 记忆只读 ? (spinoffSourceOf(面板对局)?.name ?? null) : null;
+
+    // 番外里所有写记忆的入口统一走这一句回绝：不落库、不调模型，只给一句看得懂的话。
+    // 为什么不只靠 storage 那道闸（写就抛错）：抛错会变成"点了才知道不行"，
+    // 而且卡片行上一部分按钮是裸调 storage 的，抛出去就是未捕获的 Promise 异常。
+    // 面板上的两档做法：台账/卡片行里的整排小按钮直接禁点（数量多，逐条加禁用容易漏），
+    // 高级工具与批量入口留着可点——点下去给一句回绝，省掉一次付费调用也说清为什么。
+    const 番外回绝 = (动作: string): void => {
+        setLedgerNotice({ text: `${动作}：番外不写记忆卡，这一场只读。要改记忆请回来源对局（主线）那一场操作。`, bad: true });
+    };
+
     // 素材库（代码从记忆库拼的钩子，不是方向候选；方向候选只有走向卡）
     const [sceneRecommendations, setSceneRecommendations] = useState<MaterialCard[]>([]);
     const [loadingRecommendations, setLoadingRecommendations] = useState(false);
@@ -491,7 +512,8 @@ export function NarrativeWriterPanel() {
         setLegacyPending(!done);
         const active = getActiveMixSession();
         setMigrationHasActive(!!active);
-        setMigrationSessions(loadMixSessions().map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
+        // 番外不进这份列表：它不写记忆卡，旧数据迁进去等于锁在一个只读的对局里
+        setMigrationSessions(loadMixSessions().filter((s) => !s.spinoff).map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
         return !done;
     }, []);
 
@@ -509,7 +531,8 @@ export function NarrativeWriterPanel() {
                 setLegacyPending(!done);
                 const active = getActiveMixSession();
                 setMigrationHasActive(!!active);
-                setMigrationSessions(loadMixSessions().map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
+                // 番外不进这份列表：它不写记忆卡，旧数据迁进去等于锁在一个只读的对局里
+        setMigrationSessions(loadMixSessions().filter((s) => !s.spinoff).map((s) => ({ id: s.id, title: mixSessionTitle(s) })));
                 if (!done && !deferred && active) setMigrationOpen(true);
             } catch (err) {
                 console.error("[NarrativeWriter] 检查旧记忆归属迁移条件失败:", err);
@@ -854,6 +877,8 @@ export function NarrativeWriterPanel() {
     // 保存编辑
     const handleSaveEdit = useCallback(async () => {
         if (!editingCard) return;
+        // 卡片行上的 ✏️ 在番外里已经整排禁点，这里再兜一层：编辑框可能是切场前留下的
+        if (记忆只读) { 番外回绝("编辑卡片"); setEditingCard(null); return; }
         if (!dataSessionId) {
             console.warn("[NarrativeWriter] Save edit skipped: 当前没有归属会话");
             return;
@@ -875,6 +900,11 @@ export function NarrativeWriterPanel() {
     // 记忆整理（Map-Reduce 压缩 + 分片提炼记忆卡）：
     // 步骤 = L2 分片 + L3 大纲 + 每片提炼 + 大纲提炼，每步一次 LLM 调用；
     // 剩余时间用已完成步骤的实测均值推算
+    //
+    // 番外**放开阶段一、跳过阶段二**（她批准的待办 #40）：L2/L3 层级是"这一场推到哪"的进度，
+    // 番外要有大纲才拿得到走向卡素材；记忆卡是记忆，番外一张都不产。
+    // 面板在这里就把阶段二的步骤数扣掉，是为了进度条和剩余时间不说谎；
+    // writer 层还有一道同样的闸门，别处调进来也产不出卡。
     const handleCompressMemory = useCallback(async () => {
         setCompressing(true);
         
@@ -896,7 +926,8 @@ export function NarrativeWriterPanel() {
             const chunks = Math.ceil(totalTurns / NARRATIVE_CHUNK_SIZE);
             const compressSteps = chunks + 1;          // L2 分片 + L3 大纲
             const extractSteps = chunks + 1;           // 每片提炼 + 大纲提炼
-            const totalSteps = compressSteps + extractSteps;
+            // 番外不跑阶段二：步骤总数按压缩段算，否则进度条会永远差一截、剩余时间虚高一倍
+            const totalSteps = compressSteps + (记忆只读 ? 0 : extractSteps);
             const startedAt = Date.now();
             
             const setPhase = (step: number, phase: string) => {
@@ -941,27 +972,39 @@ export function NarrativeWriterPanel() {
             await saveContextHierarchy(activeSession.id, hierarchy);
             
             // 阶段二：分片提炼记忆卡（先成"待核"，在记忆审核里确认后置为生效）
+            // 番外整段跳过——大纲与层级已经在上面存好了，这一段只产记忆卡。
             let savedCount = 0;
-            try {
-                savedCount = await extractMemoriesFromCompression(
-                    activeSession.id,
-                    characterName,
-                    L3_全局大纲,
-                    L2_章节摘要,
-                    totalTurns,
-                    (done) => setPhase(compressSteps + done, "提炼记忆卡")
-                );
-                if (savedCount > 0) {
-                    console.log(`[NarrativeWriter] 记忆整理产出 ${savedCount} 张待核记忆卡`);
+            if (记忆只读) {
+                console.log(`[NarrativeWriter] 记忆整理阶段二跳过：番外不产记忆卡（对局 ${activeSession.id}）`);
+            } else {
+                try {
+                    savedCount = await extractMemoriesFromCompression(
+                        activeSession.id,
+                        characterName,
+                        L3_全局大纲,
+                        L2_章节摘要,
+                        totalTurns,
+                        (done) => setPhase(compressSteps + done, "提炼记忆卡")
+                    );
+                    if (savedCount > 0) {
+                        console.log(`[NarrativeWriter] 记忆整理产出 ${savedCount} 张待核记忆卡`);
+                    }
+                } catch (extractErr) {
+                    // 提炼失败不影响压缩结果
+                    console.error("[NarrativeWriter] Outline memory extraction failed:", extractErr);
                 }
-            } catch (extractErr) {
-                // 提炼失败不影响压缩结果
-                console.error("[NarrativeWriter] Outline memory extraction failed:", extractErr);
             }
             
             // 整理完只提示、不自动跑：初始化台账是新的一笔调用，要不要花由她点头。
             // 大纲为空时连提示都不给——没有可读的整局剧情，点了也只是浪费一次调用。
-            setLedgerOffer(!!L3_全局大纲.trim());
+            // 番外也不给：台账是记忆类资产，番外里初始化只会撞上只读闸门，提示了就是骗点。
+            setLedgerOffer(!记忆只读 && !!L3_全局大纲.trim());
+            if (记忆只读) {
+                setLedgerNotice({
+                    text: "番外只更新了大纲与层级（走向卡素材有了）：记忆卡一张不产，卡片仍只读继承来源对局。",
+                    bad: false,
+                });
+            }
             loadData();
         } catch (err) {
             console.error("[NarrativeWriter] Compress failed:", err);
@@ -970,11 +1013,12 @@ export function NarrativeWriterPanel() {
             setCompressing(false);
             setCompressProgress(null);
         }
-    }, [loadData]);
+    }, [loadData, 记忆只读]);
 
     // 悬念台账操作：剧情态只有两条升级路径——采纳回写，或这里手动改。
     // 抽取器同名输出没有这个权力（它只能记"这条线本轮有进展"）。
     const handleCycleThreadStatus = useCallback(async (card: ThreadCard) => {
+        if (记忆只读) { 番外回绝("改线索状态"); return; }
         if (!dataSessionId) return;
         const 顺序: ThreadPlotStatus[] = ["潜伏", "升温", "爆发", "收束"];
         const 下一个 = 顺序[(顺序.indexOf(card.线索状态) + 1) % 顺序.length];
@@ -983,6 +1027,7 @@ export function NarrativeWriterPanel() {
     }, [dataSessionId, loadData]);
 
     const handleEditThreadNextStep = useCallback(async (card: ThreadCard) => {
+        if (记忆只读) { 番外回绝("改下一步可能"); return; }
         if (!dataSessionId) return;
         const 新值 = window.prompt(`改「${card.名称}」的下一步可能（导演视角的一句提示，≤30 字最有效）`, card.下一步可能);
         if (新值 === null) return;
@@ -991,6 +1036,7 @@ export function NarrativeWriterPanel() {
     }, [dataSessionId, loadData]);
 
     const handleCycleForeshadowStatus = useCallback(async (card: ForeshadowCard) => {
+        if (记忆只读) { 番外回绝("改伏笔状态"); return; }
         if (!dataSessionId) return;
         await updateForeshadowCard(dataSessionId, card.id, {
             伏笔状态: card.伏笔状态 === "已收" ? "未收" : "已收",
@@ -999,6 +1045,7 @@ export function NarrativeWriterPanel() {
     }, [dataSessionId, loadData]);
 
     const handleConfirmThread = useCallback(async (card: ThreadCard) => {
+        if (记忆只读) { 番外回绝("确认线索"); return; }
         if (!dataSessionId) return;
         // 确认只改审核态：这张线进不进得了正文？——永远进不了，它只进导演上下文
         await updateThreadCard(dataSessionId, card.id, { 状态: "生效", 归档原因: undefined });
@@ -1041,6 +1088,7 @@ export function NarrativeWriterPanel() {
     // 而且分叉/删除/备份都可能触发读取，改写数据的时机就变得不可预测）。
     const 散落线头数量 = writerState?.散落线头?.length ?? 0;
     const handleMigrateLooseThreads = useCallback(async () => {
+        if (记忆只读) { 番外回绝("散落线头迁移"); return; }
         if (!dataSessionId || 散落线头数量 === 0) return;
         if (!window.confirm(`把 ${散落线头数量} 条「散落线头」转成线索卡？\n原文直接做线索名，一律先成"待核"；同名或空白项会跳过。迁移完成后旧列表清空。`)) return;
         try {
@@ -1058,6 +1106,7 @@ export function NarrativeWriterPanel() {
     // 确认框里的字数不是约数——先用 prepareLedgerTask 把真正要发出去的文本拼一遍
     // （纯读、不调模型、不落盘），她点下去之前看到的就是实际会花的量。
     const handleInitLedger = useCallback(async () => {
+        if (记忆只读) { 番外回绝("初始化台账"); return; }
         // 防连点走两道：面板 state 管这一处的按钮禁用，模块级互斥管"同一时间只允许一次付费调用"
         if (ledgerBusy || isLedgerInitializing()) return;
         const activeSession = getActiveMixSession();
@@ -1128,6 +1177,7 @@ export function NarrativeWriterPanel() {
     }, [currentCharName]);
 
     const handleAddManualThread = useCallback(async () => {
+        if (记忆只读) { 番外回绝("手动新增线索"); return; }
         if (!dataSessionId) return;
         const 结果 = await createManualThread({
             sessionId: dataSessionId,
@@ -1148,6 +1198,7 @@ export function NarrativeWriterPanel() {
     }, [dataSessionId, manualThreadName, manualThreadRoles, manualThreadNext, loadData]);
 
     const handleAddManualForeshadow = useCallback(async () => {
+        if (记忆只读) { 番外回绝("手动新增伏笔"); return; }
         if (!dataSessionId) return;
         const 结果 = await createManualForeshadow({
             sessionId: dataSessionId,
@@ -1179,6 +1230,7 @@ export function NarrativeWriterPanel() {
     // 后果必须在弹窗里写清楚——生效后这些卡就进正文上下文，角色会把它们当作已知事实使用；
     // 这不是"一键清空待办"，是替角色认领一批记忆。归档/冲突/陈旧一律不碰。
     const handleConfirmAllPending = useCallback(async () => {
+        if (记忆只读) { 番外回绝("批量确认待核卡"); return; }
         if (confirmingPending) return;
 
         const activeSession = getActiveMixSession();
@@ -1213,11 +1265,12 @@ export function NarrativeWriterPanel() {
         } finally {
             setConfirmingPending(false);
         }
-    }, [confirmingPending, 待核数量, 待核合计, loadData, loadRecommendations]);
+    }, [confirmingPending, 待核数量, 待核合计, loadData, loadRecommendations, 记忆只读]);
 
     // 补抽历史：整局按每4轮一批喂给逐轮抽取器，恢复抽取通道损坏期间丢失的记忆。
     // 一次性工具，会真实产生多次 LLM 调用，先确认再跑；与记忆整理互斥
     const handleBackfill = useCallback(async () => {
+        if (记忆只读) { 番外回绝("全量补抽"); return; }
         if (compressing || backfilling) return;
         
         const activeSession = getActiveMixSession();
@@ -1280,10 +1333,11 @@ export function NarrativeWriterPanel() {
             setBackfilling(false);
             setCompressProgress(null);
         }
-    }, [compressing, backfilling, loadData]);
+    }, [compressing, backfilling, loadData, 记忆只读]);
     
     // 深度抽取：手动触发，用完整上下文（小票 + 尾调 + 状态）做深度分析
     const handleDeepExtract = useCallback(async () => {
+        if (记忆只读) { 番外回绝("增量精抽"); return; }
         if (compressing || backfilling || deepExtracting) return;
         
         const activeSession = getActiveMixSession();
@@ -1333,7 +1387,7 @@ export function NarrativeWriterPanel() {
         } finally {
             setDeepExtracting(false);
         }
-    }, [compressing, backfilling, deepExtracting, loadData]);
+    }, [compressing, backfilling, deepExtracting, loadData, 记忆只读]);
     
     // 查看深度抽取日志
     const handleViewLogs = useCallback(() => {
@@ -1510,6 +1564,31 @@ export function NarrativeWriterPanel() {
                     <X size={18} />
                 </button>
             </div>
+
+            {/* 番外横幅：这场不写记忆，卡片与台账全是只读。
+                三件事一次说清——正文照写、记忆从哪来、要改记忆回哪一场。 */}
+            {记忆只读 && (
+                <div
+                    style={{
+                        padding: "9px 14px",
+                        background: "rgba(245, 158, 11, 0.10)",
+                        borderBottom: "1px solid rgba(245, 158, 11, 0.25)",
+                        color: "#fbbf24",
+                        fontSize: "12px",
+                        lineHeight: 1.55,
+                    }}
+                >
+                    {番外模式 === "inherit" ? (
+                        番外继承自 ? (
+                            <>番外 · 记忆只读　正文照写，但这一场不产生记忆卡：台账与卡片读的是「{番外继承自}」，那边新增的卡这里当场能看到。要改记忆请回「{番外继承自}」那一场。</>
+                        ) : (
+                            <>番外 · 继承的记忆已失效　来源对局被删或谱系断了，这一场读不到任何记忆（列表显示为空），也不写记忆卡。</>
+                        )
+                    ) : (
+                        <>番外 · 只有人设和世界书　不继承任何记忆，也不写记忆卡。正文、大纲、执笔进度都是这一场自己的。</>
+                    )}
+                </div>
+            )}
 
             {/* 常驻提示：有旧记忆待归属（选了"稍后"或当前无活动会话时不再自动弹，但一直留着入口） */}
             {legacyPending && !migrationOpen && (
@@ -2368,23 +2447,25 @@ export function NarrativeWriterPanel() {
                                                 <button
                                                     onClick={handleInitLedger}
                                                     // 整理/补抽/精抽都在跑模型时不给点：那几个会改写大纲与台账素材，同一时刻只留一次付费调用
-                                                    disabled={ledgerBusy || compressing || backfilling || deepExtracting}
+                                                    disabled={ledgerBusy || compressing || backfilling || deepExtracting || 记忆只读}
                                                     title="读一遍剧情大纲，把还悬着的事写成待核的线索/伏笔（一次模型调用，最多 6 条线索 + 4 条伏笔）"
-                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: ledgerBusy || compressing || backfilling || deepExtracting ? "not-allowed" : "pointer", opacity: ledgerBusy || compressing || backfilling || deepExtracting ? 0.5 : 1 }}
+                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: ledgerBusy || compressing || backfilling || deepExtracting || 记忆只读 ? "not-allowed" : "pointer", opacity: ledgerBusy || compressing || backfilling || deepExtracting || 记忆只读 ? 0.5 : 1 }}
                                                 >
                                                     {ledgerBusy ? "初始化中…" : "初始化台账"}
                                                 </button>
                                                 <button
                                                     onClick={() => openManualForm("thread")}
+                                                    disabled={记忆只读}
                                                     title="手写一条线索（保存即生效，不经过待核）"
-                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: "pointer" }}
+                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: 记忆只读 ? "not-allowed" : "pointer", opacity: 记忆只读 ? 0.4 : 1 }}
                                                 >
                                                     ＋线索
                                                 </button>
                                                 <button
                                                     onClick={() => openManualForm("foreshadow")}
+                                                    disabled={记忆只读}
                                                     title="手写一条伏笔（保存即生效，不经过待核）"
-                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: "pointer" }}
+                                                    style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: 记忆只读 ? "not-allowed" : "pointer", opacity: 记忆只读 ? 0.4 : 1 }}
                                                 >
                                                     ＋伏笔
                                                 </button>
@@ -2487,7 +2568,7 @@ export function NarrativeWriterPanel() {
                                                             {t.下一步可能 ? ` · 下一步：${t.下一步可能}` : " · 下一步：未填"}
                                                             {discardedSourceHint(t) ? ` · ${discardedSourceHint(t)}` : ""}
                                                         </div>
-                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
+                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap", opacity: 记忆只读 ? 0.35 : 1, pointerEvents: 记忆只读 ? "none" : "auto" }}>
                                                             <button onClick={() => handleCycleThreadStatus(t)} title="手动改线索状态（潜伏→升温→爆发→收束）" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: "pointer" }}>改状态</button>
                                                             <button onClick={() => handleEditThreadNextStep(t)} title="编辑下一步可能" style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#9ca3af", cursor: "pointer" }}>改下一步</button>
                                                             {t.状态 === "待核" && (
@@ -2513,7 +2594,7 @@ export function NarrativeWriterPanel() {
                                                             {f.揭示条件 ? ` · 条件：${f.揭示条件}` : ""}
                                                             {discardedSourceHint(f) ? ` · ${discardedSourceHint(f)}` : ""}
                                                         </div>
-                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap" }}>
+                                                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", flexWrap: "wrap", opacity: 记忆只读 ? 0.35 : 1, pointerEvents: 记忆只读 ? "none" : "auto" }}>
                                                             <button onClick={() => handleCycleForeshadowStatus(f)} title={f.伏笔状态 === "已收" ? "改回未收" : "标记为已收（采纳 [回收:] 标记也会做这件事）"} style={{ padding: "2px 6px", fontSize: "10px", background: "transparent", border: "1px solid rgba(167,139,250,0.4)", borderRadius: "4px", color: "#c4b5fd", cursor: "pointer" }}>{f.伏笔状态 === "已收" ? "改回未收" : "标为已收"}</button>
                                                             {f.状态 === "待核" && (
                                                                 <button onClick={() => handleConfirmForeshadow(f)} title="确认这个伏笔存在（只让它进导演上下文）" style={{ padding: "2px 6px", fontSize: "10px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: "4px", color: "#10b981", cursor: "pointer" }}>✅ 确认</button>
@@ -2592,7 +2673,7 @@ export function NarrativeWriterPanel() {
                                         {待核合计 > 0 && (
                                             <button
                                                 onClick={handleConfirmAllPending}
-                                                disabled={confirmingPending}
+                                                disabled={confirmingPending || 记忆只读}
                                                 title="把当前对局所有待核卡一次性转为生效：记忆/情感进正文，线索/伏笔只进导演上下文"
                                                 style={{
                                                     padding: "3px 8px",
@@ -2679,7 +2760,7 @@ export function NarrativeWriterPanel() {
                                                                 {card.主类型} · {card.主体} · {card.状态}
                                                                 {card.次标签?.length ? ` · ${card.次标签.map(t => `#${t}`).join(" ")}` : ""}
                                                             </div>
-                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center", opacity: 记忆只读 ? 0.35 : 1, pointerEvents: 记忆只读 ? "none" : "auto" }}>
                                                                 {discardedSourceHint(card) && (
                                                                     <span style={{ fontSize: "10px", color: "#9ca3af" }}>
                                                                         {discardedSourceHint(card)}
@@ -2755,7 +2836,7 @@ export function NarrativeWriterPanel() {
                                                             <div style={{ fontSize: "11px", color: "#6b7280" }}>
                                                                 {card.主体} · {card.标签}({card.强度}) · {card.状态}
                                                             </div>
-                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                                            <div style={{ display: "flex", gap: "4px", alignItems: "center", opacity: 记忆只读 ? 0.35 : 1, pointerEvents: 记忆只读 ? "none" : "auto" }}>
                                                                 {discardedSourceHint(card) && (
                                                                     <span style={{ fontSize: "10px", color: "#9ca3af" }}>
                                                                         {discardedSourceHint(card)}

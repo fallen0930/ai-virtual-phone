@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { kvRemove } from "@/lib/kv-db";
+import { kvKeysWithPrefix, kvRemove } from "@/lib/kv-db";
 import { listMemoryCards, purgeNarrativeSessionData } from "@/lib/narrative-writer/storage";
 import { writeWithSelectedBanner } from "@/lib/narrative-writer/writer";
 
@@ -7,7 +7,7 @@ import { writeWithSelectedBanner } from "@/lib/narrative-writer/writer";
 // 抽取、盖来源、落库、归档、重说、继续生成全部走真实实现。
 // 只 mock 两处：① LLM 调用入口 sendLLMRequest；② settings-storage 的 API 配置读取
 // （resolveMixApiConfig 在 Node 里被 typeof window 守卫短路恒为 null，不补这一处抽取根本不会发生）。
-import { continueMix, insertNarrativeTurn, rerollMixReply } from "@/lib/mixology/engine";
+import { continueMix, insertNarrativeTurn, rerollMixReply, startMixSpinoff } from "@/lib/mixology/engine";
 import { getMixSession, saveMixMaterial, saveMixSession } from "@/lib/mixology/storage";
 import type { MixMaterial, MixSession, MixTurn } from "@/lib/mixology/types";
 
@@ -258,3 +258,116 @@ describe("执笔生成的正文只抽一次，且带来源", () => {
     expect(现在.filter((c) => c.状态 === "归档").length).toBe(0);
   });
 });
+
+// ── 番外走引擎这条路 ──
+//
+// 上面 A–D 钉的是"普通对局该抽、抽一次、来源跟得上"；这一组钉她的另外一半诉求：
+// 开番外不许复制内容（省存储），番外不许影响记忆（更不许烧积分）。
+// 两处热抽（runMixGeneration 攒批、insertNarrativeTurn 每轮）都得在番外上直接止步，
+// 所以两条链路各测一次，并配一个"同样条件下普通对局确实抽了"的对照组——
+// 没有对照组，"0 次抽取"可能只是阈值没到，测不出闸门。
+describe("番外：开一局不复制正文，两处热抽都不触发", () => {
+  /** 把一场对局改成"胖"对局（8 轮、每轮 620 字）：攒批阈值必定命中 */
+  async function makeFat(sid: string, spinoff?: { sourceId: string; memory: "inherit" | "none" }): Promise<MixSession> {
+    const current = getMixSession(sid)!;
+    const fat: MixSession = { ...current, turns: makeTurns(4), ...(spinoff ? { spinoff } : {}) };
+    saveMixSession(fat);
+    return fat;
+  }
+
+  /**
+   * 番外该一个"记忆类"键都不产生：卡（memory/emotion/thread/foreshadow）与水位。
+   * 执笔状态 writer_state 与层级 hierarchy 不在其中——那是番外自己这一场推到第几轮的进度，
+   * 攒批那条链会先递增轮次计数再问要不要抽，这两类键出现是正常且想要的。
+   */
+  function 记忆类键(sid: string): string[] {
+    return kvKeysWithPrefix(`narrative:${sid}:`).filter((k) =>
+      /:(memory|emotion|thread|foreshadow|water)(:|$)/.test(k)
+    );
+  }
+
+  it("E1. startMixSpinoff 只带开场白，正文与执笔数据一张都不复制", async () => {
+    const source = await seedSession("spinoff_new");
+    // 先让来源攒出真实内容：一张卡 + 多轮正文，才谈得上"没复制"
+    await generateAndInsert(source.id);
+    expect((await cardsOf(source.id)).length).toBeGreaterThanOrEqual(1);
+    expect(getMixSession(source.id)!.turns.length).toBeGreaterThan(source.turns.length);
+
+    const spin = startMixSpinoff(source.id, "inherit", { branchName: "番外·灯塔之夜" });
+    createdSids.add(spin.id);
+
+    // 正文只有开场白那一条：不复制 turns[0..n]
+    expect(spin.turns.length).toBeLessThanOrEqual(1);
+    // 不进世界树拓扑：没有 parent/root/depth，归属只在 spinoff 里
+    expect(spin.parentId).toBeUndefined();
+    expect(spin.rootId).toBeUndefined();
+    expect(spin.depth).toBeUndefined();
+    expect(spin.spinoff).toEqual({ sourceId: source.id, memory: "inherit" });
+    expect(spin.branchName).toBe("番外·灯塔之夜");
+    // 省存储的验收口径：番外自己一个 narrative 键都不产生
+    expect(kvKeysWithPrefix(`narrative:${spin.id}:`)).toEqual([]);
+    // 人设/世界书不需要复制：同一份配方快照、同一个角色材料 id
+    expect(spin.recipe.slots.character?.[0]?.materialId).toBe(
+      source.recipe.slots.character?.[0]?.materialId
+    );
+  });
+
+  it("E2. 番外的执笔正文落库后不抽卡，来源的卡原样不动", async () => {
+    const source = await seedSession("spinoff_writer");
+    await generateAndInsert(source.id);
+    const 来源卡 = await cardsOf(source.id);
+    expect(来源卡.length).toBeGreaterThanOrEqual(1);
+
+    const spin = startMixSpinoff(source.id, "inherit");
+    createdSids.add(spin.id);
+    llm.byKind = {};
+
+    const result = await writeWithSelectedBanner(
+      {
+        sessionId: spin.id,
+        characterProfile: { charName: CHAR_NAME, profileText: "沉默寡言的守塔人。", worldText: "海边灯塔。" } as any,
+        worldSettings: { preface: "", basePrompts: [], flavorPrompts: [], glassPrompts: [], strengthPrompts: [] },
+        recentDialogue: "",
+      },
+      报幕
+    );
+    await insertNarrativeTurn(spin.id, result.body, result.banner);
+    await settle();
+
+    // 正文生成照常跑（番外要能玩），抽取一次都不许
+    expect(llm.byKind.NarrativeWriter).toBe(1);
+    expect(llm.byKind.Extractor ?? 0).toBe(0);
+    expect(记忆类键(spin.id)).toEqual([]);
+    // 来源那一份没被番外的这一轮动过
+    const 之后 = await cardsOf(source.id);
+    expect(之后.map((c) => c.id).sort()).toEqual(来源卡.map((c) => c.id).sort());
+  });
+
+  it("E3. 番外的普通推进（攒批那条链）同样一次都不抽", async () => {
+    const source = await seedSession("spinoff_batch_src");
+    const spin = await seedSession("spinoff_batch_spin");
+    const fat = await makeFat(spin.id, { sourceId: source.id, memory: "inherit" });
+    expect(fat.turns.length).toBeGreaterThanOrEqual(8);
+    // 前置：这场对局的字数与轮次确实越过了攒批阈值，闸门才有东西可挡
+    llm.byKind = {};
+
+    await continueMix(fat.id);
+    await settle();
+
+    expect(llm.byKind.Extractor ?? 0).toBe(0);
+    expect(记忆类键(fat.id)).toEqual([]);
+  });
+
+  it("E4. 对照组：同样厚的普通对局确实会抽（E3 的 0 次是闸门挡的，不是阈值没到）", async () => {
+    const plain = await seedSession("spinoff_control");
+    const fat = await makeFat(plain.id);
+    expect(fat.turns.length).toBeGreaterThanOrEqual(8);
+    llm.byKind = {};
+
+    await continueMix(fat.id);
+    await settle();
+
+    expect(llm.byKind.Extractor ?? 0).toBeGreaterThanOrEqual(1);
+  });
+});
+

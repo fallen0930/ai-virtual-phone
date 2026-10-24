@@ -1079,6 +1079,60 @@
     text-overflow: ellipsis;
 }
 
+/* 对局行上的谱系角标：不用点进世界树也能一眼看见支线数 / 番外数。
+   点「支线」＝进这局并展开世界树；点「番外」＝开番外抽屉。竖排是因为 390 宽放不下横排两个。 */
+.mix-session-chips {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.mix-session-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(141, 123, 245, 0.35);
+    background: rgba(141, 123, 245, 0.12);
+    color: var(--mix-violet);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform 0.12s;
+}
+
+.mix-session-chip:active {
+    transform: scale(0.94);
+}
+
+.mix-session-chip[data-tone="spinoff"] {
+    border-color: rgba(217, 176, 106, 0.4);
+    background: rgba(217, 176, 106, 0.12);
+    color: var(--mix-gold);
+}
+
+/* 「开番外」是每行都在的动作入口，但比计数角标轻一档：
+   常态只描边，按下才填色，免得一行三个实心胶囊把列表刷得太闹 */
+.mix-session-chip[data-ghost="true"] {
+    background: transparent;
+    border-color: rgba(217, 176, 106, 0.34);
+    color: rgba(217, 176, 106, 0.78);
+}
+
+.mix-session-chip[data-ghost="true"]:active {
+    background: rgba(217, 176, 106, 0.16);
+}
+
+/* 番外自己这一行的身份标记：只说明，不可点 */
+span.mix-session-chip {
+    cursor: default;
+}
+
 /* ── 底部弹层（选材 / 详情 / 命名） ── */
 .mix-sheet-mask {
     position: absolute;
@@ -1161,6 +1215,21 @@
     color: var(--mix-violet);
     letter-spacing: 0.08em;
     margin-bottom: 4px;
+}
+
+/* 弹层里的一句口径说明：把"这样选之后会发生什么"写在按下之前 */
+.mix-detail-note {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: rgba(232, 226, 245, 0.62);
+}
+
+/* 弹层底部的主行动按钮：占满一行，免得小屏上两个按钮挤成一行看不清 */
+.mix-sheet-cta {
+    width: 100%;
+    margin-top: 14px;
+    justify-content: center;
 }
 
 .mix-detail-value {
@@ -4385,6 +4454,51 @@
 .mix-tree-op:hover { color: var(--mix-text); }
 .mix-tree-op[data-tone="danger"]:hover { color: #e08080; }
 .mix-tree-empty { padding: 40px; text-align: center; color: var(--mix-dim); font-size: 13px; }
+
+/* 番外一节：贴在画布下面的固定条，不参与拖拽排版（番外本来就没有父子关系） */
+.mix-tree-spinoffs {
+    flex: 0 0 auto;
+    max-height: 34%;
+    overflow: auto;
+    border-top: 1px solid var(--mix-line);
+    background: rgba(217, 176, 106, 0.05);
+    padding: 8px 10px 10px;
+}
+.mix-tree-spinoffs-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.mix-tree-spinoffs-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--mix-gold);
+    font-size: 12px;
+    font-weight: 600;
+}
+.mix-tree-spinoffs-hint { color: var(--mix-dim); font-size: 10.5px; }
+.mix-tree-spinoffs-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.mix-tree-spinoffs-empty { color: var(--mix-dim); font-size: 11.5px; padding: 2px 0; }
+.mix-tree-spinoff-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--mix-line);
+    background: #1c1c28;
+    color: var(--mix-text);
+    text-align: left;
+    cursor: pointer;
+}
+.mix-tree-spinoff-row[data-current=""] { border-color: rgba(217, 176, 106, 0.55); }
+.mix-tree-spinoff-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mix-tree-spinoff-meta { flex: none; font-size: 10.5px; color: var(--mix-dim); }
 
 /* 世界树面板 z-index 是 90，而全局 .mix-modal-mask 只有 80，会被面板盖住导致
    弹窗（改名/备注、删除确认）点了没反应。这里把树内的弹窗提权到面板之上。 */

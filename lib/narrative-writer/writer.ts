@@ -18,6 +18,7 @@ import {
   THREAD_NEXT_STEP_MAX_CHARS,
   stripBannerMarkers,
 } from "./threads";
+import { isNarrativeReadOnlySession } from "./spinoff";
 import {
   assignBannerPlan,
   bannerMarker,
@@ -1184,6 +1185,15 @@ export async function extractMemoriesFromCompression(
   if (!L3_全局大纲 && L2_章节摘要.length === 0) return 0;
 
   const sid = requireSessionId(sessionId, "extractMemoriesFromCompression");
+
+  // 番外：整理的**阶段一照跑**（L2/L3 层级写进这一场自己那份，长篇番外要有大纲才有走向卡素材），
+  // 但**阶段二一张卡都不产**——卡是记忆，番外不进记忆卡是她的口径（待办 #40，2026-10-24 批准）。
+  // 闸门放在 writer 这一层而不是只放面板按钮：面板只是入口之一，别的调用方拿番外进来也得挡住，
+  // 而且这里挡住是"0 次调用"，比让 storage 抛错再回滚省一整批积分。
+  if (isNarrativeReadOnlySession(sid)) {
+    console.log(`[NarrativeWriter] extractMemoriesFromCompression 跳过：番外不产记忆卡（对局 ${sid}）`);
+    return 0;
+  }
 
   const apiConfig = resolveMixApiConfig();
   if (!apiConfig) throw new Error("未配置 API，无法提取记忆卡");

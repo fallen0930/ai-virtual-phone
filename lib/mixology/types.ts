@@ -880,9 +880,35 @@ export type MixSession = {
     treeX?: number;
     /** 世界树里的摆放 y（绝对坐标，px） */
     treeY?: number;
+    /**
+     * ── 番外 ──
+     * 有这一项 = 这是一场番外，不是一条支线。刻意<b>不</b>用 parentId/rootId/depth：
+     * 番外不进世界树的上下级拓扑，也不参与分叉的"子支线上提"重挂逻辑。
+     *
+     * 番外天生轻量：建局时不复制来源的 turns，也不复制任何执笔数据
+     * （不写 narrative:{番外id}:* 一个键）。记忆怎么读、能不能写，全看 memory：
+     * - "inherit" = 只读引用来源对局的记忆卡/情感卡/水位/悬念台账，番外自己一张卡都不写；
+     * - "none"    = 只带人设和世界书（角色卡 + 配方），记忆从空开始。
+     */
+    spinoff?: MixSpinoffInfo;
     createdAt: number;
     updatedAt: number;
 };
+
+/** 番外读取的来源记忆：inherit = 只读引用来源局，none = 只有人设与世界书 */
+export type MixSpinoffMemory = "inherit" | "none";
+
+/** 番外标记：来源对局 + 记忆模式（语义见 MixSession.spinoff 的注释） */
+export type MixSpinoffInfo = {
+    /** 番外是从哪一场对局开的（支线或根对局都行）；这场被删后番外降级为"只有人设和世界书" */
+    sourceId: string;
+    memory: MixSpinoffMemory;
+};
+
+/** 这场对局是不是番外 */
+export function isMixSpinoff(session: MixSession | null | undefined): boolean {
+    return Boolean(session?.spinoff);
+}
 
 /**
  * 对局显示名：有支线名优先用支线名，否则回退「角色名 · 配方名」。

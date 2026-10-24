@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { ChevronLeft, Copy, GitBranch, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
-import { continueMix, editMixTurn, forkMixSession, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixRoundCount, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
+import { continueMix, editMixTurn, forkMixSession, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixRoundCount, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, startMixSpinoff, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
 import { MixBalanceChip } from "./mix-balance-chip";
 import { ApiAccountPanel } from "@/components/settings/api-account-panel";
@@ -16,7 +16,7 @@ import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMi
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { buildMixConditionContext, pickActiveMixMaterials } from "@/lib/mixology/state";
 import { scopeMixCss } from "@/lib/mixology/css-scope";
-import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixPanelLayoutOf, mixPanelSlotOf, mixSessionTitle, mixSlotEntries, mixTurnEncoreBlocks, mixTurnTicketBlocks, type MixCharacterCard, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixMechanismMaterial, type MixPanelLayout, type MixSession, type MixSlotEntry, type MixState, type MixTicketMaterial, type MixTurn, type MixDialogueButton } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixPanelLayoutOf, mixPanelSlotOf, mixSessionTitle, mixSlotEntries, mixTurnEncoreBlocks, mixTurnTicketBlocks, type MixCharacterCard, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixMechanismMaterial, type MixPanelLayout, type MixSession, type MixSlotEntry, type MixSpinoffMemory, type MixState, type MixTicketMaterial, type MixTurn, type MixDialogueButton } from "@/lib/mixology/types";
 import { applyMixFilterRules, mixStreamText } from "@/lib/mixology/prose";
 import { MixProseView } from "./prose-view";
 import { MixRichText } from "./rich-text";
@@ -200,7 +200,15 @@ function TurnActions({
     );
 }
 
-/** 开新支线弹层：从指定轮分叉，收集支线名 + 备注，确认后由调用方建支线并跳转 */
+/**
+ * 从这里分出「另一条走法」的弹层，两种走法在这里分岔：
+ * - 支线：复制此前所有进度（正文 + 记忆卡）后各自续写，原对局不受影响；
+ * - 番外：什么都不复制，只按同一份配方开一局短的。记忆二选一——
+ *   继承 = 只读引用来源对局当前那一份（不占存储、番外怎么写正文都不动主线记忆）；
+ *   不继承 = 只带人设和世界书，记忆从空开始。
+ *
+ * 收集完参数交给调用方落地（forkMixSession / startMixSpinoff），弹层本身不写数据。
+ */
 function MixForkDialog({
     fromTitle,
     fromTurnText,
@@ -214,29 +222,84 @@ function MixForkDialog({
     roundCount: number;
     defaultName?: string;
     onCancel: () => void;
-    onConfirm: (opts: { branchName: string; branchNote: string }) => void;
+    onConfirm: (opts: {
+        mode: "branch" | "spinoff";
+        branchName: string;
+        branchNote: string;
+        memory: MixSpinoffMemory;
+    }) => void;
 }) {
+    const [mode, setMode] = useState<"branch" | "spinoff">("branch");
+    const [memory, setMemory] = useState<MixSpinoffMemory>("inherit");
     const [name, setName] = useState(defaultName ?? "");
     const [note, setNote] = useState("");
+    const 是番外 = mode === "spinoff";
     return (
         <div className="mix-modal-mask" onClick={onCancel}>
             <div className="mix-modal mix-fork-dialog" onClick={(e) => e.stopPropagation()}>
                 <div className="mix-modal-head">
-                    <span>从此处开新支线</span>
+                    <span>{是番外 ? "从此处开番外" : "从此处开新支线"}</span>
                     <button type="button" className="mix-modal-x" onClick={onCancel} aria-label="关闭"><X size={16} /></button>
                 </div>
                 <div className="mix-modal-body">
+                    <div className="mix-chip-row">
+                        <button
+                            type="button"
+                            className="mix-chip"
+                            data-active={!是番外 ? "true" : undefined}
+                            onClick={() => setMode("branch")}
+                        >
+                            支线 · 复制进度
+                        </button>
+                        <button
+                            type="button"
+                            className="mix-chip"
+                            data-active={是番外 ? "true" : undefined}
+                            onClick={() => setMode("spinoff")}
+                        >
+                            番外 · 不复制
+                        </button>
+                    </div>
                     <p className="mix-fork-from">
-                        从「{fromTitle}」第 {roundCount} 轮之后分叉：新支线复制此前所有进度作为起点，从这一轮往后各自续写，<b>原对局不受影响</b>。
+                        {是番外
+                            ? <>番外<b>不复制任何正文与记忆</b>：按同一份人设和世界书开一局独立的短篇，玩完删掉也不心疼。主线照原样继续，<b>现在就能回去</b>。</>
+                            : <>从「{fromTitle}」第 {roundCount} 轮之后分叉：新支线复制此前所有进度作为起点，从这一轮往后各自续写，<b>原对局不受影响</b>。</>}
                     </p>
-                    {fromTurnText ? <p className="mix-fork-summary">分叉点：{fromTurnText}</p> : null}
+                    {是番外 ? (
+                        <>
+                            <div className="mix-chip-row">
+                                <button
+                                    type="button"
+                                    className="mix-chip"
+                                    data-active={memory === "inherit" ? "true" : undefined}
+                                    onClick={() => setMemory("inherit")}
+                                >
+                                    继承记忆（只读）
+                                </button>
+                                <button
+                                    type="button"
+                                    className="mix-chip"
+                                    data-active={memory === "none" ? "true" : undefined}
+                                    onClick={() => setMemory("none")}
+                                >
+                                    只有人设和世界书
+                                </button>
+                            </div>
+                            <p className="mix-fork-summary">
+                                {memory === "inherit"
+                                    ? "番外读到的是来源那一份记忆，跟着主线后续走；番外的正文不会写进记忆卡，也改不动主线。"
+                                    : "这场番外从空记忆开始，只有人设与世界书；正文同样不写记忆卡。"}
+                            </p>
+                        </>
+                    ) : null}
+                    {!是番外 && fromTurnText ? <p className="mix-fork-summary">分叉点：{fromTurnText}</p> : null}
                     <label className="mix-field">
-                        <span>支线名</span>
+                        <span>{是番外 ? "番外名" : "支线名"}</span>
                         <input
                             className="mix-input"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
-                            placeholder="如：黑化路线 / 和平结局"
+                            placeholder={是番外 ? "如：灯塔之夜 · 三人视角" : "如：黑化路线 / 和平结局"}
                             maxLength={24}
                             autoFocus
                         />
@@ -255,7 +318,9 @@ function MixForkDialog({
                 </div>
                 <div className="mix-modal-foot">
                     <button type="button" className="mix-btn" onClick={onCancel}>取消</button>
-                    <button type="button" className="mix-btn mix-btn-primary" onClick={() => onConfirm({ branchName: name, branchNote: note })}>创建支线</button>
+                    <button type="button" className="mix-btn mix-btn-primary" onClick={() => onConfirm({ mode, branchName: name, branchNote: note, memory })}>
+                        {是番外 ? "创建番外" : "创建支线"}
+                    </button>
                 </div>
             </div>
         </div>
@@ -2548,8 +2613,23 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
                         roundCount={mixRoundCount(session.turns.slice(0, fork.idx + 1))}
                         defaultName={session.branchName}
                         onCancel={() => setFork(null)}
-                        onConfirm={async ({ branchName, branchNote }) => {
+                        onConfirm={async ({ mode, branchName, branchNote, memory }) => {
                             try {
+                                if (mode === "spinoff") {
+                                    // 番外：一行都不复制，只按同一份配方开一局
+                                    const spin = startMixSpinoff(sessionId, memory, {
+                                        branchName: branchName.trim() || "番外",
+                                    });
+                                    setFork(null);
+                                    onToast(
+                                        `已开番外「${mixSessionTitle(spin)}」。` +
+                                        (memory === "inherit"
+                                            ? `记忆只读继承「${mixSessionTitle(session)}」，番外里写的正文不会进记忆卡。`
+                                            : "这场只带人设和世界书，记忆从空开始。") +
+                                        "当前对局不变，可在 🌳 世界树底部的番外一节或酒局列表的番外抽屉里点开继续玩。"
+                                    );
+                                    return;
+                                }
                                 const child = forkMixSession(sessionId, fork.idx, { branchName, branchNote });
                                 setFork(null);
                                 const copy = await copyNarrativeOnFork(child);

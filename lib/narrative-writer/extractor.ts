@@ -12,6 +12,21 @@ import { saveMemoryCard, saveEmotionCard, saveWaterLevel, saveThreadCard, saveFo
 import type { MemoryCard, EmotionCard, WaterLevelState, CardStatus, ThreadCard, ForeshadowCard, ThreadPlotStatus } from "./types";
 import { createDefaultWaterLevel, checkWaterLevelEligibility, normalizeAudience, CONFIDENCE_THRESHOLDS } from "./types";
 import { listSuspenseNames, normalizeThreadName, recordThreadProgress } from "./threads";
+import { isNarrativeReadOnlySession } from "./spinoff";
+
+/**
+ * 番外不抽取。
+ *
+ * 抽取是"把这一轮的正文变成记忆卡"，而番外的记忆口径是只读继承、一张都不写（见 spinoff.ts）。
+ * 所以四个抽取入口进门就返回空结果，**连大模型都不调**——省的是真积分，
+ * 不是只省一次落库。storage 层那道写闸门仍然留着：这里挡住正常链路，闸门挡住误调用。
+ */
+function 番外跳过抽取(caller: string, sid: string): ExtractResult | null {
+  if (!isNarrativeReadOnlySession(sid)) return null;
+  console.log(`[NarrativeWriter] ${caller} 跳过：番外不写记忆，一次模型都不调（对局 ${sid}）`);
+  return { memories: [], emotions: [], threads: [], foreshadows: [] };
+}
+
 
 const EXTRACTOR_SYSTEM_PROMPT = `你是「记忆与情感抽取器」。你只在对话出口工作，负责把对话提炼成可长期使用的记忆卡与情感卡，并检查关系水位是否需要更新。你不替角色回话，不写正文，不做任何扮演。
 
@@ -187,6 +202,8 @@ export async function extractFromTurn(
   }
 ): Promise<ExtractResult> {
   const sid = requireSessionId(sessionId, "extractFromTurn");
+  const 空 = 番外跳过抽取("extractFromTurn", sid);
+  if (空) return 空;
   const 来源消息ID = context.来源?.消息ID;
   const 来源轮次 = context.来源?.轮次;
   // 抽取开始前的第一道检查：来源消息已经不在会话里（多半在等待期间被重说/回溯丢掉了），
@@ -550,6 +567,8 @@ export async function hotExtractFromNarrativeBody(
     来源?: { 消息ID?: string; 轮次?: number }
 ): Promise<ExtractResult> {
     const sid = requireSessionId(sessionId, "hotExtractFromNarrativeBody");
+    const 空 = 番外跳过抽取("热轨抽取", sid);
+    if (空) return 空;
     const start = Date.now();
     console.log(`[HotTrack:Probe] Start - body length: ${body.length}, recent turns: ${recentTurns.length}`);
     
@@ -604,6 +623,8 @@ export async function deepExtractFromNarrativeBody(
     }
 ): Promise<ExtractResult> {
     const sid = requireSessionId(sessionId, "deepExtractFromNarrativeBody");
+    const 空 = 番外跳过抽取("深度抽取", sid);
+    if (空) return 空;
     const logs: string[] = [];
     const log = (msg: string) => {
         logs.push(msg);
@@ -678,6 +699,10 @@ export async function backfillExtraction(
   onProgress?: (done: number, total: number) => void
 ): Promise<{ memories: number; emotions: number }> {
   const sid = requireSessionId(sessionId, "backfillExtraction");
+  if (isNarrativeReadOnlySession(sid)) {
+    console.log(`[NarrativeWriter] 补抽历史 跳过：番外不写记忆，一次模型都不调（对局 ${sid}）`);
+    return { memories: 0, emotions: 0 };
+  }
   const BATCH = 4;
   const batches: Array<Array<{ role: string; text: string }>> = [];
   for (let i = 0; i < turns.length; i += BATCH) {

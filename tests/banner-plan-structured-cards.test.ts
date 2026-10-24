@@ -189,7 +189,14 @@ const writerApi = writerModule as unknown as WriterBannerApi;
 const llmMock = vi.hoisted(() => ({
   calls: 0,
   respond: null as null | (() => string),
-  requests: [] as Array<{ characterName: string; content: string; system: string }>,
+  // messages 是完整原始数组：走向卡该有自己的 system，断言必须能同时看到
+  // system 与 user 两条，才能判断两份文本对"输出几行"的要求是否互相矛盾。
+  requests: [] as Array<{
+    characterName: string;
+    content: string;
+    system: string;
+    messages: Array<{ role: string; content: string }>;
+  }>,
 }));
 
 vi.mock("@/lib/chat-engine", () => ({
@@ -206,6 +213,7 @@ vi.mock("@/lib/chat-engine", () => ({
       characterName: meta?.characterName ?? "",
       content: String(last?.content ?? ""),
       system: String(messages.find((m) => m.role === "system")?.content ?? ""),
+      messages: messages.map((m) => ({ role: String(m.role), content: String(m.content) })),
     });
     if (!llmMock.respond) return "[]";
     return llmMock.respond() as unknown as string;
@@ -413,6 +421,13 @@ function lastSystem(): string {
   const req = llmMock.requests.filter((r) => r.characterName === "NarrativeWriter").pop();
   if (!req) throw new Error("没有发出 NarrativeWriter 请求");
   return req.system;
+}
+
+/** 取最近一次请求的完整 messages（system + user 都在，用来查两份文本是否互相矛盾） */
+function lastMessages(): Array<{ role: string; content: string }> {
+  const req = llmMock.requests.filter((r) => r.characterName === "NarrativeWriter").pop();
+  if (!req) throw new Error("没有发出 NarrativeWriter 请求");
+  return req.messages;
 }
 
 async function generate(sid: string, charName = "角色A"): Promise<CandidateLike[]> {
@@ -1474,3 +1489,261 @@ async function seedAndAdopt(
     insert: async () => ({ 消息ID: `msg_${rand()}`, 轮次: 12 }),
   });
 }
+
+// ════════════════════════════════════════════════════════════
+// 七、走向卡的独立系统提示词（真机问题一）
+// ════════════════════════════════════════════════════════════
+//
+// 真机第一批整批崩掉的根因：generateBannerOptions 复用了写正文的 WRITER_SYSTEM_PROMPT，
+// 那份提示词的「输出格式」明写着"第一行报幕…空一行，正文"，优先级比任务文本高，
+// 模型就照着写了正文，三行契约只拿到一行，token 还白烧了一大段。
+// 这三条把"走向卡该有自己的系统提示词"钉住：提示词内容、与任务文本不互相矛盾、
+// 以及模型仍然输出正文时的兜底（只取括号里的报幕行，正文不展示、不回写）。
+
+describe("走向卡 · 独立系统提示词", () => {
+  it("42. 走向卡的 system 不含正文格式指令，且与任务文本对行数的要求不矛盾", async () => {
+    const sid = makeSessionId("banner-system");
+    await seedRich(sid);
+    llmMock.respond = () =>
+      [
+        "标题甲｜变化甲｜代价甲｜（基调：日常｜场景：灯塔｜走向：闲聊）",
+        "标题乙｜变化乙｜代价乙｜（基调：推进｜场景：旧城｜走向：查证）",
+        "标题丙｜变化丙｜代价丙｜（基调：转折｜场景：海堤｜走向：来客）",
+      ].join("\n");
+    await generate(sid);
+
+    const 消息 = lastMessages();
+    expect(消息.length, "走向卡该只发 system + user 两条").toBe(2);
+    expect(消息.map((m) => m.role)).toEqual(["system", "user"]);
+
+    const 系统 = lastSystem();
+    expect(系统, "走向卡的 system 里没有'只输出三行'这条契约").toContain("只输出三行");
+    // 这三条是写正文那份的格式指令，出现在这里就等于两份提示词互相打架
+    expect(系统, "还带着正文的'第一行报幕'").not.toContain("第一行报幕");
+    expect(系统, "还带着正文的'空一行'").not.toContain("空一行");
+    expect(系统, "还在要求输出正文").not.toContain("正文");
+    expect(系统, "正文的节拍结构不该出现在导演提示词里").not.toMatch(/节拍|反水|四道闸门|输出三档/);
+
+    // 不矛盾：任务文本要的是"每格一行、共三行"，两份文本对输出量的要求必须一致
+    const 任务 = lastPayload()["任务"] ?? "";
+    expect(任务).toContain("只输出这");
+    expect(任务, "任务文本反过来要求写正文").not.toMatch(/空一行|第一行报幕/);
+    expect(`${系统}\n${任务}`, "两份文本对行数的说法不一致").toMatch(/三/);
+  });
+
+  it("43. 独立系统提示词只装导演该知道的五件事，且短", async () => {
+    const sid = makeSessionId("banner-system-shape");
+    await seedRich(sid);
+    llmMock.respond = () =>
+      [
+        "标题甲｜变化甲｜代价甲｜（基调：日常｜场景：灯塔｜走向：闲聊）",
+        "标题乙｜变化乙｜代价乙｜（基调：推进｜场景：旧城｜走向：查证）",
+        "标题丙｜变化丙｜代价丙｜（基调：转折｜场景：海堤｜走向：来客）",
+      ].join("\n");
+    await generate(sid);
+
+    const 系统 = lastSystem();
+    expect(系统, "缺导演的角色定位（只挑方向、不写成稿）").toMatch(/导演/);
+    expect(系统, "缺输出格式契约").toContain("只输出三行");
+    expect(系统, "缺视角规则").toMatch(/未揭示/);
+    expect(系统, "视角规则没写成'不得当作既成事实'").toMatch(/既成事实/);
+    expect(系统, "缺关系上限的遵守").toMatch(/上限/);
+    expect(系统, "缺'三张卡的场景不得相同'").toContain("场景不得相同");
+
+    expect(系统.length, `独立提示词写太长了（${系统.length} 字）`).toBeLessThanOrEqual(400);
+    // 台账术语不该由系统提示词带给模型：目标与分寸都在任务文本里逐张给
+    expect(系统, "系统提示词里出现了台账术语").not.toMatch(/线索|伏笔|台账/);
+  });
+
+  it("44. 写正文那条链路照旧用正文提示词，改动没有串过去", async () => {
+    const sid = makeSessionId("body-system-unchanged");
+    await seedRich(sid);
+    llmMock.respond = () =>
+      [
+        "标题甲｜变化甲｜代价甲｜（基调：日常｜场景：灯塔｜走向：闲聊）",
+        "标题乙｜变化乙｜代价乙｜（基调：推进｜场景：旧城｜走向：查证）",
+        "标题丙｜变化丙｜代价丙｜（基调：转折｜场景：海堤｜走向：来客）",
+      ].join("\n");
+    const 批 = await generate(sid);
+    const 关系卡 = 批.find((c) => c.卡.类型 === "关系")!;
+    expect(关系卡, "第一批没有关系卡，夹具失效").toBeDefined();
+
+    llmMock.respond = () => "（基调：日常｜场景：灯塔｜走向：闲聊）\n\n正文一段。";
+    const fn = writerApi.writeWithSelectedBanner as NonNullable<
+      WriterBannerApi["writeWithSelectedBanner"]
+    >;
+    expect(typeof fn).toBe("function");
+    await fn!(writerInput(sid) as never, 关系卡 as never);
+
+    const 系统 = lastSystem();
+    expect(系统, "正文提示词的格式指令被改没了").toContain("第一行报幕");
+    expect(系统, "正文提示词的格式指令被改没了").toContain("空一行");
+    expect(系统, "正文侧丢了节拍结构").toMatch(/节拍/);
+  });
+});
+
+describe("走向卡 · 模型仍然输出正文时的兜底", () => {
+  it("45. 夹带正文：只取括号里的报幕行，按行序对齐三张，正文不进任何展示字段", async () => {
+    const sid = makeSessionId("banner-with-prose");
+    await seedRich(sid);
+    llmMock.respond = () =>
+      [
+        "我先分析一下这场戏的氛围和人物状态。",
+        "标题甲｜变化甲｜代价甲｜（基调：日常｜场景：灯塔｜走向：闲聊）",
+        "海风从窗缝里挤进来，她把窗帘拉上，心里想起很多年前的那个夜晚，灯光一寸一寸暗下去。",
+        "标题乙｜变化乙｜代价乙｜（基调：推进｜场景：旧城｜走向：查证）",
+        "标题丙｜变化丙｜代价丙｜（基调：转折｜场景：海堤｜走向：来客）",
+      ].join("\n");
+
+    const 批 = await generate(sid);
+    expect(批).toHaveLength(3);
+    expect(批[0].报幕, "正文行占了第一格，报幕没对齐到真正的卡").toBe(
+      "（基调：日常｜场景：灯塔｜走向：闲聊）"
+    );
+    expect(批[0].标题).toBe("标题甲");
+    expect(批[1].报幕).toBe("（基调：推进｜场景：旧城｜走向：查证）");
+    expect(批[2].报幕).toBe("（基调：转折｜场景：海堤｜走向：来客）");
+    for (const 一张 of 批) {
+      const 全 = `${一张.报幕}\n${一张.文本}\n${一张.标题}\n${一张.变化}\n${一张.代价}`;
+      expect(全, "正文被当成报幕展示出来了").not.toMatch(/我先分析|海风从窗缝|很多年前/);
+      expect(一张.报幕.startsWith("（") && 一张.报幕.endsWith("）")).toBe(true);
+    }
+  });
+
+  it("46. 整批都是正文：不展示正文，用代码骨架补三条，且一张都不回写", async () => {
+    const sid = makeSessionId("banner-all-prose");
+    await seedRich(sid);
+    llmMock.respond = () =>
+      "夜色压得很低，塔顶的灯一圈一圈转过去，她在楼梯口站了很久，谁也没有先开口。\n\n这就是这一场的气氛。";
+
+    const 批 = await generate(sid);
+    expect(批).toHaveLength(3);
+    for (const 一张 of 批) {
+      expect(一张.报幕, "整段正文被塞进报幕字段展示").not.toMatch(/夜色压得很低|谁也没有先开口/);
+      expect(一张.报幕.startsWith("（") && 一张.报幕.endsWith("）")).toBe(true);
+      expect(一张.可回写, "没解析出报幕的卡照样回写").toBe(false);
+      expect(一张.文本).not.toContain("[推进:");
+      expect(一张.文本).not.toContain("[回收:");
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 八、替补的两条规则（真机问题二）
+// ════════════════════════════════════════════════════════════
+//
+// 栗子的定稿：**批内类型唯一是硬约束**，避免与上一批重复是软约束。
+// 候选必须排除"本组所有计划类型"和"本批已选类型"；候选为空时允许与上一批撞类型，
+// 但严禁保留一个没有素材的类型——保留它就等于出一张"目标：没有具体对象"的空卡。
+//
+// 夹具刻意做成真机那个对局的样子：thread 与 foreshadow 两个键都不存在（一条线索、
+// 一条伏笔都没有），于是九类里只有四类有素材：关系 / 变数 / 世界动向 / 人物内心。
+
+/** 台账空空的池子：只有恒可用三类 + 人物内心有素材 */
+function 空台账素材() {
+  return {
+    threads: [],
+    foreshadows: [],
+    memories: [mkMemory("内心素材", { 主类型: "自我认知" })],
+    emotions: [mkEmotion("在意")],
+  };
+}
+/** 空台账下真正"有素材"的类型：与 banner-plan 的 有素材() 同一口径 */
+const 空台账可用类型 = ["关系", "变数", "世界动向", "人物内心"];
+
+function 类型清单(cards: PlanCardLike[]): string[] {
+  return cards.map((c) => c.类型);
+}
+
+describe("走向卡 · 替补：批内唯一是硬约束", () => {
+  it("47. 复现真机第 2 批：换上去的类型不得与本组计划类型重复，也不得是无素材类型", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const cards = 分配(
+      planInput({
+        ...空台账素材(),
+        批次序号: 1,
+        最近走向类型: ["世界动向", "关系", "变数"],
+      })
+    );
+    const 类型 = 类型清单(cards);
+
+    expect(类型).toHaveLength(3);
+    expect(new Set(类型).size, `批内类型重复：${类型.join("/")}`).toBe(3);
+    for (const 一张 of 类型) {
+      expect(空台账可用类型, `${一张} 在这场所对应里根本没有素材，却还是出了卡`).toContain(一张);
+    }
+  });
+
+  it("48. 替补候选必须排除本组计划类型：不许抢走后面那格的类型", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const cards = 分配(
+      planInput({
+        ...空台账素材(),
+        批次序号: 1,
+        最近走向类型: ["世界动向", "变数"],
+      })
+    );
+    const 类型 = 类型清单(cards);
+    // 计划里的三类：伏笔回收没素材该被换掉，人物内心该留给自己那一格
+    const 本组计划 = ["世界动向", "伏笔回收", "人物内心"];
+    const 落在计划里 = 类型.filter((t) => 本组计划.includes(t));
+
+    expect(new Set(类型).size, `批内类型重复：${类型.join("/")}`).toBe(3);
+    expect(落在计划里, `替补抢走了本组计划类型：${类型.join("/")}`).toEqual(["人物内心"]);
+    for (const 一张 of 类型) {
+      expect(空台账可用类型).toContain(一张);
+    }
+  });
+
+  it("49. 复现真机第 4 批：候选全空时允许与上一批撞类型，但绝不保留没素材的类型", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const cards = 分配(
+      planInput({
+        ...空台账素材(),
+        批次序号: 0,
+        最近走向类型: ["世界动向", "变数", "关系", "人物内心", "伏笔回收"],
+      })
+    );
+    const 类型 = 类型清单(cards);
+
+    expect(类型, `主线没素材还留着主线：${类型.join("/")}`).not.toContain("主线");
+    expect(new Set(类型).size, `批内类型重复：${类型.join("/")}`).toBe(3);
+    for (const 一张 of 类型) {
+      expect(空台账可用类型, `${一张} 没有素材却被保留`).toContain(一张);
+    }
+    // 软约束：四类有素材的类型有三个刚出过，撞上上一批是允许的，不该因此作废一张卡
+    expect(类型.some((t) => ["世界动向", "变数", "关系", "人物内心"].includes(t))).toBe(true);
+  });
+
+  it("50. 恒可用三类保证三格一定填得满：空台账跑遍三组都不出空卡、不出重复", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    for (const 批次序号 of [0, 1, 2]) {
+      const 类型 = 类型清单(分配(planInput({ 批次序号 })));
+      expect(new Set(类型).size, `第${批次序号}组批内重复：${类型.join("/")}`).toBe(3);
+      for (const 一张 of 类型) {
+        expect(["关系", "变数", "世界动向"], `第${批次序号}组出了 ${一张}，但这场什么都没有`).toContain(
+          一张
+        );
+      }
+    }
+    // 极端情形：连恒可用三类都刚出过（最近 6 条把可用类型占满），仍然必须出满三格
+    const 挤满 = 类型清单(
+      分配(
+        planInput({
+          批次序号: 0,
+          最近走向类型: ["关系", "变数", "世界动向", "人物内心", "伏笔回收", "主线"],
+        })
+      )
+    );
+    expect(挤满).toHaveLength(3);
+    expect(new Set(挤满).size, `恒可用类刚出过就重复：${挤满.join("/")}`).toBe(3);
+  });
+});

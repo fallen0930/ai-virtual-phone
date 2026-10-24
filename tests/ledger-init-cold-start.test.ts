@@ -157,9 +157,13 @@ vi.mock("@/lib/chat-engine", () => ({
 }));
 
 vi.mock("@/lib/mixology/engine", () => ({
-  resolveMixApiConfig: () => ({ id: "test-config", apiKey: "x", baseUrl: "x" }),
+  resolveMixApiConfig: () => 配置桩.value,
 }));
 
+/** API 配置桩：默认给一份能用的；用例里临时换成 null 就是"没配接口"的那种玩家 */
+const 配置桩 = vi.hoisted(() => ({
+  value: { id: "test-config", apiKey: "x", baseUrl: "x" } as unknown,
+}));
 // ── 夹具 ──
 const createdSessionIds = new Set<string>();
 const BASE_TIME = 1_700_000_000_000;
@@ -291,6 +295,7 @@ beforeEach(() => {
   llmMock.calls = 0;
   llmMock.respond = null;
   llmMock.requests.length = 0;
+  配置桩.value = { id: "test-config", apiKey: "x", baseUrl: "x" };
 });
 
 afterEach(() => {
@@ -299,6 +304,7 @@ afterEach(() => {
   llmMock.calls = 0;
   llmMock.respond = null;
   llmMock.requests.length = 0;
+  配置桩.value = { id: "test-config", apiKey: "x", baseUrl: "x" };
   vi.useRealTimers();
 });
 
@@ -567,8 +573,15 @@ describe("台账冷启动 · 失败与防连点", () => {
     const s = sid("init-mutex");
     await seedHierarchy(s, 大纲);
     let 放开: () => void = () => {};
+    // 先等第一次真的把请求发出去，再去点第二下：
+    // 不然"互斥是否生效"就变成了比谁先跑到模型调用，测出来的时机噪声不是产品规则。
+    let 标记已发起: () => void = () => {};
+    const 已发起 = new Promise<void>((resolve) => {
+      标记已发起 = resolve;
+    });
     llmMock.respond = () =>
       new Promise<string>((resolve) => {
+        标记已发起();
         放开 = () => resolve(正常负载());
       });
 
@@ -576,15 +589,16 @@ describe("台账冷启动 · 失败与防连点", () => {
     // 先挂一个 catch，避免"还没 await 的那次"在测试中途变成未处理的 rejection；
     // 真正的断言在下面 await 处，失败照样红。
     第一次.catch(() => {});
+    await 已发起;
     const 第二次 = await runInit(s);
     expect(第二次.调用次数, "被连点拒掉的那次不该算调用").toBe(0);
     expect(第二次.提示, "第二次没给出「正在进行」之类的提示").toMatch(/正在/);
-    expect(llmMock.calls, "连点导致多调了一次模型").toBe(1);
+    expect(llmMock.calls, "连点多发了一次请求").toBe(1);
 
     放开();
     const 第一次结果 = await 第一次;
     expect(第一次结果.线索.length).toBeGreaterThan(0);
-    expect(llmMock.calls).toBe(1);
+    expect(llmMock.calls, "整场跑下来模型调用数不是 1").toBe(1);
 
     // 结束后可再次初始化（互斥标志必须被释放，否则按钮永久死掉）
     llmMock.respond = () => 正常负载({ 线索: [], 伏笔: [] });
@@ -592,24 +606,41 @@ describe("台账冷启动 · 失败与防连点", () => {
     expect(第三次.调用次数, "上一次结束后按钮该能再按").toBe(1);
   });
 
-  it("12. 超时 60 秒：给中文提示、不入库、不自动重试", async () => {
+  it("12. 超时：给中文提示、不入库、不自动重试", async () => {
     const s = sid("init-timeout");
     await seedHierarchy(s, 大纲);
     const api = await ledgerApi();
-    const 超时 = api.LEDGER_TIMEOUT_MS ?? 60_000;
+    // 产品口径先钉住：默认预算就是 60 秒
+    expect(api.LEDGER_TIMEOUT_MS, "默认超时预算不是 60 秒").toBe(60_000);
     llmMock.respond = () => new Promise<string>(() => {});
 
-    vi.useFakeTimers();
-    const 进行中 = runInit(s);
-    进行中.catch(() => {});
-    await vi.advanceTimersByTimeAsync(超时 + 1000);
-    const 结果 = await 进行中;
-    vi.useRealTimers();
-
+    // 走同一条超时分支，但把预算注入成 30 毫秒。
+    // 不用假时钟：vitest 的假时钟会连 setImmediate 一起接管，fake-indexeddb 的读写
+    // 就永远排不到，请求根本没发出去，测到的将是"测试没等到请求"而不是"超时"。
+    const 结果 = await runInit(s, { 超时Ms: 30 });
     expect(结果.失败, "超时没被标记成失败").toBe(true);
     expect(结果.提示, "超时提示里没有「超时」二字").toMatch(/超时/);
     expect(await readThreads(s)).toHaveLength(0);
     expect(llmMock.calls, "超时后自动重试了").toBe(1);
+
+    // 超时后互斥必须释放：按钮不能死掉
+    llmMock.respond = () => 正常负载();
+    const 重来 = await runInit(s);
+    expect(重来.线索.length, "超时之后再也点不动了").toBeGreaterThan(0);
+  });
+
+  it("17. 没配 API 接口：一次都不调，中文告诉她先去设置里配", async () => {
+    const s = sid("init-no-config");
+    await seedHierarchy(s, 大纲);
+    配置桩.value = null;
+    llmMock.respond = () => 正常负载();
+
+    const 结果 = await runInit(s);
+    expect(llmMock.calls, "没有可用配置也发了请求").toBe(0);
+    expect(结果.调用次数, "没发出去的请求不该记账").toBe(0);
+    expect(结果.失败).toBe(true);
+    expect(结果.提示, "提示没说清楚是缺配置").toMatch(/配置/);
+    expect(await readThreads(s)).toHaveLength(0);
   });
 });
 
@@ -646,6 +677,32 @@ describe("台账冷启动 · 手动新增与走向卡分配", () => {
     const 重 = await 建线({ sessionId: s, 名称: "灯塔顶上的第二盏灯", 关联角色: [] });
     expect(重.ok, "同名的手动新增不该被接受").toBe(false);
     expect(await readThreads(s)).toHaveLength(1);
+  });
+
+  it("18. 手动新增的字段同样由代码截断，剧情态默认潜伏", async () => {
+    const s = sid("manual-truncate");
+    const 建线 = (await needFn("createManualThread")) as NonNullable<LedgerApi["createManualThread"]>;
+    const 建伏 = (await needFn("createManualForeshadow")) as NonNullable<LedgerApi["createManualForeshadow"]>;
+
+    const 线 = await 建线({
+      sessionId: s,
+      名称: "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十",
+      关联角色: [角色],
+      下一步可能: "这句话长得超过三十字的上限，多出来的一截该被代码切掉而不是留给模型或界面",
+    });
+    expect(线.ok).toBe(true);
+    const 库 = await readThreads(s);
+    expect(库[0].名称.length, "手填的线索名没截断").toBeLessThanOrEqual(20);
+    expect(库[0].下一步可能.length, "手填的下一步没截断").toBeLessThanOrEqual(30);
+    expect(库[0].线索状态, "手动新增没给剧情态时该落在潜伏").toBe("潜伏");
+    expect(库[0].audience, "手动新增的卡也该是导演视角共享").toEqual(["all"]);
+
+    const 伏 = await 建伏({
+      sessionId: s,
+      内容: "这一串字是要越过四十个字符的界限的那一种写法，多出来的部分同样必须被切掉才对呀",
+    });
+    expect(伏.ok).toBe(true);
+    expect((await readForeshadows(s))[0].内容.length, "手填的伏笔内容没截断").toBeLessThanOrEqual(40);
   });
 
   it("14. 初始化之后，主线与伏笔回收真的能分到对象", async () => {

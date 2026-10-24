@@ -693,8 +693,7 @@ describe("台账冷启动 · 手动新增与走向卡分配", () => {
     expect(回收.目标?.名称, "伏笔回收没绑上伏笔").toBeTruthy();
   });
 
-  it("15. 模型只给潜伏线时：主线仍走替补，绝不退绑潜伏线", async () => {
-    const s = sid("init-all-latent");
+  it("15. 模型只给潜伏线时：主线仍走替补，绝不退绑潜伏线", async () => {    const s = sid("init-all-latent");
     await seedHierarchy(s, 大纲);
     llmMock.respond = () =>
       正常负载({
@@ -722,5 +721,29 @@ describe("台账冷启动 · 手动新增与走向卡分配", () => {
     expect(主线格.计划类型).toBe("主线");
     expect(主线格.类型, "没有爆发/升温线却仍按主线出卡").not.toBe("主线");
     expect(主线格.已替换, "替补没留痕").toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 五、素材质量：大纲要自带悬念清单
+// ════════════════════════════════════════════════════════════
+describe("台账冷启动 · 大纲里该有悬念一节", () => {
+  it("16. 记忆整理的 L3 提示词要求末尾列一节「未解决的悬念」", async () => {
+    const { compressNarrativeMemory } = await import("@/lib/narrative-writer/writer");
+    llmMock.respond = () => "### 全局主线大纲";
+    const turns = Array.from({ length: 3 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      text: `第${i}轮正文`,
+      createdAt: BASE_TIME + i,
+    }));
+
+    await compressNarrativeMemory(turns as never, 角色, undefined);
+
+    const 大纲请求 = llmMock.requests.find((r) => r.characterName === "大纲助手");
+    expect(大纲请求, "没发出 L3 大纲那次调用，夹具失效").toBeDefined();
+    expect(大纲请求!.system, "L3 提示词没要求列「未解决的悬念」这一节").toContain("未解决的悬念");
+    expect(大纲请求!.system, "悬念那一行的格式没写死，初始化台账没法稳定读").toContain(
+      "名称——现状——为什么还悬着"
+    );
   });
 });

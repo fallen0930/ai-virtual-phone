@@ -1751,3 +1751,51 @@ describe("走向卡 · 替补：批内唯一是硬约束", () => {
     expect(new Set(挤满).size, `恒可用类刚出过就重复：${挤满.join("/")}`).toBe(3);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 目标名的截断：记忆卡整句太长，界面上一刀切在字中间很难看
+// ════════════════════════════════════════════════════════════
+describe("走向卡 · 目标名在标点处截断", () => {
+  it("51. 目标是记忆卡长句：在 20 字内的最后一个标点处断，不带省略号", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const 长句卡 = {
+      ...mkMemory("长句"),
+      状态: "待核",
+      内容: "当铺掌柜认得那枚硬币，他等了三年，直到这天下雨才肯开口说话",
+    };
+    const 变数 = 分配(planInput({ memories: [长句卡] })).find((c) => c.类型 === "变数")!;
+    expect(变数, "第一组里没有变数卡，夹具失效").toBeDefined();
+    expect(变数.目标?.kind).toBe("memory");
+    expect(变数.目标?.名称, "该断在标点处，不该把句子拦腰切一半再补省略号").toBe(
+      "当铺掌柜认得那枚硬币，他等了三年"
+    );
+    expect((变数.目标?.名称 ?? "").length, "标点截断后仍不该超过 20 字").toBeLessThanOrEqual(20);
+  });
+
+  it("52. 二十字内一个标点都没有，才退回硬截，含省略号也不超过二十字", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const 无标点卡 = {
+      ...mkMemory("无标点"),
+      状态: "待核",
+      内容: "当铺掌柜认得那枚硬币已经等了三年直到下雨天才肯开口说出真相",
+    };
+    const 变数 = 分配(planInput({ memories: [无标点卡] })).find((c) => c.类型 === "变数")!;
+    expect(变数.目标?.名称, "没有标点时才允许硬截，且省略号算在 20 字里").toBe(
+      "当铺掌柜认得那枚硬币已经等了三年直到下…"
+    );
+    expect((变数.目标?.名称 ?? "").length).toBeLessThanOrEqual(20);
+  });
+
+  it("53. 记忆卡本身不超过二十字时原样显示，不加省略号也不加标点", async () => {
+    const 分配 = (await requirePlanFn("assignBannerPlan")) as NonNullable<
+      BannerPlanApi["assignBannerPlan"]
+    >;
+    const 短句卡 = { ...mkMemory("短句"), 状态: "待核", 内容: "掌柜认得那枚硬币" };
+    const 变数 = 分配(planInput({ memories: [短句卡] })).find((c) => c.类型 === "变数")!;
+    expect(变数.目标?.名称).toBe("掌柜认得那枚硬币");
+  });
+});

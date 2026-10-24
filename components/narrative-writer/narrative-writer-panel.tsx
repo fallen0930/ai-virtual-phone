@@ -55,6 +55,7 @@ import {
     THREAD_NAME_MAX,
     THREAD_NEXT_MAX,
     FORESHADOW_CONTENT_MAX,
+    线索进度文案,
 } from "@/lib/narrative-writer/ledger-init";
 import { loadMixSessions } from "@/lib/mixology/storage";
 import { mixSessionTitle } from "@/lib/mixology/types";
@@ -2481,7 +2482,7 @@ export function NarrativeWriterPanel() {
                                                             <span style={{ fontSize: "10px", color: "#a78bfa", whiteSpace: "nowrap" }}>{t.线索状态}</span>
                                                         </div>
                                                         <div style={{ fontSize: "10px", color: "#9ca3af", lineHeight: 1.5, marginTop: "2px" }}>
-                                                            第 {t.上次推进轮次} 轮推进
+                                                            {线索进度文案(t)}
                                                             {t.最近变化?.[0]?.变化 ? ` · 最近：${t.最近变化[0].计划 ? "（计划）" : ""}${t.最近变化[0].变化}` : ""}
                                                             {t.下一步可能 ? ` · 下一步：${t.下一步可能}` : " · 下一步：未填"}
                                                             {discardedSourceHint(t) ? ` · ${discardedSourceHint(t)}` : ""}

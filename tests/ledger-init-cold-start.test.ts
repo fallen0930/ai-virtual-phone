@@ -44,7 +44,7 @@ type ThreadLike = {
   关联角色: string[];
   上次推进轮次: number;
   下一步可能: string;
-  最近变化: Array<{ 变化: string; 轮次?: number; 计划?: boolean }>;
+  最近变化: Array<{ 变化: string; 轮次?: number; 计划?: boolean; 时间?: number }>;
   状态: string;
   来源消息ID?: string;
   来源轮次?: number;
@@ -102,12 +102,15 @@ type LedgerApi = {
     名称: string;
     关联角色?: string[];
     下一步可能?: string;
+    当前轮次?: number;
   }) => Promise<ManualResultLike>;
   createManualForeshadow?: (input: {
     sessionId: string;
     内容: string;
     关联线索名称?: string;
   }) => Promise<ManualResultLike>;
+  /** 面板上那行"第N轮推进/建于第N轮·尚未推进"的措辞，由纯函数决定，排序逻辑不掺进来 */
+  线索进度文案?: (card: ThreadLike) => string;
 };
 
 const LEDGER_PATH = "@/lib/narrative-writer/ledger-init";
@@ -802,5 +805,63 @@ describe("台账冷启动 · 大纲里该有悬念一节", () => {
     expect(大纲请求!.system, "悬念那一行的格式没写死，初始化台账没法稳定读").toContain(
       "名称——现状——为什么还悬着"
     );
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 六、面板措辞：刚建起来的线不许说"推进过"
+// ════════════════════════════════════════════════════════════
+describe("台账冷启动 · 面板的推进措辞", () => {
+  it("19. 只有初始化那条变化时，显示「建于第N轮·尚未推进」，有真实推进后才改口", async () => {
+    const 文案 = (await needFn("线索进度文案")) as (card: ThreadLike) => string;
+    const s = sid("progress-wording");
+    await seedHierarchy(s, 大纲);
+    llmMock.respond = () => 正常负载();
+    const 结果 = await runInit(s);
+
+    const 刚建的 = 结果.线索[0];
+    expect(刚建的.最近变化, "初始化卡应当只带一条「由剧情大纲初始化」的变化").toHaveLength(1);
+    expect(文案(刚建的), "只建了没推进过的线，不该说「第N轮推进」").toBe(
+      `建于第 ${刚建的.上次推进轮次} 轮·尚未推进`
+    );
+
+    // 回写或手动记了一条真实变化之后，才改回原来的说法
+    const 推进过的: ThreadLike = {
+      ...刚建的,
+      上次推进轮次: 9,
+      最近变化: [{ 变化: "他把抽屉打开了", 轮次: 9, 时间: 刚建的.createdAt }, ...刚建的.最近变化],
+    };
+    expect(文案(推进过的)).toBe("第 9 轮推进");
+  });
+
+  it("20. 手动新增的线索（一条变化都没记）同样不算推进过", async () => {
+    const 文案 = (await needFn("线索进度文案")) as (card: ThreadLike) => string;
+    const 建线 = (await needFn("createManualThread")) as NonNullable<LedgerApi["createManualThread"]>;
+    const s = sid("progress-manual");
+
+    const { 卡 } = await 建线({ sessionId: s, 名称: "手写的线", 当前轮次: 7 });
+    expect(卡, "手动新增没返回卡片").toBeDefined();
+    expect((卡 as unknown as ThreadLike).最近变化, "手动新增不该顺手编一条变化").toEqual([]);
+    expect(文案(卡 as unknown as ThreadLike), "手写的线一上来就被说成「第7轮推进」").toBe(
+      "建于第 7 轮·尚未推进"
+    );
+  });
+
+  it("21. 归档与后续变化都不影响：判断只看「除了初始化标注还有没有别的」", async () => {
+    const 文案 = (await needFn("线索进度文案")) as (card: ThreadLike) => string;
+    const s = sid("progress-edge");
+    await seedHierarchy(s, 大纲);
+    llmMock.respond = () => 正常负载();
+    const 结果 = await runInit(s);
+    const 基 = 结果.线索[0];
+
+    // 只有那条初始化标注（不同措辞也算）→ 尚未推进
+    expect(文案({ ...基, 最近变化: [{ 变化: "由剧情大纲初始化，未经核对", 轮次: 3, 时间: 基.createdAt }] })).toBe(
+      `建于第 ${基.上次推进轮次} 轮·尚未推进`
+    );
+    // 计划类的回写变化也算推进
+    expect(
+      文案({ ...基, 最近变化: [{ 变化: "按报幕推进", 轮次: 5, 时间: 基.createdAt, 计划: true }] })
+    ).toBe(`第 ${基.上次推进轮次} 轮推进`);
   });
 });

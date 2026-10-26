@@ -5,7 +5,11 @@
 // 装饰材料的 CSS 以 <style> 注入本画面容器（认 .mix-* 官方语义类）。
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronLeft, Copy, GitBranch, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
+import { ChevronLeft, Copy, GitBranch, History, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
+import { mixTurnChannel } from "@/lib/mixology/chatroom-types";
+import { splitChatInnerVoice } from "@/lib/mixology/chatroom-engine";
+import { createMixPhoneWorld, findMixPhoneWorldBySession } from "@/lib/mixology/chatroom-storage";
+import { maybeEnqueueProactiveCheck } from "@/lib/mixology/chatroom-proactive";
 import { continueMix, editMixTurn, forkMixSession, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixRoundCount, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, startMixSpinoff, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { copyNarrativeOnFork } from "@/lib/narrative-writer/fork";
 import { MixBalanceChip } from "./mix-balance-chip";
@@ -16,7 +20,7 @@ import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMi
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { buildMixConditionContext, pickActiveMixMaterials } from "@/lib/mixology/state";
 import { scopeMixCss } from "@/lib/mixology/css-scope";
-import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixPanelLayoutOf, mixPanelSlotOf, mixSessionTitle, mixSlotEntries, mixTurnEncoreBlocks, mixTurnTicketBlocks, type MixCharacterCard, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixMechanismMaterial, type MixPanelLayout, type MixSession, type MixSlotEntry, type MixSpinoffMemory, type MixState, type MixTicketMaterial, type MixTurn, type MixDialogueButton } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixPanelLayoutOf, mixPanelSlotOf, mixSessionTitle, mixSlotEntries, mixSlotFirstId, mixTurnEncoreBlocks, mixTurnTicketBlocks, type MixCharacterCard, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixMechanismMaterial, type MixPanelLayout, type MixSession, type MixSlotEntry, type MixSpinoffMemory, type MixState, type MixTicketMaterial, type MixTurn, type MixDialogueButton } from "@/lib/mixology/types";
 import { applyMixFilterRules, mixStreamText } from "@/lib/mixology/prose";
 import { MixProseView } from "./prose-view";
 import { MixRichText } from "./rich-text";
@@ -85,6 +89,8 @@ type GameProps = {
     onBack: () => void;
     onToast: (message: string) => void;
     onSwitchSession?: (sessionId: string) => void;
+    /** 头部「手机」入口：打开（没有就静默创建）这场对局绑定的聊天世界 */
+    onOpenPhone: (worldId: string) => void;
 };
 
 /** 一轮里要渲染的一块（状态栏/小剧场）：皮 + 这一轮的原文 */
@@ -359,7 +365,7 @@ function StateBar({ state }: { state: MixState }) {
     );
 }
 
-export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: GameProps) {
+export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession, onOpenPhone }: GameProps) {
     const [session, setSession] = useState<MixSession | null>(() => getMixSession(sessionId));
     
     // 记录当前打开的session ID，供执笔等外部工具读取
@@ -446,6 +452,13 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
         const wasActive = prev === "generating" || prev === "queued";
         const isActive = genStatus === "generating" || genStatus === "queued";
         if (wasActive && !isActive) setSession(getMixSession(sessionId));
+        // 一轮正文落库后：异步判一次「角色要不要主动来发消息」（内部自带开关/
+        // 冷却/频率与排队串行，失败静默；没绑聊天世界时什么都不做）
+        if (wasActive && !isActive && genStatus === "done") {
+            const phoneWorld = findMixPhoneWorldBySession(sessionId);
+            const fresh = phoneWorld ? getMixSession(sessionId) : null;
+            if (phoneWorld && fresh) maybeEnqueueProactiveCheck({ world: phoneWorld, session: fresh });
+        }
         // 缓冲发送区自动接话的状态迁移口径：
         // · 正常出杯（→done）后 runtime 清掉条目（done→null）→ 取队首接话；
         // · 没走到 done 就结束（生成出错、被取消）→ 自动接话暂停。失败之后再把
@@ -1586,7 +1599,19 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
             .filter((f) => f.html && f.raw);
 
     const lastTurn = session.turns[session.turns.length - 1];
-    const canReroll = !busy && lastTurn?.role === "assistant" && session.turns.length > 1;
+    // 重说走的是正文流水线，最后一条若是手机消息轮（聊天回复）不能拿它重说
+    const canReroll = !busy && lastTurn?.role === "assistant" && mixTurnChannel(lastTurn) !== "msg" && session.turns.length > 1;
+
+    /** 头部「手机」入口：没有绑定世界就按该局主演静默建一个再进去 */
+    const openPhone = () => {
+        let world = findMixPhoneWorldBySession(sessionId);
+        if (!world) {
+            const leadId = mixSlotFirstId(session.recipe.slots, "character");
+            const lead = leadId ? getMixMaterial(leadId) : null;
+            world = createMixPhoneWorld({ sessionId, memberIds: lead?.kind === "character" ? [lead.id] : [] });
+        }
+        onOpenPhone(world.id);
+    };
 
     /** 背景观感微调：蒙版提亮（0=原样，100=无蒙版）与封面模糊，按局保存 */
     const [bgTuneOpen, setBgTuneOpen] = useState(false);
@@ -1858,6 +1883,9 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
                         {layout.icon || "◈"}
                     </button>
                 ))}
+                <button type="button" className="mix-icon-btn" onClick={openPhone} aria-label="手机聊天" title="手机聊天">
+                    <MessageCircle size={19} />
+                </button>
                 <button type="button" className="mix-icon-btn" onClick={() => setBgTuneOpen((v) => !v)} aria-label="背景观感" title="背景观感">
                     <Sun size={19} />
                 </button>
@@ -1974,7 +2002,21 @@ export function MixologyGame({ sessionId, onBack, onToast, onSwitchSession }: Ga
                             key={`act-${turn.id}`}
                         />
                     );
-                    return turn.role === "user" ? (
+                    // 手机消息轮：聊天气泡样式（区别于正文段落），心声以弱化块显示
+                    return mixTurnChannel(turn) === "msg" ? (
+                        <div className="mix-msg-turn" data-side={turn.role === "user" ? "right" : "left"} key={turn.id} data-turn-id={turn.id} data-flash={flashId === turn.id ? "true" : undefined}>
+                            {turn.role === "assistant" && turn.speaker ? <div className="mix-msg-sender">{turn.speaker}</div> : null}
+                            <div className="mix-msg-bubble">
+                                {splitChatInnerVoice(turn.text).map((bubble, bubbleIdx) => bubble.kind === "voice" ? (
+                                    <div className="mix-msg-voice" key={bubbleIdx}>心声 · {bubble.text}</div>
+                                ) : (
+                                    <div key={bubbleIdx}>{bubble.text}</div>
+                                ))}
+                            </div>
+                            <div className="mix-msg-tag">手机 · {turn.threadLabel ?? "聊天室"}</div>
+                            {actions}
+                        </div>
+                    ) : turn.role === "user" ? (
                         <div className="mix-user-turn" data-with-actions="true" data-turn-id={turn.id} data-flash={flashId === turn.id ? "true" : undefined} key={turn.id}>
                             <div className="mix-user-bubble">{turn.text}</div>
                             {actions}

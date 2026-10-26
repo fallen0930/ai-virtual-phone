@@ -5109,3 +5109,275 @@ span.mix-session-chip {
 @media (prefers-reduced-motion: reduce) {
     .mix-model-badge[data-flash="true"] { animation: none; }
 }
+
+/* ══════════════ 聊天室（手机频道）· mix-phone-* ══════════════ */
+
+/* 导航红点 */
+.mix-phone-navdot {
+    position: absolute;
+    top: 6px;
+    right: calc(50% - 16px);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--mix-amber, #e8b04b);
+    box-shadow: 0 0 6px rgba(232, 176, 75, 0.8);
+}
+.mix-nav-btn { position: relative; }
+
+/* 列表页 */
+.mix-phone-list { display: flex; flex-direction: column; height: 100%; }
+.mix-phone-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.mix-phone-toolbar-title {
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+.mix-phone-toolbar-title em {
+    font-style: normal;
+    font-size: 11px;
+    opacity: 0.55;
+    white-space: nowrap;
+}
+.mix-phone-toolbar-actions { display: flex; gap: 4px; }
+.mix-phone-world-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    background: none;
+    border: none;
+    color: inherit;
+    padding: 2px 4px;
+    cursor: pointer;
+    min-width: 0;
+}
+.mix-phone-world-name { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+.mix-phone-world-kind { font-size: 11px; opacity: 0.55; }
+.mix-phone-list-body { flex: 1; overflow-y: auto; padding: 8px 10px 90px; }
+.mix-phone-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.mix-phone-row[data-on="true"] { background: rgba(232, 176, 75, 0.08); }
+.mix-phone-row:active { background: rgba(255, 255, 255, 0.05); }
+.mix-phone-avatar {
+    flex: none;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 600;
+    background-size: cover;
+    background-position: center;
+}
+.mix-phone-avatar[data-group="true"] { opacity: 0.8; }
+.mix-phone-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mix-phone-row-name { font-size: 15px; font-weight: 600; }
+.mix-phone-row-preview { font-size: 12px; opacity: 0.55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mix-phone-unread {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--mix-amber, #e8b04b);
+    box-shadow: 0 0 6px rgba(232, 176, 75, 0.8);
+}
+.mix-phone-group-label { font-size: 11px; opacity: 0.5; padding: 14px 8px 4px; letter-spacing: 0.1em; }
+.mix-phone-newgroup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 16px auto 0;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    background: none;
+    color: inherit;
+    font-size: 12px;
+    opacity: 0.75;
+    cursor: pointer;
+}
+
+/* 会话页 */
+.mix-phone-thread { display: flex; flex-direction: column; height: 100%; }
+.mix-phone-thread .mix-phone-list-body { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; overscroll-behavior: contain; }
+
+/* 手机气泡（聊天室与对局时间线共用 mix-msg-*） */
+.mix-msg-turn { display: flex; flex-direction: column; max-width: 78%; }
+.mix-msg-turn[data-side="right"] { align-self: flex-end; align-items: flex-end; margin-left: auto; }
+.mix-msg-turn[data-side="left"] { align-self: flex-start; align-items: flex-start; }
+.mix-msg-sender { font-size: 11px; opacity: 0.55; margin: 0 4px 2px; }
+.mix-msg-bubble {
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.mix-msg-turn[data-side="left"] .mix-msg-bubble {
+    background: rgba(255, 255, 255, 0.08);
+    border-bottom-left-radius: 4px;
+}
+.mix-msg-turn[data-side="right"] .mix-msg-bubble {
+    background: rgba(232, 176, 75, 0.18);
+    border-bottom-right-radius: 4px;
+}
+.mix-msg-bubble[data-streaming="true"]::after {
+    content: "▍";
+    opacity: 0.6;
+    animation: mix-blink 1s steps(2) infinite;
+}
+.mix-msg-voice {
+    margin-top: 6px;
+    padding: 5px 9px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed rgba(255, 255, 255, 0.14);
+    font-size: 12px;
+    font-style: italic;
+    opacity: 0.62;
+}
+.mix-msg-tag { font-size: 10px; opacity: 0.4; margin: 3px 4px 0; }
+.mix-msg-error {
+    align-self: center;
+    font-size: 12px;
+    color: #e08080;
+    padding: 4px 10px;
+}
+
+/* 输入栏 */
+.mix-phone-inputbar {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(0, 0, 0, 0.25);
+}
+.mix-phone-input {
+    flex: 1;
+    resize: none;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    padding: 9px 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    font-family: inherit;
+    outline: none;
+}
+.mix-phone-input:focus { border-color: rgba(232, 176, 75, 0.5); }
+.mix-phone-inputbar .mix-icon-btn:disabled { opacity: 0.35; }
+
+/* 空态 */
+.mix-phone-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 48px 24px;
+    text-align: center;
+}
+.mix-phone-empty-title { font-size: 16px; font-weight: 600; }
+.mix-phone-empty-sub { font-size: 13px; opacity: 0.6; max-width: 30em; line-height: 1.6; }
+.mix-phone-empty-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
+
+/* 设置弹层 */
+.mix-phone-settings { max-height: 78vh; overflow-y: auto; }
+.mix-phone-set-section { padding: 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.mix-phone-set-label { font-size: 12px; opacity: 0.6; margin-bottom: 8px; letter-spacing: 0.06em; }
+.mix-phone-set-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    font-size: 13px;
+}
+.mix-phone-set-row input[type="number"] {
+    width: 72px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: inherit;
+    padding: 5px 8px;
+    font-size: 13px;
+}
+.mix-phone-set-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mix-amber, #e8b04b); }
+.mix-phone-set-row select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: inherit;
+    padding: 5px 8px;
+    font-size: 13px;
+}
+.mix-phone-set-hint { font-size: 12px; opacity: 0.5; padding: 6px 0; }
+.mix-phone-member-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 14px;
+}
+.mix-phone-member-actions { display: flex; gap: 2px; }
+.mix-phone-add-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    background: none;
+    color: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.mix-phone-member-pick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.mix-phone-member-pick[data-static="true"] { margin-top: 0; }
+.mix-phone-pick-item {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.mix-phone-pick-item[data-on="true"] {
+    border-color: rgba(232, 176, 75, 0.6);
+    background: rgba(232, 176, 75, 0.14);
+}
+.mix-phone-group-name { margin-bottom: 10px; }
+
+/* 对局时间线里的手机气泡 */
+.mix-game-flow .mix-msg-turn { margin: 6px 0; }

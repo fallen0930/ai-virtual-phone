@@ -25,6 +25,8 @@ export type MixPhoneWorldSettings = {
     proactiveCooldown: number;
     /** 每几个 scene 轮判定一次 */
     proactiveEveryRounds: number;
+    /** 多人回复策略：mention=点名优先（未点名轮流） / roundrobin=轮流 / all=全员 */
+    replyPolicy: "mention" | "roundrobin" | "all";
 };
 
 export const MIX_PHONE_SETTINGS_DEFAULTS: MixPhoneWorldSettings = {
@@ -35,6 +37,7 @@ export const MIX_PHONE_SETTINGS_DEFAULTS: MixPhoneWorldSettings = {
     proactive: true,
     proactiveCooldown: 3,
     proactiveEveryRounds: 1,
+    replyPolicy: "mention",
 };
 
 export type MixPhoneWorld = {
@@ -116,6 +119,10 @@ export function normalizeMixPhoneSettings(raw: unknown): MixPhoneWorldSettings {
         proactive: bool(r.proactive, MIX_PHONE_SETTINGS_DEFAULTS.proactive),
         proactiveCooldown: num(r.proactiveCooldown, MIX_PHONE_SETTINGS_DEFAULTS.proactiveCooldown),
         proactiveEveryRounds: num(r.proactiveEveryRounds, MIX_PHONE_SETTINGS_DEFAULTS.proactiveEveryRounds),
+        replyPolicy:
+            r.replyPolicy === "roundrobin" || r.replyPolicy === "all"
+                ? r.replyPolicy
+                : "mention",
     };
 }
 

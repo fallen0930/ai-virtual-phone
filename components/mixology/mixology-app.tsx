@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-    Archive, Bookmark, ChevronLeft, Clapperboard, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MoreHorizontal, Network, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
+    Archive, Bookmark, ChevronLeft, Clapperboard, Copy, Download, Edit3, FileText, Folder, FolderPlus, GlassWater, ImageDown, Martini, MessageCircle, MoreHorizontal, Network, Pencil, Play, Plug, Plus, Receipt, RefreshCw, Share2, SlidersHorizontal, Trash2, Upload, Users, Wine, X } from "lucide-react";
 import {
     buildMixSessionTreeStats,
     clearMixMaterialPublished,
@@ -82,6 +82,8 @@ import { exportMixMaterial, exportMixMaterialPng, exportMixRecipeFile, importMix
 import { MixMaterialEditor } from "./mixology-editor";
 import { MixMatAutoCover, mixMatHasAutoCover } from "./mixology-preview";
 import { MixologyGame } from "./mixology-game";
+import { MixPhoneList, phoneHasUnread } from "./mix-phone-list";
+import { MixPhoneThread } from "./mix-phone-thread";
 import { CommentThread, MixologyHall } from "./mixology-hall";
 import { AuthorAvatar, KindGlyph, MatCard, MaterialDetail, MixConfirm, MixTagList, SealedNote, formatMixTime } from "./mixology-shared";
 import { MixConnectorSheet } from "./connector-sheet";
@@ -122,7 +124,7 @@ async function readAvatarFile(file: File): Promise<string> {
     return canvas.toDataURL("image/jpeg", 0.85);
 }
 
-type MixTab = "menu" | "hall" | "bar" | "cabinet" | "games";
+type MixTab = "menu" | "hall" | "bar" | "cabinet" | "games" | "chatroom";
 
 // ── 主组件 ──
 
@@ -229,6 +231,10 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const [recipeName, setRecipeName] = useState("");
     const [openingPicker, setOpeningPicker] = useState<MixRecipe | null>(null);
     const [playing, setPlaying] = useState<string | null>(null);
+    // 聊天室（手机频道）：进入的会话 + 从对局页跳过来时想直接看的世界
+    const [phoneThread, setPhoneThread] = useState<{ worldId: string; threadId: string } | null>(null);
+    const [phoneWorldHint, setPhoneWorldHint] = useState<string | undefined>(undefined);
+    const [phoneDot, setPhoneDot] = useState(false);
     const [toast, setToast] = useState("");
     const [wheelIndex, setWheelIndex] = useState(0);
     const wheelRef = useRef<HTMLDivElement | null>(null);
@@ -248,6 +254,15 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     }, []);
 
     useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+    // 聊天室红点：进 tab / 关会话时粗算一次（绑定局要扫 turns，不进渲染热路径）
+    useEffect(() => {
+        if (tab === "chatroom") {
+            setPhoneDot(false);
+            return;
+        }
+        setPhoneDot(phoneHasUnread());
+    }, [tab, phoneThread]);
 
     useEffect(() => {
         let cancelled = false;
@@ -964,6 +979,13 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                     onBack={() => { setPlaying(null); refresh(); }}
                     onToast={showToast}
                     onSwitchSession={(id) => { setPlaying(id); refresh(); }}
+                    onOpenPhone={(worldId) => {
+                        // 从对局跳进手机频道：退出对局全屏，聊天室定位到那个世界
+                        setPlaying(null);
+                        setPhoneThread(null);
+                        setPhoneWorldHint(worldId);
+                        setTab("chatroom");
+                    }}
                 />
                 {confirm ? (
                 <MixConfirm
@@ -1444,6 +1466,22 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         )}
                     </>
                 ) : null}
+                {tab === "chatroom" ? (
+                    phoneThread ? (
+                        <MixPhoneThread
+                            worldId={phoneThread.worldId}
+                            threadId={phoneThread.threadId}
+                            onBack={() => setPhoneThread(null)}
+                            onToast={showToast}
+                        />
+                    ) : (
+                        <MixPhoneList
+                            initialWorldId={phoneWorldHint}
+                            onOpenThread={(worldId, threadId) => setPhoneThread({ worldId, threadId })}
+                            onToast={showToast}
+                        />
+                    )
+                ) : null}
             </div>
 
             {/* 悬浮创建按钮：必须在滚动容器之外，否则列表滚动后按钮会跟着内容坐标漂移 */}
@@ -1474,6 +1512,10 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                 </button>
                 <button type="button" className="mix-nav-btn" data-active={tab === "games" ? "true" : undefined} onClick={() => setTab("games")}>
                     <GlassWater size={19} strokeWidth={1.8} />对局
+                </button>
+                <button type="button" className="mix-nav-btn" data-active={tab === "chatroom" ? "true" : undefined} onClick={() => setTab("chatroom")}>
+                    <MessageCircle size={19} strokeWidth={1.8} />聊天室
+                    {phoneDot && tab !== "chatroom" ? <span className="mix-phone-navdot" /> : null}
                 </button>
             </div>
 

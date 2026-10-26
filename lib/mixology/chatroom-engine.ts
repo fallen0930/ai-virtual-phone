@@ -176,7 +176,8 @@ export function buildChatroomMessages(input: {
     /** 群聊 true：历史每条带「名字：」前缀，让模型分得清谁在说 */
     labelSpeakers: boolean;
     userName: string;
-    userMessage: string;
+    /** 本条新发言。回复任务里它已随历史进来（写回先行），留空即不再追加 */
+    userMessage?: string;
 }): LLMMessage[] {
     const messages: LLMMessage[] = [{ role: "system", content: input.system }];
     for (const msg of input.history) {
@@ -186,7 +187,9 @@ export function buildChatroomMessages(input: {
             content: input.labelSpeakers ? `${label}：${msg.text}` : msg.text,
         });
     }
-    messages.push({ role: "user", content: input.userMessage });
+    if (input.userMessage) {
+        messages.push({ role: "user", content: input.userMessage });
+    }
     return messages;
 }
 
@@ -314,7 +317,7 @@ export async function runChatroomReply(options: {
     labelSpeakers: boolean;
     userName: string;
     characterName?: string;
-    userMessage: string;
+    userMessage?: string;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
 }): Promise<{ text: string; usage?: ChatroomReplyUsage }> {

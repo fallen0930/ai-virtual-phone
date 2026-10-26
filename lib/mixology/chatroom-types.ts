@@ -49,6 +49,12 @@ export type MixPhoneWorld = {
     /** 面具材料（用户人设）id */
     personaId?: string;
     settings: MixPhoneWorldSettings;
+    /**
+     * 主动消息节奏记忆（scene 轮数，mixRoundCount 口径）：
+     * lastJudgedRounds = 上次判定发生时；lastPingRounds = 上次真发出主动消息时。
+     * 缺省 = 还没判定过（首次放行）。
+     */
+    proactive?: { lastJudgedRounds?: number; lastPingRounds?: number };
 };
 
 export type MixChatThreadKind = "direct" | "group";
@@ -87,6 +93,19 @@ function num(v: unknown, fallback: number): number {
     return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
+function normalizeProactive(raw: unknown): MixPhoneWorld["proactive"] {
+    if (!raw || typeof raw !== "object") return undefined;
+    const o = raw as { lastJudgedRounds?: unknown; lastPingRounds?: unknown };
+    const out: NonNullable<MixPhoneWorld["proactive"]> = {};
+    if (typeof o.lastJudgedRounds === "number" && Number.isFinite(o.lastJudgedRounds)) {
+        out.lastJudgedRounds = o.lastJudgedRounds;
+    }
+    if (typeof o.lastPingRounds === "number" && Number.isFinite(o.lastPingRounds)) {
+        out.lastPingRounds = o.lastPingRounds;
+    }
+    return Object.keys(out).length ? out : undefined;
+}
+
 export function normalizeMixPhoneSettings(raw: unknown): MixPhoneWorldSettings {
     const r = (raw ?? {}) as Partial<Record<keyof MixPhoneWorldSettings, unknown>>;
     return {
@@ -114,6 +133,7 @@ export function normalizeMixPhoneWorld(raw: unknown): MixPhoneWorld {
             : [],
         personaId: typeof r.personaId === "string" ? r.personaId : undefined,
         settings: normalizeMixPhoneSettings(r.settings),
+        proactive: normalizeProactive(r.proactive),
     };
 }
 

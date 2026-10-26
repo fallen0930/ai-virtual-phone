@@ -5,11 +5,12 @@
 // API 走全局默认接口配置（与角色绑定无关，特调对局是独立世界）。
 
 import { ChatEngineError, sendLLMRequest, sendLLMStreamRequest } from "../chat-engine";
-import type { LLMMessage } from "../llm-prompt-assembler";
 import { loadApiConfigs, loadBindingConfig } from "../settings-storage";
 import type { ApiConfig } from "../settings-types";
 import type { MixHookSection } from "./mechanism-protocol";
-import { assembleMixPrompt, MIX_DEFAULT_USER_NAME, MIX_ENCORE_CLOSE, MIX_ENCORE_OPEN, MIX_TICKET_CLOSE, MIX_TICKET_OPEN, mixNamedOpen, type MixAssembledPrompt } from "./assembler";
+import { assembleMixPrompt, MIX_DEFAULT_USER_NAME, type MixAssembledPrompt } from "./assembler";
+import { mixTurnChannel } from "./chatroom-types";
+import { buildMixMessages, phoneHistoryNoteSection, turnToHistoryContent, type MixFeedResolver } from "./history";
 import { applyMixFilterRules, extractMixBlocks, type MixExtractedBlock } from "./prose";
 import { mixCardWorldText } from "./card-freeform";
 import {
@@ -56,6 +57,9 @@ import { mergeHookState, type MixHook, type MixHookPayload } from "./mechanism-p
 import { disposeMixSandboxes, runMixHook } from "./mechanism-runtime";
 import { disposeMixTrusted, runMixTrustedHook } from "./trusted-runtime";
 import { getApiLogs } from "../api-log-store";
+
+// 历史回传的对外 API（对局页/列表/世界树在用）：实现已拆到 history.ts，出口保持不变
+export { limitMixTurns, mixRoundCount, mixTurnRawText } from "./history";
 
 export const MIX_PROMPT_APP_ID = "mixology";
 const MIX_PROMPT_TAGS = ["mixology"];
@@ -104,138 +108,22 @@ function assembleFromSession(session: MixSession, sections?: MixHookSection[]): 
     if (!character || character.kind !== "character") {
         throw new ChatEngineError("这杯特调的角色卡已不在酒柜里，无法继续对局。");
     }
+    // 有手机消息轮时给系统提示词挂「手机消息说明」：教模型理解历史里的
+    // 【手机消息·…】标记（见 history.ts）。与机括挂段走同一条通道。
+    const allSections = [...(sections ?? [])];
+    const phoneNote = phoneHistoryNoteSection(session);
+    if (phoneNote) allSections.push(phoneNote);
     const prompt = assembleMixPrompt({
         character: character as MixCharacterCard,
         materials: active,
         userName: session.userName,
         openingIndex: session.openingIndex,
         state: session.state,
-        sections,
+        sections: allSections,
     });
     const tickets = (active.ticket ?? []).filter((m): m is MixTicketMaterial => m.kind === "ticket");
     const encores = (active.encore ?? []).filter((m): m is MixEncoreMaterial => m.kind === "encore");
     return { prompt, tickets, encores, active };
-}
-
-/**
- * 一块壳内原文还原成带标记的整块。named = 这一轮不止一块，开标签要带名字
- * （名字按块的供稿材料 id 现取；材料被删就退回不具名的壳）。
- */
-function blockText(open: string, close: string, block: MixTurnBlock, named: boolean): string {
-    const name = named && block.id ? getMixMaterial(block.id)?.name?.trim() : undefined;
-    return `${name ? mixNamedOpen(open, name) : open}\n${block.raw}\n${close}`;
-}
-
-/**
- * 一条消息的"原始输出"。存了真原文（rawText，新数据）就直接给——机括标记行、
- * 被滤网洗掉的字只存在于这一份里，拼装还原不出来。
- * 老数据没有 rawText，退回把剥掉的状态栏/小剧场块拼回去的近似还原。
- */
-export function mixTurnRawText(turn: MixTurn): string {
-    if (turn.role !== "assistant") return turn.text;
-    if (turn.rawText !== undefined) return turn.rawText;
-    // 顺序与输出要求一致：状态栏在正文前、小剧场在正文后——历史回放就是模型的"输出习惯"示范
-    const tickets = mixTurnTicketBlocks(turn);
-    const encores = mixTurnEncoreBlocks(turn);
-    return [
-        ...tickets.map((b) => blockText(MIX_TICKET_OPEN, MIX_TICKET_CLOSE, b, tickets.length > 1)),
-        turn.text,
-        ...encores.map((b) => blockText(MIX_ENCORE_OPEN, MIX_ENCORE_CLOSE, b, encores.length > 1)),
-    ].filter(Boolean).join("\n\n");
-}
-
-/** 历史回传裁决：这一块的壳内原文要不要回传给模型（按块的供稿材料各自定） */
-type MixFeedResolver = (kind: "ticket" | "encore", materialId: string | undefined) => "latest" | "all" | "none";
-
-/**
- * 历史回放：默认只有最近一条 assistant 轮补回状态栏/小剧场块。
- * 模型需要的只有两样——最新状态的接续（契约的变化规则只依赖上一轮的值）
- * 和一份格式示范（防掉格式），最后一块两者都够；更旧的块随轮数线性膨胀，
- * 是纯 token 负担（按信息量基准每轮各两三百字，长局能省上万字符）。
- * 材料自己可改档（按块裁决，多块互不牵连）：all = 它的往期块逐轮回传；
- * none = 连最近一轮都不回传，一个字不占。存储不动：块原文原样留着，
- * 界面回放与编辑不受影响。
- */
-function turnToHistoryContent(turn: MixTurn, isLast: boolean, feedOf?: MixFeedResolver): string {
-    if (turn.role !== "assistant") return turn.text;
-    const tickets = mixTurnTicketBlocks(turn);
-    const encores = mixTurnEncoreBlocks(turn);
-    const keep = (kind: "ticket" | "encore") => (b: MixTurnBlock) => {
-        const feed = feedOf?.(kind, b.id) ?? "latest";
-        return feed === "all" || (isLast && feed !== "none");
-    };
-    return [
-        ...tickets.filter(keep("ticket")).map((b) => blockText(MIX_TICKET_OPEN, MIX_TICKET_CLOSE, b, tickets.length > 1)),
-        turn.text,
-        ...encores.filter(keep("encore")).map((b) => blockText(MIX_ENCORE_OPEN, MIX_ENCORE_CLOSE, b, encores.length > 1)),
-    ].filter(Boolean).join("\n\n");
-}
-
-/**
- * 回传轮数上限：只保留最近 limit 轮（一轮 = 一条 assistant 回复，连同它前面的
- * 玩家发言）。默认不裁——玩家在对局设置里调了才生效；只裁发给模型的消息，
- * 存储与界面回放永远完整。
- */
-/**
- * 对局进行了几轮：玩家发一句、模型回一句算一轮，按玩家发言数算。
- * 开场白不算轮；玩家刚发完还没等到回复的那一轮也算在内。列表页与删除确认用它计数。
- */
-export function mixRoundCount(turns: MixTurn[]): number {
-    return turns.reduce((n, t) => (t.role === "user" ? n + 1 : n), 0);
-}
-
-export function limitMixTurns(turns: MixTurn[], limit: number | undefined): MixTurn[] {
-    if (!limit || limit <= 0) return turns;
-    let count = 0;
-    for (let i = turns.length - 1; i >= 0; i -= 1) {
-        if (turns[i].role !== "assistant") continue;
-        count += 1;
-        if (count > limit) return turns.slice(i + 1);
-    }
-    return turns;
-}
-
-function buildMixMessages(
-    session: MixSession,
-    assembled: MixAssembledPrompt,
-    extraUserNudge?: string,
-    feedOf?: MixFeedResolver,
-    lastReplyOverride?: string,
-): LLMMessage[] {
-    const messages: LLMMessage[] = [
-        { role: "system", content: assembled.system, _debugMeta: { marker: "mixology_system" } },
-    ];
-    const turns = limitMixTurns(session.turns, session.historyLimit);
-    let lastAssistantIdx = -1;
-    for (let i = turns.length - 1; i >= 0; i -= 1) {
-        if (turns[i].role === "assistant") { lastAssistantIdx = i; break; }
-    }
-    for (const [i, turn] of turns.entries()) {
-        const isLast = i === lastAssistantIdx;
-        messages.push({
-            role: turn.role,
-            // 机括落杯前改写过最近一条 assistant：发给模型的整条换成它给的（只改请求，不落库）
-            content: isLast && typeof lastReplyOverride === "string"
-                ? lastReplyOverride
-                : turnToHistoryContent(turn, isLast, feedOf),
-            _debugMeta: { marker: "mixology_history", _fromHistory: true },
-        });
-    }
-    if (assembled.postHistory) {
-        messages.push({
-            role: "system",
-            content: assembled.postHistory,
-            _debugMeta: { marker: "mixology_strength" },
-        });
-    }
-    if (extraUserNudge) {
-        messages.push({
-            role: "user",
-            content: extraUserNudge,
-            _debugMeta: { marker: "mixology_nudge" },
-        });
-    }
-    return messages;
 }
 
 /** 开局：按方案快照建对局，开场白作为首条 assistant 消息 */
@@ -403,8 +291,9 @@ async function runMechanismHooks(
  * 返回本轮机括名单，出杯后照单回收。lastReply 只在有机括真改了时才返回（没改就按原样拼历史）。
  */
 async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{ session: MixSession; text?: string; note?: string; sections: MixHookSection[]; roster: MixMechanismMaterial[]; lastReply?: string }> {
-    // 最近一条 assistant 将要发给模型的样子：与 buildMixMessages 同一口径（回传裁决也一样）
-    const lastAssistant = [...session.turns].reverse().find((t) => t.role === "assistant");
+    // 最近一条 assistant 将要发给模型的样子：与 buildMixMessages 同一口径（回传裁决也一样）。
+    // 只看 scene 轮——机括改写属于正文流水线，最近一条若是手机消息轮不能拿来改写
+    const lastAssistant = [...session.turns].reverse().find((t) => t.role === "assistant" && mixTurnChannel(t) === "scene");
     const feedOf = buildFeedResolver(session, sessionTickets(session).filter((t) => t.contract.trim()), sessionEncores(session).filter((e) => e.contract?.trim()));
     const lastReply = lastAssistant ? turnToHistoryContent(lastAssistant, true, feedOf) : undefined;
     const result = await runMechanismHooks(session, "beforeSend", { text, lastReply });

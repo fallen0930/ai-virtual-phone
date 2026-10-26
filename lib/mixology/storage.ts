@@ -6,6 +6,7 @@
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
 import { dropMixPendingForSession } from "./pending-queue";
 import { purgeNarrativeSessionData } from "../narrative-writer/storage";
+import { deletePhoneDataBySession } from "./chatroom-storage";
 import type {
     MixConnector,
     MixFavoritePreset,
@@ -428,6 +429,10 @@ export function deleteMixSession(id: string): void {
     }
 
     writeJson(SESSIONS_KEY, list.filter((s) => s.id !== id));
+    // 聊天室（手机频道）绑在这场对局名下的世界与会话一并清掉：聊天记录的单一
+    // 事实源是对局 turns 里的 msg 轮，对局没了记录就没了，空壳世界不留孤儿。
+    // 独立世界（没绑对局的）不受影响。
+    deletePhoneDataBySession(id);
     // 顺手从所有对局文件夹里摘掉这场，文件夹的 sessionIds 不会越攒越脏
     const folders = loadMixSessionFolders();
     let changed = false;

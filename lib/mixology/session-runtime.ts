@@ -13,6 +13,8 @@ export type MixGenStatus = "generating" | "queued" | "done" | "error";
 export type MixRunningSession = {
     sessionId: string;
     status: MixGenStatus;
+    /** 频道：scene = 对局推演（缺省）；msg = 聊天室消息/主动消息判定。独立世界用 world: 伪 key */
+    channel?: "scene" | "msg";
     /** 当前流式输出的文本（生成中时持续更新） */
     liveText: string;
     /** 错误信息（status === "error" 时有值） */
@@ -40,6 +42,7 @@ const _listeners = new Set<() => void>();
 /** 排队中的任务队列 */
 type QueuedTask = {
     sessionId: string;
+    channel: "scene" | "msg";
     generator: (signal: AbortSignal, onDelta: (text: string) => void) => Promise<void>;
 };
 const _queue: QueuedTask[] = [];
@@ -237,7 +240,7 @@ function pumpQueue() {
     const controller = new AbortController();
     _controllers.set(next.sessionId, controller);
 
-    updateEntry(next.sessionId, { status: "generating", liveText: "" });
+    updateEntry(next.sessionId, { status: "generating", liveText: "", channel: next.channel });
 
     startGeneration(next.sessionId, controller, next.generator);
 
@@ -256,8 +259,10 @@ function pumpQueue() {
  */
 export function enqueueMixGeneration(
     sessionId: string,
-    generator: (signal: AbortSignal, onDelta: (text: string) => void) => Promise<void>
+    generator: (signal: AbortSignal, onDelta: (text: string) => void) => Promise<void>,
+    options?: { channel?: "scene" | "msg" },
 ): void {
+    const channel = options?.channel ?? "scene";
     // 如果已经在运行或排队，忽略重复提交
     if (_state.running[sessionId]) return;
 
@@ -276,6 +281,7 @@ export function enqueueMixGeneration(
                 [sessionId]: {
                     sessionId,
                     status: "generating",
+                    channel,
                     liveText: "",
                     startedAt: now,
                 },
@@ -286,7 +292,7 @@ export function enqueueMixGeneration(
         startGeneration(sessionId, controller, generator);
     } else {
         // 进入排队
-        _queue.push({ sessionId, generator });
+        _queue.push({ sessionId, channel, generator });
         _state = {
             ..._state,
             running: {
@@ -294,6 +300,7 @@ export function enqueueMixGeneration(
                 [sessionId]: {
                     sessionId,
                     status: "queued",
+                    channel,
                     liveText: "",
                     startedAt: now,
                 },
@@ -301,6 +308,27 @@ export function enqueueMixGeneration(
         };
         notifyListeners();
     }
+}
+
+/**
+ * 忙时排队而非丢弃的入队（聊天室/主动消息用）。
+ *
+ * 为什么需要它：绑定世界的手机消息与对局推演共用 sessionId 键，常规 enqueue
+ * 的「忽略重复提交」会把用户刚发的聊天消息整个吞掉。这里改成排队等位——
+ * 与对局推演串行互斥，谁也不会覆盖谁的 turns；空闲时行为与常规入队一致。
+ * 同一个 sessionId 只排一个任务：连点不叠加。
+ */
+export function enqueueMixGenerationQueued(
+    sessionId: string,
+    generator: (signal: AbortSignal, onDelta: (text: string) => void) => Promise<void>,
+    options?: { channel?: "scene" | "msg" },
+): void {
+    if (!_state.running[sessionId]) {
+        enqueueMixGeneration(sessionId, generator, options);
+        return;
+    }
+    if (_queue.some((task) => task.sessionId === sessionId)) return;
+    _queue.push({ sessionId, channel: options?.channel ?? "msg", generator });
 }
 
 /**

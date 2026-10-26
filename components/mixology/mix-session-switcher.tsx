@@ -132,9 +132,10 @@ export function MixSessionSwitcher({ sessionId, onSwitch }: Props) {
         getMixSessionRuntimeState
     );
 
-    // 是否有对局正在生成（用于悬浮球上的呼吸提示）
-    const anyGenerating = Object.values(runtimeState.running).some(
-        (s) => s.status === "generating" || s.status === "queued"
+    // 是否有对局正在生成（用于悬浮球上的呼吸提示）。
+    // world: 伪 key 是独立世界的聊天生成，不属于任何一场对局，不点亮对局悬浮球
+    const anyGenerating = Object.entries(runtimeState.running).some(
+        ([id, s]) => !id.startsWith("world:") && (s.status === "generating" || s.status === "queued")
     );
 
     const refreshSessions = useCallback(() => {

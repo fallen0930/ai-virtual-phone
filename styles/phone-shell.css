@@ -326,6 +326,8 @@
   flex: 0 0 100%;
   width: 100%;
   -webkit-touch-callout: none;
+  /* 拖动期间网格内部布局变化（图标换位/让位）不影响外部，减少 reflow 范围 */
+  contain: layout style;
   /* 窄视口（系统显示大小调大，CSS 视口 330~370px）下格子收缩；
      视口 ≥374px 算出值 ≥66 被钳回 66px——正常手机零变化。dock 用同一公式保持上下对齐。 */
   --slot-size: clamp(56px, calc((100vw - 108px) / 4), 66px);
@@ -1175,26 +1177,38 @@
      软键盘弹起时 dvh 会缩，聊天那边的抬升逻辑（--mobile-keyboard-lift）假设画面高度不变，
      全屏 Chrome 用户本来就一切正常，没必要为他们引入一次重排。全屏态 dvh==lvh，这条等于没改。
      老内核没有 :fullscreen（或只认 -webkit- 前缀）时整条选择器无效 → 退回原来的 100lvh，
-     是"保持已知行为"的降级方向，不会把高度弄没。
-     注意 Lightning CSS 会把 `height:100lvh; height:min(100dvh,…)` 这种同选择器的重复声明
-     **折叠成只剩后一条**（build 产物实测），所以别指望两行写法在产物里当保底——保底靠的是选择器失效。 */
+     Lightning CSS 会把媒体查询外的基础规则合并为 `.app-root,body,html{height:100lvh}`
+     并排在媒体查询规则之后，同优先级下后者覆盖前者。加 !important 强制媒体查询规则胜出。 */
   html:not(:fullscreen),
   html:not(:fullscreen) body {
-    height: min(100dvh, 100lvh);
+    height: min(100dvh, 100lvh) !important;
   }
 
   html:not(:fullscreen) .app-root {
-    height: min(100dvh, 100lvh);
+    height: min(100dvh, 100lvh) !important;
   }
 
   /* .phone-shell 是 dock 的实际排版父级，只改 app-root 不够：壳自己还按 --phone-screen-height 走。
-     这里覆盖外层 `.phone-shell{height:var(--phone-screen-height)}`，全屏态不覆盖、观感不变。 */
+     这里覆盖外层 `.phone-shell{height:var(--phone-screen-height)}`，全屏态不覆盖、观感不变。
+     同样需要 !important：基础规则 `.phone-shell{height:var(--phone-screen-height)}` 被 Lightning CSS
+     合并后可能排在媒体查询规则之后。 */
   html:not(:fullscreen) .phone-shell {
-    height: min(100dvh, var(--phone-screen-height));
+    height: min(100dvh, var(--phone-screen-height)) !important;
   }
 
-  html,
-  body {
+  /* 非全屏时贴"当前可见高度"，全屏时贴 lvh（全屏态 dvh==lvh，效果相同）。
+     这里必须带 :not(:fullscreen) 门控：前面 1183-1196 行的 min(100dvh,100lvh) 规则
+     会被同选择器的后续声明覆盖，不加门控就白写了——底部 dock 和内容会被裁掉。 */
+  html:not(:fullscreen),
+  html:not(:fullscreen) body {
+    overflow: hidden;
+    width: 100%;
+    height: min(100dvh, 100lvh) !important;
+    background: var(--c-page-body-bg);
+  }
+
+  html:fullscreen,
+  html:fullscreen body {
     overflow: hidden;
     width: 100%;
     height: 100lvh;
@@ -1203,7 +1217,7 @@
 
   .app-root {
     width: 100vw;
-    height: 100lvh;
+    height: min(100dvh, 100lvh) !important;
     padding: 0;
     display: flex;
     justify-content: flex-start;

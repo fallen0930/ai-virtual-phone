@@ -9,6 +9,12 @@ import { startFollowUpService, stopFollowUpService } from "@/lib/follow-up-servi
 import { startMomentsService, stopMomentsService } from "@/lib/moments-engine";
 import { bgTimerCleanup } from "@/lib/bg-timer";
 import { isMobilePhoneViewport } from "@/lib/pwa-display-mode";
+import {
+  KEYBOARD_LIFT_SETTLE_DELAYS_MS,
+  KEYBOARD_LIFT_WATCHDOG_MS,
+  clampKeyboardLift,
+  shouldApplyKeyboardLift,
+} from "@/lib/keyboard-lift-guard";
 import { PhonePlaceholderApp } from "@/components/phone-placeholder-app";
 import MusicPlayer from "@/components/music/music-player";
 import MusicFloat from "@/components/music/music-float";
@@ -813,13 +819,15 @@ function getGridGeometry(gridEl: HTMLElement): GridGeometry {
   return { originX, originY, colStep: colWidth + colGap, rowStep: rowHeight + rowGap, colWidth, rowHeight };
 }
 
-/** Convert pointer screen position to a grid cell (0-based) */
+/** Convert pointer screen position to a grid cell (0-based).
+ *  Accepts pre-computed geometry to avoid per-call getBoundingClientRect. */
 function pointerToGridCell(
   px: number,
   py: number,
-  gridEl: HTMLElement
+  gridEl: HTMLElement,
+  cachedGeom?: GridGeometry | null
 ): { row: number; col: number } | null {
-  const geom = getGridGeometry(gridEl);
+  const geom = cachedGeom ?? getGridGeometry(gridEl);
   const col = Math.floor((px - geom.originX) / geom.colStep);
   const row = Math.floor((py - geom.originY) / geom.rowStep);
   if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return null;
@@ -973,6 +981,8 @@ function useAndroidCaretKeyboardLift() {
     let focusedElement: HTMLElement | null = null;
     let raf = 0;
     let currentLift = 0;
+    let watchdog = 0;
+    const settleTimers: number[] = [];
 
     const applyLift = (nextLift: number) => {
       const rounded = Math.max(0, Math.round(nextLift));
@@ -985,32 +995,72 @@ function useAndroidCaretKeyboardLift() {
       }
     };
 
+    /**
+     * 键盘高度：这一处原本只信事件（focusout / visualViewport resize），漏一次事件画面就永久
+     * 靠上（2026-11-04 她报特调"玩着玩着界面靠上，退出键点不到"，且键盘收起之后仍然靠上）。
+     * 现在一切以实测为准，判据本身收在 lib/keyboard-lift-guard.ts。
+     */
+    const readKeyboardInset = () => {
+      if (!viewport) return 0;
+      return Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+    };
+
     const update = () => {
       raf = 0;
+      // 焦点以 document.activeElement 为准，不赌 focusin / focusout 谁先谁后：
+      // 原生层收键盘、切后台回来都可能不发 focusout，这时必须能自己认出来"没人要输入了"
+      const active = document.activeElement;
+      if (isKeyboardEditableElement(active)) {
+        focusedElement = active;
+      } else {
+        focusedElement = null;
+      }
+      const keyboardInsetPx = readKeyboardInset();
+      const liftWanted = shouldApplyKeyboardLift({
+        isAndroid: true,
+        isPhoneViewport: isMobilePhoneViewport(),
+        hasEditableFocus: focusedElement !== null,
+        keyboardInsetPx,
+      });
+      if (!liftWanted) {
+        applyLift(0);
+        return;
+      }
       const element = focusedElement;
-      if (!element || document.activeElement !== element || !isMobilePhoneViewport() || !viewport) {
+      if (!element || !viewport) {
         applyLift(0);
         return;
       }
 
       const keyboardTop = viewport.offsetTop + viewport.height;
-      const keyboardInset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
       const targetRect = getKeyboardTargetRect(element);
       const gap = 36;
-
-      if (keyboardInset < 80) {
-        applyLift(0);
-        return;
-      }
-
       const naturalBottom = targetRect.bottom + currentLift;
       const neededLift = Math.max(0, naturalBottom + gap - keyboardTop);
-      applyLift(Math.min(keyboardInset, neededLift));
+      applyLift(clampKeyboardLift(neededLift, keyboardInsetPx));
+
+      // 抬升还挂着就自己排一次复查：焦点没了、键盘藏了不 blur、事件一个都不发的那几条路，
+      // 都由这一发兜住，而不是等下次点键盘
+      if (watchdog) window.clearTimeout(watchdog);
+      if (currentLift > 0) watchdog = window.setTimeout(requestUpdate, KEYBOARD_LIFT_WATCHDOG_MS);
     };
 
     const requestUpdate = () => {
       if (raf) window.cancelAnimationFrame(raf);
       raf = window.requestAnimationFrame(update);
+    };
+
+    /**
+     * 收键盘那一刻补测几次：动画期里 visualViewport 会连着报好几个中间值，
+     * 只测一次容易停在中间值上（同一套延迟在通话那处已验证过能盖住这几条路径）。
+     */
+    const scheduleSettleChecks = () => {
+      // 上一批还没跑的补测直接作废：视口一直在变时不留堆积，数组不会越拖越长
+      for (const timer of settleTimers) window.clearTimeout(timer);
+      settleTimers.length = 0;
+      for (const delay of KEYBOARD_LIFT_SETTLE_DELAYS_MS) {
+        settleTimers.push(window.setTimeout(requestUpdate, delay));
+      }
     };
 
     const handleFocusIn = (event: FocusEvent) => {
@@ -1023,14 +1073,32 @@ function useAndroidCaretKeyboardLift() {
     const handleFocusOut = () => {
       focusedElement = null;
       applyLift(0);
+      if (watchdog) {
+        window.clearTimeout(watchdog);
+        watchdog = 0;
+      }
+      scheduleSettleChecks();
     };
 
     const handleCaretMove = () => {
       if (focusedElement) requestUpdate();
     };
 
-    const handleViewportChange = () => {
-      if (focusedElement) requestUpdate();
+    // 尺寸/偏移一变就重算，且不再拿 focusedElement 当门神：切后台回来时焦点引用可能是陈的
+    const handleViewportResize = () => {
+      requestUpdate();
+      // 只有 resize 代表键盘在开合，才需要补测；scroll 是手指在翻正文，别每次都排三个定时器
+      scheduleSettleChecks();
+    };
+
+    const handleViewportScroll = () => {
+      requestUpdate();
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      requestUpdate();
+      scheduleSettleChecks();
     };
 
     document.addEventListener("focusin", handleFocusIn);
@@ -1038,18 +1106,23 @@ function useAndroidCaretKeyboardLift() {
     document.addEventListener("click", handleCaretMove, true);
     document.addEventListener("keyup", handleCaretMove, true);
     document.addEventListener("input", handleCaretMove, true);
-    viewport?.addEventListener("resize", handleViewportChange);
-    viewport?.addEventListener("scroll", handleViewportChange);
+    viewport?.addEventListener("resize", handleViewportResize);
+    viewport?.addEventListener("scroll", handleViewportScroll);
+    document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
       if (raf) window.cancelAnimationFrame(raf);
+      if (watchdog) window.clearTimeout(watchdog);
+      for (const timer of settleTimers) window.clearTimeout(timer);
+      settleTimers.length = 0;
       document.removeEventListener("focusin", handleFocusIn);
       document.removeEventListener("focusout", handleFocusOut);
       document.removeEventListener("click", handleCaretMove, true);
       document.removeEventListener("keyup", handleCaretMove, true);
       document.removeEventListener("input", handleCaretMove, true);
-      viewport?.removeEventListener("resize", handleViewportChange);
-      viewport?.removeEventListener("scroll", handleViewportChange);
+      viewport?.removeEventListener("resize", handleViewportResize);
+      viewport?.removeEventListener("scroll", handleViewportScroll);
+      document.removeEventListener("visibilitychange", handleVisibility);
       root.style.removeProperty("--mobile-keyboard-lift");
     };
   }, []);
@@ -1267,6 +1340,9 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
 
   // ── FLIP：编辑/拖拽中，图标与组件"让位"时平滑滑动到新格（grid 行列本身不可过渡）──
   // 坐标取相对所在 icon-grid 的局部值，整页横滑平移不会误触发动画。
+  // 拖动进行中跳过测量：每帧 pointermove 都触发 useLayoutEffect，遍历全部
+  // [data-flip-id] 读 getBoundingClientRect 是主要开销之一。落位后由 commitDrop
+  // 的 ghost 动画代替，视觉一致。
   const flipRectsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   useLayoutEffect(() => {
     const editing = editMode || dragItem !== null;
@@ -1274,6 +1350,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       if (flipRectsRef.current.size) flipRectsRef.current = new Map();
       return;
     }
+    // 拖拽激活期间跳过 FLIP 测量，减少每帧 layout effect 开销
+    if (dragFlipSkipRef.current) return;
     const prev = flipRectsRef.current;
     const next = new Map<string, { x: number; y: number }>();
     const entries: Array<{ el: HTMLElement; key: string; x: number; y: number }> = [];
@@ -1388,6 +1466,26 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     mergeTargetIconId: DesktopIconId | null;
     mergeTargetPage: DesktopPageKey | null;
   } | null>(null);
+  // ── 拖动性能优化：rAF 单帧调度 + 几何缓存 ──
+  // pointermove 每帧只记坐标，在一个 rAF 里统一处理碰撞+布局模拟，多余帧跳过。
+  // 几何缓存避免每帧调 getBoundingClientRect / getComputedStyle。
+  const dragSchedulerRef = useRef<{
+    rafId: number;
+    pendingX: number;
+    pendingY: number;
+    hasPending: boolean;
+    cachedGridGeom: GridGeometry | null;
+    cachedGridKey: string;
+  }>({
+    rafId: 0,
+    pendingX: 0,
+    pendingY: 0,
+    hasPending: false,
+    cachedGridGeom: null,
+    cachedGridKey: "",
+  });
+  // 拖动期间跳过 FLIP useLayoutEffect，避免每帧遍历所有 [data-flip-id] 测量位置
+  const dragFlipSkipRef = useRef(false);
   const editTapRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   // Refs to latest state for use in stable callbacks
   const currentPageIndexRef = useRef(currentPageIndex);
@@ -2867,6 +2965,18 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     drag.shellTop = shellRect?.top ?? 0;
     setDragItem({ type: drag.itemType, id: drag.itemId, sourcePage: drag.sourcePage });
     try { workspaceRef.current?.setPointerCapture(pointerId); } catch { /* pointer 可能已抬起 */ }
+    // 缓存当前页网格几何，拖动期间避免每帧 getBoundingClientRect + getComputedStyle
+    const pageIdx = currentPageIndexRef.current;
+    const activePageKeys = getDesktopPageKeysForState(layoutRef.current, widgetsRef.current);
+    const pageKey = activePageKeys[Math.min(pageIdx, activePageKeys.length - 1)] ?? "page1";
+    const gridEl = gridRefs.current[pageKey];
+    const sched = dragSchedulerRef.current;
+    if (gridEl) {
+      sched.cachedGridGeom = getGridGeometry(gridEl);
+      sched.cachedGridKey = pageKey;
+    }
+    // 拖动期间跳过 FLIP 测量，落位动画由 ghost 接管
+    dragFlipSkipRef.current = true;
     updateGhostPos(clientX, clientY);
   }
 
@@ -2920,7 +3030,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     clearMergeIntent(drag);
   }
 
-  function updateDropTargetFromPointer(x: number, y: number) {
+  function updateDropTargetFromPointer(x: number, y: number, cachedGeom?: GridGeometry | null) {
     const drag = editDragRef.current;
     if (!drag) return;
 
@@ -2957,6 +3067,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     const pageNum = getDesktopPageNumber(pageKey) || 1;
     const ws = widgetsRef.current;
+    // 使用调用方传入的缓存几何，避免每帧 getBoundingClientRect + getComputedStyle
+    const geom = cachedGeom ?? getGridGeometry(gridEl);
 
     if (drag.itemType === "icon") {
       // ── 矩形碰撞裁决（iOS 手感）──
@@ -2965,7 +3077,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       // ~0.2s 后亮圈武装，松手成组）；两边都不过半 = 换位（目标让位，照旧）。
       // 相交期间不改判——边对边推进去永远是合并，切着角进去永远是换位；
       // 想改判把图标拉开重新进即可。文件夹 tile 只换位不合并（不嵌套）。
-      const geom = getGridGeometry(gridEl);
       const dragBoxW = Math.min(58, drag.ghostW);
       const dragLeft = x - drag.offsetX + (drag.ghostW - dragBoxW) / 2;
       const dragTop = y - drag.offsetY;
@@ -3029,7 +3140,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       if (drag.contactId) clearContact(drag);
       const probeX = x - drag.offsetX + drag.ghostW / 2;
       const probeY = y - drag.offsetY + dragBoxW / 2;
-      const cell = pointerToGridCell(probeX, probeY, gridEl);
+      const cell = pointerToGridCell(probeX, probeY, gridEl, geom);
       if (!cell) {
         if (drag.targetPage !== null) resetDragPreview(drag);
         drag.targetPage = null;
@@ -3046,7 +3157,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       setDropTarget({ page: pageKey, row: cell.row + 1, col: cell.col + 1 });
       simulateDragReflow(drag, pageKey, cell.row + 1, cell.col + 1);
     } else {
-      const cell = pointerToGridCell(x, y, gridEl);
+      const cell = pointerToGridCell(x, y, gridEl, geom);
       if (!cell) {
         if (drag.targetPage !== null) resetDragPreview(drag);
         drag.targetPage = null;
@@ -3254,7 +3365,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     const ws = workspaceRef.current;
     if (!drag || !ws) return;
     const rect = ws.getBoundingClientRect();
-    const EDGE = 36;
+    // 边缘区域收窄（36→24px），配合更长计时（350→650ms），
+    // 多桌面拖动时路过边缘不会误翻页；必须刻意停留才触发
+    const EDGE = 24;
     const pageIdx = currentPageIndexRef.current;
     const activePageKeys = getDesktopPageKeysForState(layoutRef.current, widgetsRef.current);
     const lastPageIndex = Math.max(0, activePageKeys.length - 1);
@@ -3268,7 +3381,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         setCurrentPageIndex(Math.max(0, pageIdx - 1));
         drag.edgeTimer = null;
         drag.lastTargetKey = "";
-      }, 350);
+        // 翻页后网格几何缓存失效，强制下次 rAF 重算
+        dragSchedulerRef.current.cachedGridGeom = null;
+        dragSchedulerRef.current.cachedGridKey = "";
+      }, 650);
     } else if (canSwitchRight && !drag.edgeTimer) {
       drag.edgeTimer = setTimeout(() => {
         if (pageIdx >= lastPageIndex) {
@@ -3282,7 +3398,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         setCurrentPageIndex(pageIdx + 1);
         drag.edgeTimer = null;
         drag.lastTargetKey = "";
-      }, 350);
+        // 翻页后网格几何缓存失效，强制下次 rAF 重算
+        dragSchedulerRef.current.cachedGridGeom = null;
+        dragSchedulerRef.current.cachedGridKey = "";
+      }, 650);
     } else if (!canSwitchLeft && !canSwitchRight && drag.edgeTimer) {
       clearTimeout(drag.edgeTimer);
       drag.edgeTimer = null;
@@ -3397,6 +3516,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     const shellTop = drag.shellTop;
     editDragRef.current = null;
     setDropTarget(null);
+    // 清理 rAF 调度器 + 几何缓存 + FLIP 跳过标记
+    const sched = dragSchedulerRef.current;
+    if (sched.rafId) { cancelAnimationFrame(sched.rafId); sched.rafId = 0; }
+    sched.hasPending = false;
+    sched.cachedGridGeom = null;
+    sched.cachedGridKey = "";
+    dragFlipSkipRef.current = false;
 
     const ghost = ghostRef.current;
     const finalize = () => {
@@ -4072,9 +4198,50 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         return;
       }
       if (drag.active) {
+        // Ghost 位置同步更新（纯 DOM translate3d，GPU 合成层，零布局开销）
         updateGhostPos(e.clientX, e.clientY);
-        updateDropTargetFromPointer(e.clientX, e.clientY);
-        checkEdgeSwitch(e.clientX);
+        // 碰撞检测 + 布局模拟 + 边缘翻页推迟到下一帧统一处理，
+        // 多次 pointermove 只处理最后一次，避免一帧内重复计算
+        const sched = dragSchedulerRef.current;
+        sched.pendingX = e.clientX;
+        sched.pendingY = e.clientY;
+        sched.hasPending = true;
+        if (!sched.rafId) {
+          sched.rafId = requestAnimationFrame(() => {
+            sched.rafId = 0;
+            if (!sched.hasPending) return;
+            sched.hasPending = false;
+            const d = editDragRef.current;
+            if (!d || !d.active) return;
+            const px = sched.pendingX;
+            const py = sched.pendingY;
+            // 页面切换后缓存失效，重新计算网格几何
+            const pageIdx = currentPageIndexRef.current;
+            const activePageKeys = getDesktopPageKeysForState(layoutRef.current, widgetsRef.current);
+            const pk = activePageKeys[Math.min(pageIdx, activePageKeys.length - 1)] ?? "page1";
+            if (sched.cachedGridKey !== pk) {
+              const g = gridRefs.current[pk];
+              if (g) {
+                sched.cachedGridGeom = getGridGeometry(g);
+                sched.cachedGridKey = pk;
+              }
+            }
+            // Dock 路径：图标拖入 dock
+            if (d.itemType === "icon" && pointerOverDock(px, py)) {
+              updateDropTargetFromPointer(px, py, sched.cachedGridGeom);
+              checkEdgeSwitch(px);
+              return;
+            }
+            // 网格路径：确保有缓存几何
+            const gridEl = gridRefs.current[pk];
+            if (!sched.cachedGridGeom && gridEl) {
+              sched.cachedGridGeom = getGridGeometry(gridEl);
+              sched.cachedGridKey = pk;
+            }
+            updateDropTargetFromPointer(px, py, sched.cachedGridGeom);
+            checkEdgeSwitch(px);
+          });
+        }
         return;
       }
     }
@@ -4133,6 +4300,19 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     // ── Edit mode drag end ──
     const drag = editDragRef.current;
     if (drag && drag.pointerId === e.pointerId) {
+      // 松手前同步刷新 rAF 调度器里待处理的拖动更新，确保 commitDrop 读到最新目标
+      const sched = dragSchedulerRef.current;
+      if (sched.rafId) {
+        cancelAnimationFrame(sched.rafId);
+        sched.rafId = 0;
+      }
+      if (sched.hasPending) {
+        sched.hasPending = false;
+        // 清除几何缓存，强制用当前 DOM 位置重算（松手时网格可能已偏移）
+        sched.cachedGridGeom = null;
+        sched.cachedGridKey = "";
+        updateDropTargetFromPointer(sched.pendingX, sched.pendingY);
+      }
       commitDrop();
       return;
     }

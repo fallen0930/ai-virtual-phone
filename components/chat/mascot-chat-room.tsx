@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, ChevronLeft, Code, FileText, Gauge, Image as ImageIcon, MessageSquare, MessagesSquare, MoreHorizontal, Sparkles, Trash2, UserRound } from "lucide-react";
+import { AlertCircle, ChevronLeft, Code, FileText, Gauge, Image as ImageIcon, MessageSquare, MessagesSquare, MoreHorizontal, ScrollText, SlidersHorizontal, Sparkles, Trash2, UserRound } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
+import { MascotDiagPage } from "@/components/chat/mascot-diag-page";
 import { Input } from "@/components/ui/form";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
@@ -36,6 +37,18 @@ import {
     switchMascotSession,
     toggleMascotSessionPin,
 } from "@/lib/mascot-chat-store";
+import {
+    MASCOT_DEFAULT_MAX_OUTPUT_TOKENS,
+    MASCOT_DEFAULT_MAX_ROUNDS,
+    MASCOT_MAX_OUTPUT_TOKENS_MAX,
+    MASCOT_MAX_OUTPUT_TOKENS_MIN,
+    MASCOT_MAX_ROUNDS_MAX,
+    MASCOT_MAX_ROUNDS_MIN,
+    getMascotMaxOutputTokens,
+    getMascotMaxRounds,
+    setMascotMaxOutputTokens,
+    setMascotMaxRounds,
+} from "@/lib/mascot-prefs";
 import { MascotSessionDrawer } from "./mascot-session-drawer";
 import { ChatDocAttachmentTray, ChatDocImportSheet } from "./chat-doc-import";
 import {
@@ -45,6 +58,8 @@ import {
 } from "@/lib/chat-document-import";
 import type { MascotMsg } from "@/lib/mascot-engine";
 import { getMascotContext, subscribeMascotContext } from "@/lib/mascot-context";
+import { mascotNavigate } from "@/lib/mascot-events";
+import { extractMixMaterialIds, requestOpenMixMaterial } from "@/lib/mascot-material-jump";
 import {
     DEFAULT_MASCOT_AVATAR,
     DEFAULT_MASCOT_SETTINGS,
@@ -61,6 +76,9 @@ import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import { shouldSendChatInputOnEnter } from "@/lib/chat-input-keyboard";
 import { useChatBottomReserve } from "./use-chat-bottom-reserve";
+import { useComposerExpand } from "./use-composer-expand";
+import { ChatComposerExpandButton } from "./chat-composer-expand-button";
+import { MascotWaitingProgress } from "@/components/mascot/mascot-waiting-progress";
 
 type MascotChatRoomProps = {
     onBack: () => void;
@@ -160,11 +178,15 @@ function MascotInfoPanel({
     const [editingPersona, setEditingPersona] = useState(false);
     const [personaDraft, setPersonaDraft] = useState(settings.personaPrompt);
     const [editingCSS, setEditingCSS] = useState(false);
+    const [showDiag, setShowDiag] = useState(false);
     const [cssDraft, setCssDraft] = useState(settings.chatCustomCSS || "");
     const [showConfirmClearTools, setShowConfirmClearTools] = useState(false);
     const [showConfirmDelete, setShowConfirmDelete] = useState(false);
     const [editingBudget, setEditingBudget] = useState(false);
     const [budgetDraft, setBudgetDraft] = useState(String(MASCOT_DEFAULT_CONTEXT_BUDGET_CHARS));
+    /** 卷宝的两条护栏（与工坊同款）：单次输出上限、单轮工具调用上限 */
+    const [paramTarget, setParamTarget] = useState<"rounds" | "output_tokens" | null>(null);
+    const [paramDraft, setParamDraft] = useState("");
     const chat = useSyncExternalStore(subscribeMascotChat, getMascotChatSnapshot, getMascotChatSnapshot);
     const hasToolHistory = hasMascotToolHistoryMessages(chat.messages);
     const hasCustomAvatar = !!settings.avatarImage && settings.avatarImage !== DEFAULT_MASCOT_AVATAR;
@@ -335,6 +357,44 @@ function MascotInfoPanel({
                         </div>
                         <div className="menu-right"><span className="menu-desc mr-1">{getMascotContextBudgetChars().toLocaleString()} 字</span></div>
                     </button>
+                    <button
+                        className="menu-item"
+                        onClick={() => {
+                            const value = getMascotMaxRounds();
+                            setParamDraft(String(value));
+                            setParamTarget("rounds");
+                        }}
+                    >
+                        <MascotInfoIcon color="var(--c-action-blue,#246bfd)"><SlidersHorizontal size={22} strokeWidth={1.75} /></MascotInfoIcon>
+                        <div className="menu-label-group">
+                            <span className="menu-label">单轮工具调用上限</span>
+                            <span className="menu-desc">一次提问最多连做几轮；用完会在对话里提示回复「继续」</span>
+                        </div>
+                        <div className="menu-right"><span className="menu-desc mr-1">{getMascotMaxRounds()} 轮 ›</span></div>
+                    </button>
+                    <button
+                        className="menu-item"
+                        onClick={() => {
+                            const value = getMascotMaxOutputTokens();
+                            setParamDraft(value === null ? "0" : String(value));
+                            setParamTarget("output_tokens");
+                        }}
+                    >
+                        <MascotInfoIcon color="var(--c-action-blue,#246bfd)"><SlidersHorizontal size={22} strokeWidth={1.75} /></MascotInfoIcon>
+                        <div className="menu-label-group">
+                            <span className="menu-label">单次输出上限</span>
+                            <span className="menu-desc">写长人设被切断时自动续写；填 0 = 不传该参数</span>
+                        </div>
+                        <div className="menu-right"><span className="menu-desc mr-1">{(getMascotMaxOutputTokens() ?? 0).toLocaleString()} token ›</span></div>
+                    </button>
+                    <button className="menu-item" onClick={() => setShowDiag(true)}>
+                        <MascotInfoIcon color="var(--c-warning,#FF9500)"><ScrollText size={22} strokeWidth={1.75} /></MascotInfoIcon>
+                        <div className="menu-label-group">
+                            <span className="menu-label">诊断日志（临时）</span>
+                            <span className="menu-desc">怀疑被截断/突然断掉时打开，复现后导出给我看</span>
+                        </div>
+                        <div className="menu-right"><span className="menu-desc mr-1">›</span></div>
+                    </button>
                     <button className="menu-item" onClick={() => setShowConfirmDelete(true)}>
                         <MascotInfoIcon color="var(--c-danger)"><Trash2 size={22} strokeWidth={1.75} /></MascotInfoIcon>
                         <div className="menu-label-group">
@@ -414,6 +474,75 @@ function MascotInfoPanel({
                 </div>
             )}
 
+            {paramTarget && (() => {
+                const isRounds = paramTarget === "rounds";
+                const min = isRounds ? MASCOT_MAX_ROUNDS_MIN : MASCOT_MAX_OUTPUT_TOKENS_MIN;
+                const max = isRounds ? MASCOT_MAX_ROUNDS_MAX : MASCOT_MAX_OUTPUT_TOKENS_MAX;
+                const defaultValue = isRounds ? MASCOT_DEFAULT_MAX_ROUNDS : MASCOT_DEFAULT_MAX_OUTPUT_TOKENS;
+                const unit = isRounds ? "轮" : "token";
+                const close = () => setParamTarget(null);
+                const saved = (detail: string) => {
+                    close();
+                    window.dispatchEvent(new CustomEvent("global-notice", { detail }));
+                };
+                return (
+                    <div className="modal-overlay">
+                        <div className="modal-dialog">
+                            <div className="ts-17 font-semibold text-center text-[var(--c-text)]">
+                                {isRounds ? "单轮工具调用上限" : "单次输出上限"}
+                            </div>
+                            <Input
+                                value={paramDraft}
+                                inputMode="numeric"
+                                onChange={(event) => setParamDraft(event.target.value)}
+                                placeholder={String(defaultValue)}
+                            />
+                            <div className="menu-desc text-left">
+                                {isRounds
+                                    ? <>一次提问里卷宝最多连续执行多少轮动作，用完会在对话里提示你回复「继续」。默认 {defaultValue}；可填 {min}–{max}。</>
+                                    : <>每次请求带 max_tokens，超长输出被服务端安全截断、引擎自动续写，已执行成功的动作不会丢。默认 {defaultValue.toLocaleString()}；可填 {min.toLocaleString()}–{max.toLocaleString()}，填 0 表示不传这个参数（个别中转站不认它时用）。</>}
+                            </div>
+                            <div className="flex gap-3 w-full">
+                                <button className="ui-btn ui-btn-ghost flex-1" onClick={close}>取消</button>
+                                <button
+                                    className="ui-btn ui-btn-ghost flex-1"
+                                    onClick={() => {
+                                        if (isRounds) setMascotMaxRounds(null);
+                                        else setMascotMaxOutputTokens(null);
+                                        saved(isRounds ? "已恢复默认工具调用上限。" : "已恢复默认单次输出上限。");
+                                    }}
+                                >
+                                    恢复默认
+                                </button>
+                                <button
+                                    className="ui-btn ui-btn-success flex-1"
+                                    onClick={() => {
+                                        const trimmed = paramDraft.trim();
+                                        const parsed = Number(trimmed);
+                                        const ok = trimmed !== "" && Number.isFinite(parsed) && parsed <= max && (isRounds
+                                            ? parsed >= min
+                                            : parsed === 0 || parsed >= min);
+                                        if (!ok) {
+                                            window.dispatchEvent(new CustomEvent("global-notice", {
+                                                detail: isRounds
+                                                    ? `工具调用上限需为 ${min}–${max} 之间的数字。`
+                                                    : `输出上限需为 0（不传该参数）或 ${min.toLocaleString()}–${max.toLocaleString()} 之间的数字。`,
+                                            }));
+                                            return;
+                                        }
+                                        if (isRounds) setMascotMaxRounds(Math.floor(parsed));
+                                        else setMascotMaxOutputTokens(Math.floor(parsed));
+                                        saved(`已更新${isRounds ? "工具调用上限" : "单次输出上限"}为 ${parsed.toLocaleString()} ${unit}。`);
+                                    }}
+                                >
+                                    保存
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
             {editingPersona && (
                 <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
                 <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
@@ -462,6 +591,14 @@ function MascotInfoPanel({
                         </div>
                     </PageShell>
                 </div>
+                </div>
+            )}
+
+            {showDiag && (
+                <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
+                    <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
+                        <MascotDiagPage onClose={() => setShowDiag(false)} />
+                    </div>
                 </div>
             )}
 
@@ -518,6 +655,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const [activeMascotMessageIndex, setActiveMascotMessageIndex] = useState<number | null>(null);
     const [contextMenuAnchor, setContextMenuAnchor] = useState<ContextMenuAnchor | null>(null);
     const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+    const [expandedToolCards, setExpandedToolCards] = useState<Set<number>>(() => new Set());
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
     const wrapperRef = useRef<HTMLDivElement | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -528,6 +666,8 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const longPressStartRef = useRef<ContextMenuAnchor | null>(null);
     const longPressTriggeredRef = useRef(false);
+    // 输入框放大档位（半屏 / 全屏 / 收回）：与普通聊天室、线下模式共用同一套策略
+    const composer = useComposerExpand(textareaRef);
     const identity = useMemo(() => resolveUserIdentity(), []);
     useChatBottomReserve(wrapperRef, scrollRef, `${showEmojiPanel}:${pendingImages.length}`);
     const allVisibleMessageEntries = useMemo(() => (
@@ -719,10 +859,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     }, []);
 
     const resizeTextarea = () => {
-        const ta = textareaRef.current;
-        if (!ta) return;
-        ta.style.height = "auto";
-        ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+        composer.sizeTextarea();
     };
 
     const appendEmoji = (emoji: string) => {
@@ -742,7 +879,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
         const docs = docAttachments;
         if (!text && pendingImages.length === 0 && docs.length === 0) return;
         setInputText("");
-        textareaRef.current?.style.setProperty("height", "auto");
+        composer.resizeAfterClear();
         const images = pendingImages;
         setPendingImages([]);
         setDocAttachments([]);
@@ -1006,12 +1143,75 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     cursor: pointer;
                     -webkit-user-select: none;
                     user-select: none;
+                    transition: max-width 0.15s;
+                }
+                .mascot-tool-result-card[data-expanded] {
+                    max-width: min(92%, 400px);
+                    align-items: stretch;
                 }
                 .mascot-tool-result-card[data-active] {
                     overflow: visible;
                 }
                 .mascot-tool-result-card .chat-sys-msg {
                     max-width: 100%;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                .mascot-tool-expand-btn {
+                    flex-shrink: 0;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 20px;
+                    height: 20px;
+                    border: none;
+                    background: color-mix(in srgb, var(--c-text) 10%, transparent);
+                    border-radius: 50%;
+                    cursor: pointer;
+                    color: var(--c-text);
+                    opacity: 0.6;
+                    padding: 0;
+                }
+                .mascot-tool-expand-btn:active {
+                    opacity: 1;
+                    background: color-mix(in srgb, var(--c-text) 20%, transparent);
+                }
+                .mascot-tool-jump-btn {
+                    flex-shrink: 0;
+                    display: inline-flex;
+                    align-items: center;
+                    height: 20px;
+                    padding: 0 8px;
+                    border: none;
+                    border-radius: 10px;
+                    background: color-mix(in srgb, var(--c-text) 10%, transparent);
+                    color: var(--c-text);
+                    font-size: 11px;
+                    line-height: 1;
+                    opacity: 0.75;
+                    cursor: pointer;
+                    white-space: nowrap;
+                }
+                .mascot-tool-jump-btn:active {
+                    opacity: 1;
+                    background: color-mix(in srgb, var(--c-text) 20%, transparent);
+                }
+                .mascot-tool-detail {
+                    width: 100%;
+                    max-height: 240px;
+                    overflow-y: auto;
+                    padding: 8px 10px;
+                    font-size: 12px;
+                    line-height: 1.5;
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    background: color-mix(in srgb, var(--c-text) 5%, transparent);
+                    border-radius: 6px;
+                    color: var(--c-text);
+                    opacity: 0.85;
+                    -webkit-user-select: text;
+                    user-select: text;
                 }
                 .mascot-tool-result-card .mascot-inline-images {
                     justify-content: center;
@@ -1063,11 +1263,8 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     </button>
                     <span className="page-title" style={{ position: "relative" }}>
                         {settings.nickname || "AI助手"}
-                        {chat.isThinking && (
-                            <span className="chat-typing-indicator">
-                                正在思考<span className="chat-typing-dots"><i/><i/><i/></span>
-                            </span>
-                        )}
+                        {/* 标题上不再挂「正在思考」：等待进度只在消息流底部那一行说一次，
+                            两处各写一句会互相抢位置，而且头部那行放不下「第几步 / 在做什么 / 挂起多久」 */}
                     </span>
                     <span className="page-header-right" style={{ gap: 4 }}>
                         <button
@@ -1142,13 +1339,30 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                         const label = msg.displayText || msg.text || msg.toolDisplayName || msg.toolName || "工具";
                         const shownName = msg.toolDisplayName || msg.toolName || "工具";
                         const running = msg.toolSuccess === undefined;
+                        const fullText = msg.text || "";
+                        const hasDetail = !running && fullText.length > 80;
+                        // 成功回执里点名了哪张材料卡，就给她一个直达入口（取最先出现的那个）
+                        const jumpMaterialId = !running && msg.toolSuccess === true
+                            ? extractMixMaterialIds(fullText)[0]
+                            : undefined;
+                        const expanded = expandedToolCards.has(rawIndex);
                         const toolSummary = running
                             ? `正在调用 ${shownName}…`
-                            : `${shownName}${label && label !== shownName ? `：${label.slice(0, 80)}${label.length > 80 ? "…" : ""}` : ""}`;
+                            : `${shownName}${label && label !== shownName ? `：${expanded ? label : `${label.slice(0, 80)}${label.length > 80 ? "…" : ""}`}` : ""}`;
+                        const toggleExpand = (e: React.MouseEvent | React.PointerEvent) => {
+                            e.stopPropagation();
+                            setExpandedToolCards(prev => {
+                                const next = new Set(prev);
+                                if (next.has(rawIndex)) next.delete(rawIndex);
+                                else next.add(rawIndex);
+                                return next;
+                            });
+                        };
                         return (
                             <div key={`${rawIndex}-${msg.createdAt || ""}`} className="chat-msg-wrapper" data-role="system">
                                 <div
                                     className="mascot-tool-result-card"
+                                    {...(expanded ? { "data-expanded": "" } : {})}
                                     onPointerDown={(event) => handleMascotMessagePointerDown(event, rawIndex)}
                                     onPointerUp={handleMascotMessagePointerUp}
                                     onPointerCancel={cancelMascotLongPress}
@@ -1162,9 +1376,55 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                                     {...(activeMascotMessageIndex === rawIndex ? { "data-active": "" } : {})}
                                 >
                                     {renderMascotContextMenu(rawIndex, msg.role)}
-                                    <div className="chat-sys-msg relative truncate" title={label}>
-                                        {toolSummary}
+                                    <div className="chat-sys-msg relative" title={label}>
+                                        <span className={expanded ? "" : "truncate"} style={expanded ? { whiteSpace: "pre-wrap", wordBreak: "break-word" } : undefined}>
+                                            {toolSummary}
+                                        </span>
+                                        {hasDetail && (
+                                            <button
+                                                className="mascot-tool-expand-btn"
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={toggleExpand}
+                                                aria-label={expanded ? "收起" : "展开详情"}
+                                            >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                                                    <polyline points="6 9 12 15 18 9" />
+                                                </svg>
+                                            </button>
+                                        )}
+                                        {jumpMaterialId && (
+                                            <button
+                                                className="mascot-tool-jump-btn"
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    // 先导航再留话：特调 App 可能还没挂载，事件没人听就靠 sessionStorage 桥接住
+                                                    mascotNavigate("mixology");
+                                                    requestOpenMixMaterial(jumpMaterialId);
+                                                }}
+                                                title="在独家特调酒柜中打开这张材料"
+                                            >
+                                                在酒柜查看
+                                            </button>
+                                        )}
                                     </div>
+                                    {expanded && hasDetail && (
+                                        <div className="mascot-tool-detail" onPointerDown={(e) => e.stopPropagation()}>
+                                            {fullText}
+                                            <button
+                                                className="mascot-tool-close-btn"
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={toggleExpand}
+                                                aria-label="收起详情"
+                                                title="收起"
+                                            >
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    )}
                                     {renderImages(msg)}
                                 </div>
                             </div>
@@ -1205,7 +1465,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     <div className="chat-msg-wrapper" data-role="assistant">
                         <MascotAvatar src={avatarUrl} alt={settings.nickname || "AI助手"} />
                         <div className="chat-bubble-role-assistant chat-bubble-role-mascot rounded-md mascot-thinking">
-                            思考中<span className="mascot-dot"></span><span className="mascot-dot"></span><span className="mascot-dot"></span>
+                            <MascotWaitingProgress progress={chat.thinkingProgress} />
                         </div>
                     </div>
                 )}
@@ -1213,6 +1473,9 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
             </div>
 
             <div className="chat-input-bar chat-room-main-pane flex flex-col" data-ui="input">
+                {composer.showControl && (
+                    <ChatComposerExpandButton level={composer.level} onToggle={composer.toggle} />
+                )}
                 {pendingImages.length > 0 && (
                     <div className="mascot-pending-strip">
                         {pendingImages.map((ref, idx) => {

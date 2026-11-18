@@ -98,6 +98,7 @@ import {
 } from "@/lib/api-accounts";
 import { resolveMixAccountId } from "@/lib/mixology/account";
 import { describeMixCondition } from "@/lib/mixology/state";
+import { MIXOLOGY_OPEN_MATERIAL_EVENT, consumePendingMixMaterialJump } from "@/lib/mascot-material-jump";
 
 /** 头像统一压成 192px JPEG dataURL 的小圆图，随发布上云也不占地方 */
 async function readAvatarFile(file: File): Promise<string> {
@@ -314,6 +315,20 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         setCabinetKind(material.kind);
         setEditor({ kind: material.kind, initial: material });
     }, [refresh, showToast]);
+
+    // 卷宝工具卡跳材料：双通道——挂载时消费 sessionStorage 桥（App 还没开时出口已写桥），
+    // + 监听事件（App 已开着时即时响应）。消费即清，不会重复弹编辑页。
+    useEffect(() => {
+        const pending = consumePendingMixMaterialJump();
+        if (pending) openLocalEditor(pending);
+
+        const onOpen = (e: Event) => {
+            const id = (e as CustomEvent).detail?.id;
+            if (id) openLocalEditor(id);
+        };
+        window.addEventListener(MIXOLOGY_OPEN_MATERIAL_EVENT, onOpen);
+        return () => window.removeEventListener(MIXOLOGY_OPEN_MATERIAL_EVENT, onOpen);
+    }, [openLocalEditor]);
 
     const cabinetFiltered = useMemo(
         () => cabinet.filter((m) => m.kind === cabinetKind),

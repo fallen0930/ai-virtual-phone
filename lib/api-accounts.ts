@@ -475,8 +475,11 @@ export function getTaskBillingStats(): { calls: number; tokens: number } {
  * - `manual` / 未设单价 / 关闭自动扣费：跳过。
  *
  * 先取数再清零，异常时也不会重复结算同一笔。
+ *
+ * `taskSummary` 可选：调用方把本轮台账摘要传进来，拼到流水 note 里，
+ * 方便事后追溯"这笔钱对应干了什么"。
  */
-export function settleTaskBilling(config: ApiConfig | null | undefined): LlmSpendResult {
+export function settleTaskBilling(config: ApiConfig | null | undefined, taskSummary?: string): LlmSpendResult {
     const calls = taskCallCount;
     const tokens = taskTokenTotal;
     taskCallCount = 0;
@@ -497,15 +500,29 @@ export function settleTaskBilling(config: ApiConfig | null | undefined): LlmSpen
         ? estimateCost(pricing, tokens)
         : estimateCost(pricing, 1);
     if (amount <= 0) return { recorded: false, amount: 0, reason: "算出金额为 0" };
+    const baseNote = pricing.mode === "per_1k_tokens"
+        ? `任务结算 · ${calls} 轮 / ${tokens} tok`
+        : `任务结算 · ${calls} 轮调用按一次计费`;
+    const note = taskSummary ? `${baseNote} · ${taskSummary}` : baseNote;
     const result = spendFromAccount({
         accountId,
         amount,
         configId: config.id,
         configName: displayName,
-        note: pricing.mode === "per_1k_tokens"
-            ? `任务结算 · ${calls} 轮 / ${tokens} tok`
-            : `任务结算 · ${calls} 轮调用按一次计费`,
+        note,
     });
     queueSpendNotice(displayName, amount, result.account.balance);
     return { recorded: true, amount, account: result.account };
+}
+
+/**
+ * 放弃挂起中的任务账目：任务以报错收场时调用，清零累计的轮数/token，什么都不扣。
+ *
+ * 口径：per_task 的单价是「一个任务包价」，任务没做完就不该按包价收钱。
+ * 中转站那头的真实消耗还在（本模块不联网、也无从核对），所以账本会比真实消耗宽松 ——
+ * 想照实补记就用「记一笔」手填。
+ */
+export function cancelTaskBilling(): void {
+    taskCallCount = 0;
+    taskTokenTotal = 0;
 }

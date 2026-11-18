@@ -20,8 +20,10 @@ import {
     type MixFilterRule,
     type MixMaterial,
     type MixMaterialKind,
+    type MixRecipe,
     type MixSlotEntry,
     type MixTicketVar,
+    mixSlotEntries,
     normalizeMixConnectorNames,
     normalizeMixDialogueButton,
     MIX_CONNECTOR_NAME_RE,
@@ -42,9 +44,12 @@ import {
 } from "./storage";
 import { MIX_CONNECTOR_KEY_PLACEHOLDER, MIX_CONNECTOR_PRESETS, parseMixConnectorHeaders } from "./connectors";
 
-import { buildMixCraftSpec } from "./crafting-guides";
+import { buildMixCraftSpecBoardPrompt, pinMixCraftSpecs } from "./spec-board";
+import { buildMixMaterialBoardPrompt, pinMixMaterial, resetMixMaterialBoard, listPinnedMaterialIds, getPinnedMaterial } from "./material-board";
 import { isMixCardFreeform, MIX_CARD_FIELD_KEYS, normalizeMixCardProfile } from "./card-freeform";
 import { normalizePartCondition } from "./hall-parts";
+import { describeMascotNameConflict, describeMascotNameMiss, pickMascotNameCandidates } from "../mascot-entity-lookup";
+import { findInMascotTaskLedger, listMascotTaskLedger, recordMascotTaskLedger } from "../mascot-task-ledger";
 
 /** 写库成功后通知已打开的特调 App 重读列表，否则界面要等用户自己操作才刷新 */
 function broadcastCabinetUpdated(): void {
@@ -100,18 +105,30 @@ export function mixToolListCabinet(args: Record<string, unknown>): ToolResult {
 
 // ── 读取材料 ─────────────────────────────────────────
 
-/** 按 id 或名字找材料；名字重名时列出候选让模型带 id 再来 */
+/** 按 id 或名字找材料；名字重名或写不准时，回执直接把候选连 id 一起给出去 */
 function findMaterial(args: Record<string, unknown>): { ok?: MixMaterial; err?: string } {
     const id = text(args.id).trim();
     if (id) {
         const m = getMixMaterial(id);
-        return m ? { ok: m } : { err: `没有 id 为 ${id} 的材料。` };
+        if (m) return { ok: m };
+        const mine = listMascotTaskLedger("mixmat").map((entry) => `[${entry.id}] ${entry.label}`).join("、");
+        return { err: `没有 id 为 ${id} 的材料（id 记错了，或这件已被删除）。${mine ? `本轮建过的是：${mine}。` : ""}不确定就 列出酒柜 看一遍。` };
     }
     const name = text(args.name).trim();
     if (!name) return { err: "请传 id 或 name 之一。" };
     const all = [...loadMixCabinet(), ...listMixBuiltins()];
     const hits = all.filter((m) => m.name === name);
-    if (hits.length === 0) return { err: `酒柜里没有叫「${name}」的材料。可先用 列出酒柜 查看。` };
+    if (hits.length === 0) {
+        return {
+            err: describeMascotNameMiss({
+                label: "材料",
+                name,
+                candidates: pickMascotNameCandidates(all, name, (m) => `${MIX_KIND_LABELS[m.kind]}「${m.name}」`),
+                listTool: "列出酒柜",
+                createTool: "创建材料",
+            }),
+        };
+    }
     if (hits.length > 1) return { err: `有 ${hits.length} 件材料都叫「${name}」：${hits.map((m) => `[${m.id}] ${MIX_KIND_LABELS[m.kind]}`).join("、")}。请带 id 再调用。` };
     return { ok: hits[0] };
 }
@@ -176,6 +193,112 @@ function describeMaterial(material: MixMaterial): string {
     return lines.join("\n");
 }
 
+// ── 字段地图 / 定点编辑底座 ───────────────────────────
+// 以前「改一句话」只有一条路：读取材料（把整件材料所有正文吐出来）→ 更新材料（把整段
+// 字符串重新输出一遍）。角色卡实测 9454 字、开场画布 6000+ 字符，一次输出很容易撞
+// max_tokens 被截断，截断 == 这次修改整笔丢掉；而读回来的全文又作为 tool 回执留在历史里、
+// 之后每轮请求重发一遍。这里给一套按 (材料 id, 字段路径) 定点修改的底座：模型只输出
+// 改动片段，宿主内部完成「取原文 → 定位 → 替换 → 校验 → 一次性落盘」。
+
+type FieldPath = { top: string; segments: string[]; label: string };
+
+/** 字段路径：content / profileText / openings.0 / examples.2.text */
+function parseFieldPath(raw: unknown): FieldPath | null {
+    if (typeof raw !== "string") return null;
+    const parts = raw.trim().split(".").map((p) => p.trim()).filter(Boolean);
+    if (!parts.length || parts.some((p) => !/^(?:[A-Za-z_][A-Za-z0-9_]*|\d+)$/.test(p))) return null;
+    return { top: parts[0], segments: parts.slice(1), label: parts.join(".") };
+}
+
+function fieldSpecFor(kind: MixMaterialKind, top: string): FieldSpec | undefined {
+    return CONTENT_FIELDS.find((spec) => spec.key === top && spec.kinds.includes(kind));
+}
+
+function readAtPath(root: Record<string, unknown>, path: FieldPath): unknown {
+    let cur: unknown = root;
+    for (const seg of [path.top, ...path.segments]) {
+        if (Array.isArray(cur)) {
+            const index = Number(seg);
+            if (!Number.isInteger(index) || index < 0 || index >= cur.length) return undefined;
+            cur = cur[index];
+        } else if (cur && typeof cur === "object") {
+            cur = (cur as Record<string, unknown>)[seg];
+        } else return undefined;
+    }
+    return cur;
+}
+
+function writeAtPath(root: Record<string, unknown>, path: FieldPath, value: unknown): boolean {
+    const segments = [path.top, ...path.segments];
+    const set = (node: unknown, rest: string[]): boolean => {
+        const [head, ...tail] = rest;
+        if (Array.isArray(node)) {
+            const index = Number(head);
+            if (!Number.isInteger(index) || index < 0 || index >= node.length) return false;
+            if (!tail.length) { node[index] = value; return true; }
+            return set(node[index], tail);
+        }
+        if (!node || typeof node !== "object") return false;
+        const obj = node as Record<string, unknown>;
+        if (!tail.length) { obj[head] = value; return true; }
+        return set(obj[head], tail);
+    };
+    return set(root, segments);
+}
+
+/** 字段地图：字段名 + 字数 + 开头锚点。让模型不读全文也能写出准确的 find 片段。 */
+function describeFieldMap(material: MixMaterial): string {
+    const rows: string[] = [];
+    const source = material as unknown as Record<string, unknown>;
+    const push = (path: string, value: unknown) => {
+        if (typeof value !== "string") return;
+        const head = value.replace(/\s+/g, " ").trim().slice(0, 36);
+        rows.push(`· ${path}（${value.length} 字）${head ? `｜开头：${head}…` : "｜（空）"}`);
+    };
+    for (const spec of CONTENT_FIELDS) {
+        if (!spec.kinds.includes(material.kind)) continue;
+        const value = source[spec.key];
+        if (typeof value === "string") { push(spec.key, value); continue; }
+        if (!Array.isArray(value)) continue;
+        value.forEach((item, index) => {
+            if (spec.key === "openings" && typeof item === "string") push(`${spec.key}.${index}`, item);
+            else if (spec.key === "examples" && item && typeof item === "object") {
+                push(`${spec.key}.${index}.text`, (item as Record<string, unknown>).text);
+            }
+        });
+    }
+    return rows.length ? rows.join("\n") : "（这件材料还没有可编辑的正文字段）";
+}
+
+/** 找不到 find 片段时，就地给一小段原文，别让模型再回头扫一遍全文 */
+function excerptAround(source: string, probe: string, radius = 200): string {
+    if (!source.trim()) return "（这个字段目前是空的；要新增内容请用 append）";
+    let at = probe ? source.indexOf(probe) : -1;
+    if (at < 0 && probe) {
+        for (const len of [12, 8, 4]) {
+            const chunk = probe.slice(0, len);
+            if (!chunk) break;
+            at = source.indexOf(chunk);
+            if (at >= 0) break;
+        }
+    }
+    if (at < 0) return `原文开头：\n${source.slice(0, radius)}${source.length > radius ? "…" : ""}`;
+    const start = Math.max(0, at - Math.floor(radius / 2));
+    const end = Math.min(source.length, at + Math.ceil(radius / 2));
+    return `原文第 ${start}~${end} 字：\n${source.slice(start, end)}`;
+}
+
+function materialHead(material: MixMaterial): string {
+    return `[${material.id}] ${MIX_KIND_LABELS[material.kind]}「${material.name}」（${originOf(material)}）`;
+}
+
+/** 本轮动过的材料 id 清单。每次写回执都带上，模型照 id 接着改，不必再「列出酒柜」。 */
+function ledgerDigest(): string {
+    const list = listMascotTaskLedger("mixmat");
+    if (!list.length) return "";
+    return `\n【本轮材料台账（照 id 直接用，别再列酒柜 / 别按名字重找）】${list.map((e) => `${e.kind}:${e.id}`).join("、")}`;
+}
+
 export function mixToolReadMaterial(args: Record<string, unknown>): ToolResult {
     const NAME = "读取材料";
     const r = findMaterial(args);
@@ -186,16 +309,194 @@ export function mixToolReadMaterial(args: Record<string, unknown>): ToolResult {
             data: `[${r.ok.id}] 角色卡「${r.ok.name}」是从酒材页入柜的他人作品，正文封存（与酒柜界面同规矩），不可读取或修改。${r.ok.hook ? `\n一句话介绍：${r.ok.hook}` : ""}`,
         };
     }
-    return { name: NAME, success: true, data: describeMaterial(r.ok) };
+    const material = r.ok;
+    const mode = text(args.mode).trim() || "full";
+
+    // 防循环：材料已在常驻板时，提醒模型直接改，不要重读全文。
+    // 但 fields 指定（只要某字段）和 window/outline 模式不算重读全文，放行。
+    const alreadyPinned = getPinnedMaterial(material.id);
+    const hasFields = Array.isArray(args.fields) && (args.fields as unknown[]).length > 0;
+    if (alreadyPinned && mode === "full" && !hasFields) {
+        return {
+            name: NAME, success: true,
+            data: `⚠️ 这件材料已经在常驻板里了（${MIX_KIND_LABELS[material.kind]}「${material.name}」，id: ${material.id}），系统提示词里就有它的完整正文，不用重读。直接用「改材料片段」按 id + field 改就行。`,
+        };
+    }
+
+    const head = materialHead(material);
+    const fieldMap = describeFieldMap(material);
+    const hint = `\n字段路径（改材料片段 / 局部读取都按它填 field）：\n${fieldMap}`;
+
+    // 结构视图：只有字段地图，不回任何正文。改几个字之前的默认选择。
+    if (mode === "outline") {
+        return {
+            name: NAME, success: true,
+            data: `${head}\n${hint}\n要看某处原文：mode:"window" 配 anchor，或 fields:["字段路径"] 只取一个字段。改文本直接用「改材料片段」，不必先读全文。`,
+        };
+    }
+
+    // 只取指定字段的全文
+    const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).filter((f): f is string => typeof f === "string") : [];
+    if (fields.length) {
+        const lines: string[] = [head];
+        for (const raw of fields) {
+            const path = parseFieldPath(raw);
+            if (!path || !fieldSpecFor(material.kind, path.top)) {
+                lines.push(`【${raw}】不是这件材料可编辑的字段。可用路径见下面字段地图。`);
+                continue;
+            }
+            const value = readAtPath(material as unknown as Record<string, unknown>, path);
+            lines.push(`【${path.label}】\n${typeof value === "string" ? value : "（不是文本字段或路径不存在）"}`);
+        }
+        return { name: NAME, success: true, data: `${lines.join("\n")}\n${hint}` };
+    }
+
+    // 窗口视图：只回锚点附近的一小段，find 片段从里面抄就行
+    if (mode === "window") {
+        const anchor = text(args.anchor).trim();
+        if (!anchor) return { name: NAME, success: false, error: 'mode:"window" 需要 anchor（原文里的一小段已知文字）。' };
+        const radius = Math.min(1200, Math.max(120, Number(args.radius) || 320));
+        const body = describeMaterial(material);
+        return {
+            name: NAME, success: true,
+            data: `${head}\n【${anchor} 附近原文】\n${excerptAround(body, anchor, radius)}\n${hint}`,
+        };
+    }
+
+    // 兼容旧行为：完整全文。全文回执由 agent loop 的历史折叠负责不再每轮重发。
+    // 同时把正文 pin 进常驻板：下一轮模型想改内容时，板里还有，不必重读。
+    pinMixMaterial(material.id, material.kind, material.name, describeMaterial(material));
+    return { name: NAME, success: true, data: `${describeMaterial(material)}\n${hint}\n（正文已常驻本轮系统提示词，接着改不用再读）` };
 }
 
 // ── 读取制作说明 ─────────────────────────────────────
 
+/**
+ * 规格不再整段当回执塞进历史（下一轮就被折叠成 160 字摘要，长正文写到一半只好重读）。
+ * 现在 pin 进任务级常驻板，由引擎每轮注入系统提示词；历史里只留一行短回执。
+ * 支持 kinds 一次读多类：建一整套副本要 6~10 类规格，一轮拿齐，不用每类各调一次。
+ */
 export function mixToolReadCraftSpec(args: Record<string, unknown>): ToolResult {
     const NAME = "读取制作说明";
-    const kind = asKind(args.kind);
-    if (!kind) return { name: NAME, success: false, error: `请传材料种类 kind。可选：${MIX_SLOT_ORDER.join(" / ")}` };
-    return { name: NAME, success: true, data: buildMixCraftSpec(kind) };
+    const kindsRaw: unknown[] = Array.isArray(args.kinds)
+        ? (args.kinds as unknown[])
+        : args.kind !== undefined ? [args.kind] : [];
+    if (!kindsRaw.length) {
+        return { name: NAME, success: false, error: `请传材料种类 kind，或 kinds 一次读多类。可选：${MIX_SLOT_ORDER.join(" / ")}` };
+    }
+    // 先整体校验再 pin：任何一类写错就整次报错，不 pin 任何东西
+    const kinds: MixMaterialKind[] = [];
+    for (const raw of kindsRaw) {
+        const kind = asKind(raw);
+        if (!kind) return { name: NAME, success: false, error: `未知材料种类：${String(raw)}。可选：${MIX_SLOT_ORDER.join(" / ")}` };
+        if (!kinds.includes(kind)) kinds.push(kind);
+    }
+    const { pinned, evicted } = pinMixCraftSpecs(kinds);
+    const lines = [`制作规格已常驻本轮系统提示词：${pinned.map((k) => MIX_KIND_LABELS[k]).join("、")}。写材料时直接照规格执行，不用重读。`];
+    if (evicted.length) {
+        lines.push(`注意：常驻板有总预算，${evicted.map((k) => MIX_KIND_LABELS[k]).join("、")} 的规格被挤出，写到那类时再读一次即可。`);
+    }
+    return { name: NAME, success: true, data: lines.join("\n") };
+}
+
+// ── 酒柜快照（宿主侧上下文注入） ─────────────────────
+
+/** 快照总量上限：配方映射与焦点字段地图优先，材料清单装不下就明说裁掉了多少 */
+const MIX_SNAPSHOT_BUDGET = 9000;
+
+function recipeSlotDigest(recipe: MixRecipe, byId: Map<string, MixMaterial>): string {
+    const parts: string[] = [];
+    for (const kind of MIX_SLOT_ORDER) {
+        const entries = mixSlotEntries(recipe.slots, kind);
+        if (!entries.length) continue;
+        const cells = entries.map((entry) => {
+            const material = byId.get(entry.materialId);
+            if (!material) return `${entry.materialId}（失效：材料已不存在）`;
+            return `${material.id}（${material.name}）`;
+        });
+        parts.push(`${MIX_KIND_LABELS[kind]}=${cells.join("+")}`);
+    }
+    return parts.length ? parts.join("，") : "（空杯，还没放材料）";
+}
+
+/**
+ * 从内存酒柜同步算一份索引，供引擎每轮注入系统提示词。
+ * 改已有副本不再盲改：配方→槽位→材料 id 的映射直接可见；
+ * 用户点名的材料附字段地图（路径/字数/开头锚点），改片段不用再读 outline。
+ */
+export function buildMixCabinetSnapshot(focusText: string): string {
+    const cabinet = loadMixCabinet();
+    const builtins = listMixBuiltins();
+    const recipes = loadMixRecipes();
+    const all = [...cabinet, ...builtins];
+    const byId = new Map(all.map((m) => [m.id, m]));
+
+    const header = [
+        "===== 特调酒柜快照（宿主每轮生成的当前事实） =====",
+        `自建材料 ${cabinet.length} 件、官方出厂件 ${builtins.length} 件、配方 ${recipes.length} 杯。`,
+        "照下面的 id 直接用，不必再「列出酒柜」确认；要看某件正文用「读取材料」，改文本用「改材料片段」。",
+    ].join("\n");
+
+    const recipeLines = recipes.map((recipe) => {
+        const mark = recipe.imported ? "（导入，不可改）" : "";
+        return `· [${recipe.id}]「${recipe.name}」${mark}：${recipeSlotDigest(recipe, byId)}`;
+    });
+    const recipeBlock = recipeLines.length ? `【配方 → 材料映射】\n${recipeLines.join("\n")}` : "";
+
+    // 焦点：用户原话里点名的材料/配方。配方命中时展开它槽位里的材料。
+    const focus = focusText.trim();
+    const focused: MixMaterial[] = [];
+    const pushFocus = (material: MixMaterial | undefined) => {
+        if (!material || isSealed(material)) return;
+        if (!focused.some((m) => m.id === material.id)) focused.push(material);
+    };
+    if (focus) {
+        for (const material of all) {
+            if (material.name.length >= 2 && focus.includes(material.name)) pushFocus(material);
+        }
+        for (const recipe of recipes) {
+            if (recipe.name.length < 2 || !focus.includes(recipe.name)) continue;
+            for (const kind of MIX_SLOT_ORDER) {
+                for (const entry of mixSlotEntries(recipe.slots, kind)) pushFocus(byId.get(entry.materialId));
+            }
+        }
+    }
+    const focusBlock = focused.length
+        ? `【字段地图 · 用户点名的材料（改片段按这些路径填 field，不必先读全文）】\n${focused.slice(0, 3).map((m) => `◆ [${m.id}]「${m.name}」\n${describeFieldMap(m)}`).join("\n")}`
+        : "";
+
+    // 预算分配：头 + 配方映射 + 焦点地图优先保留，材料清单用剩余额度
+    const priority = [header, recipeBlock, focusBlock].filter(Boolean).join("\n\n");
+    const noteReserve = 80;
+    let room = Math.max(0, MIX_SNAPSHOT_BUDGET - priority.length - noteReserve);
+    const materialLines: string[] = [];
+    let omitted = 0;
+    const sorted = [...cabinet].sort((a, b) => b.updatedAt - a.updatedAt);
+    for (const material of [...sorted, ...builtins]) {
+        const line = `· ${materialHead(material)}`;
+        if (line.length + 1 <= room) {
+            materialLines.push(line);
+            room -= line.length + 1;
+        } else {
+            omitted += 1;
+        }
+    }
+    const materialBlock = materialLines.length ? `【材料清单】\n${materialLines.join("\n")}` : "";
+    const omitNote = omitted > 0 ? `…另有 ${omitted} 件材料未列出，需要时按种类「列出酒柜」查看。` : "";
+    const snapshot = [priority, materialBlock, omitNote].filter(Boolean).join("\n\n");
+    // 极端情况（配方多到优先段本身就超预算）硬截断兜底，绝不撑爆系统提示词
+    return snapshot.length <= MIX_SNAPSHOT_BUDGET ? snapshot : `${snapshot.slice(0, MIX_SNAPSHOT_BUDGET - 20)}\n…（快照超长已截断）`;
+}
+
+/** 特调任务上下文段落 = 酒柜快照 + 常驻规格板 + 材料正文常驻板（板为空时只有快照）。引擎每轮注入系统提示词。 */
+export function buildMixTaskContext(opts: { focusText?: string }): string {
+    const snapshot = buildMixCabinetSnapshot(opts.focusText ?? "");
+    const specBoard = buildMixCraftSpecBoardPrompt();
+    const materialBoard = buildMixMaterialBoardPrompt();
+    const parts = [snapshot];
+    if (specBoard) parts.push(specBoard);
+    if (materialBoard) parts.push(materialBoard);
+    return parts.join("\n\n");
 }
 
 // ── 创建 / 更新材料 ──────────────────────────────────
@@ -399,48 +700,73 @@ function normalizeCover(value: unknown): string | { err: string } {
 
 /**
  * 质量提示：不拦保存，但把偏薄的地方点出来写进成功返回——
- * 使用指南要求小卷看到质量提示必须跟进补足，这是防偷懒的软引导侧。
+ * 使用指南要求小卷看到质量提示跟进补足，这是防偷懒的软引导侧。
+ *
+ * 但同一份欠账不能每次回执都重列。2026-10-29 真机日志里那条建特调的任务跑了 40 轮，
+ * 十几轮在「读取材料 ↔ 更新材料」之间空转，引信就是这里：每写一笔都回一整版待办清单，
+ * 其中「开场画布不足 6000 字符」这种阈值一条动作根本写不满，模型于是永远看到「还没做完」。
+ * 现在按材料 id 记台账：同一件材料的同一个检查项只提醒一次，之后闭嘴。
  */
-function qualityHints(material: Record<string, unknown>, kind: MixMaterialKind): string {
+type QualityHint = { key: string; text: string };
+
+const hintedQualityKeys = new Map<string, Set<string>>();
+
+function collectQualityHints(material: Record<string, unknown>, kind: MixMaterialKind): QualityHint[] {
+    const contractLen = typeof material.contract === "string" ? material.contract.trim().length : 0;
     if (kind === "ticket") {
-        const contract = typeof material.contract === "string" ? material.contract.trim().length : 0;
-        if (contract > 0 && contract < 300)
-            return `\n质量提示（建议用 更新材料 补足）：\n- 输出契约只有 ${contract} 字，撑不起有血肉的状态栏——整卡通常 6~10 项、描述项要求带细节的完整句、配一两个长文小节（见制作说明的信息量要求）`;
-        return "";
+        if (contractLen > 0 && contractLen < 300) {
+            return [{ key: "contract", text: `输出契约只有 ${contractLen} 字，撑不起有血肉的状态栏——整卡通常 6~10 项、描述项要求带细节的完整句、配一两个长文小节（见制作说明的信息量要求）` }];
+        }
+        return [];
     }
     if (kind === "encore") {
-        const contract = typeof material.contract === "string" ? material.contract.trim().length : 0;
-        if (contract > 0 && contract < 300)
-            return `\n质量提示（建议用 更新材料 补足）：\n- 输出契约只有 ${contract} 字——小剧场是玩家等生成时读的加餐，契约要把每轮的内容量逼到微型作品级（成篇的社交帖楼层/完整一幕短剧，十来行两三百字起步，见制作说明），三五行的加演等于没演`;
-        return "";
+        if (contractLen > 0 && contractLen < 300) {
+            return [{ key: "contract", text: `输出契约只有 ${contractLen} 字——小剧场是玩家等生成时读的加餐，契约要把每轮的内容量逼到微型作品级（成篇的社交帖楼层/完整一幕短剧，十来行两三百字起步，见制作说明），三五行的加演等于没演` }];
+        }
+        return [];
     }
-    if (kind !== "character") return "";
-    const hints: string[] = [];
+    if (kind !== "character") return [];
+
+    const hints: QualityHint[] = [];
     const len = (key: string) => (typeof material[key] === "string" ? (material[key] as string).trim().length : 0);
     const openings = Array.isArray(material.openings) ? material.openings.length : 0;
-    if (openings < 2) hints.push("开场白只有一条，按规格写 2~3 条不同切入供玩家挑选");
+    if (openings < 2) hints.push({ key: "openings.count", text: "开场白只有一条，按规格写 2~3 条不同切入供玩家挑选" });
     if (Array.isArray(material.openings)) {
         const thin = (material.openings as unknown[]).filter((o) => typeof o === "string" && o.trim().length > 0 && o.trim().length < 300).length;
-        if (thin > 0) hints.push(`有 ${thin} 条开场白不足 300 字——每条四五百字起步，场景、动作、对白、内心铺成完整一幕，并用正文标记（「」对白、*…*心声、【】场景行）书写`);
+        if (thin > 0) hints.push({ key: "openings.thin", text: `有 ${thin} 条开场白不足 300 字——每条四五百字起步，场景、动作、对白、内心铺成完整一幕，并用正文标记（「」对白、*…*心声、【】场景行）书写` });
     }
     const examples = Array.isArray(material.examples) ? material.examples.length : 0;
-    if (examples < 6) hints.push(`示例对话只有 ${Math.floor(examples / 2)} 轮，建议补到 3~5 轮锚定文风`);
+    if (examples < 6) hints.push({ key: "examples", text: `示例对话只有 ${Math.floor(examples / 2)} 轮，建议补到 3~5 轮锚定文风` });
     const canvas = len("canvas");
-    if (!canvas) hints.push("没有开场画布——按「画布制作规格」补一份完整门面页");
-    else if (canvas < 6000) hints.push(`开场画布只有 ${canvas} 字符，体量不够——画布是一整页好几屏长的门面长页（通常 4~5 个模块，模块内可用折叠/点击交互收纳内容），把每个模块做深做厚，别缩水成一张信息卡`);
+    if (!canvas) hints.push({ key: "canvas.missing", text: "没有开场画布——按「画布制作规格」补一份完整门面页" });
+    else if (canvas < 6000) hints.push({ key: "canvas.thin", text: `开场画布只有 ${canvas} 字符，体量不够——画布是一整页好几屏长的门面长页（通常 4~5 个模块，模块内可用折叠/点击交互收纳内容），把每个模块做深做厚，别缩水成一张信息卡` });
     if (material.profileMode === "freeform") {
         // 一框式看整段：两段各自的体量约等于分框时四五个框的总和
         for (const [key, label] of [["profileText", "角色资料"], ["worldText", "世界与剧情"]] as const) {
-            if (len(key) === 0) hints.push(`${label}还空着`);
-            else if (len(key) < 240) hints.push(`${label}偏薄（${len(key)} 字），用 ## 小节分开写性格/背景/世界观/关系等，各自用具体细节撑起来`);
+            if (len(key) === 0) hints.push({ key: `freeform.${key}.empty`, text: `${label}还空着` });
+            else if (len(key) < 240) hints.push({ key: `freeform.${key}.thin`, text: `${label}偏薄（${len(key)} 字），用 ## 小节分开写性格/背景/世界观/关系等，各自用具体细节撑起来` });
         }
     } else {
         for (const [key, label] of [["personality", "性格"], ["background", "背景"], ["worldview", "世界观"], ["relations", "关系与身份"]] as const) {
-            if (len(key) === 0) hints.push(`${label}还空着`);
-            else if (len(key) < 60) hints.push(`${label}偏薄（${len(key)} 字），用具体行为细节撑起来`);
+            if (len(key) === 0) hints.push({ key: `field.${key}.empty`, text: `${label}还空着` });
+            else if (len(key) < 60) hints.push({ key: `field.${key}.thin`, text: `${label}偏薄（${len(key)} 字），用具体行为细节撑起来` });
         }
     }
-    return hints.length ? `\n质量提示（建议用 更新材料 补足）：\n- ${hints.join("\n- ")}` : "";
+    return hints;
+}
+
+/** 取这一件材料**还没提醒过**的欠账；一条都不剩就返回空串 */
+function qualityHints(material: Record<string, unknown>, kind: MixMaterialKind, id: string): string {
+    const materialId = String(id || "").trim();
+    if (!materialId) return "";
+    const seen = hintedQualityKeys.get(materialId) ?? new Set<string>();
+    const fresh = collectQualityHints(material, kind).filter((hint) => !seen.has(hint.key));
+    if (!fresh.length) return "";
+    for (const hint of fresh) seen.add(hint.key);
+    // 会话内的台账只用来防重复提示，别让长会话无限攒材料 id
+    if (hintedQualityKeys.size > 300) hintedQualityKeys.clear();
+    hintedQualityKeys.set(materialId, seen);
+    return `\n质量提示（同一项只提醒一次，之后不再重复列出；要不要补由你和宝定，不是收工前必须清完的清单）：\n- ${fresh.map((hint) => hint.text).join("\n- ")}`;
 }
 
 /** 成品校验：与导入器/编辑器同口径，缺什么说什么 */
@@ -480,6 +806,18 @@ export function mixToolCreateMaterial(args: Record<string, unknown>): ToolResult
     const name = text(args.name).trim();
     if (!name) return { name: NAME, success: false, error: "请传材料名 name。" };
 
+    // 防重：同类同名先拦下来，把已有 id 交回去。真机日志里「建完再建一遍同名」是空转的主要来源
+    // ——同名件一多，后面按名字读还会撞上「重名歧义」，于是更确信自己没建过，继续建。
+    const inThisTask = findInMascotTaskLedger({ scope: "mixmat", kind, name });
+    if (inThisTask) {
+        return { name: NAME, success: false, error: describeMascotNameConflict({ label: MIX_KIND_LABELS[kind], name, id: inThisTask.id, updateTool: "更新材料", where: "本轮" }) };
+    }
+    const ownSameName = loadMixCabinet().find((m) => m.kind === kind && m.name === name && !m.imported);
+    if (ownSameName) {
+        return { name: NAME, success: false, error: describeMascotNameConflict({ label: MIX_KIND_LABELS[kind], name, id: ownSameName.id, updateTool: "更新材料" }) };
+    }
+    // 官方同名件与导入的他人作品不拦：那是「参考着另建一件」的正常用法，只在回执里提醒 id 更靠谱
+
     const now = Date.now();
     const material: Record<string, unknown> = { id: createMixId("mixmat"), kind, name, createdAt: now, updatedAt: now };
     if (kind === "character") {
@@ -505,10 +843,36 @@ export function mixToolCreateMaterial(args: Record<string, unknown>): ToolResult
 
     saveMixMaterial(material as unknown as MixMaterial);
     broadcastCabinetUpdated();
+    recordMascotTaskLedger({ scope: "mixmat", kind, id: String(material.id), name, label: `${MIX_KIND_LABELS[kind]}「${name}」` });
+    // 新建的材料正文 pin 进常驻板：接着改不用再读
+    pinMixMaterial(String(material.id), kind, name, describeMaterial(material as unknown as MixMaterial));
+    // 官方同名件与导入的他人作品不拦，但必须提醒：以后按名字找会歧义
+    const twin = [...listMixBuiltins(kind), ...loadMixCabinet()].find((m) => m.kind === kind && m.name === name && m.id !== material.id);
+    const twinNote = twin ? `（注意：酒柜里另有一件同名${MIX_KIND_LABELS[kind]}，id: ${twin.id}${isMixBuiltinId(twin.id) ? "，官方件不可改" : ""}——以后一律带 id 操作。）` : "";
     return {
         name: NAME, success: true,
-        data: `已把${MIX_KIND_LABELS[kind]}「${name}」放进酒柜（id: ${material.id}）。用户可在独家特调 App 的酒柜里查看详情与效果预览，然后去吧台配成特调开局。${qualityHints(material, kind)}`,
+        data: `已把${MIX_KIND_LABELS[kind]}「${name}」放进酒柜（id: ${material.id}）。${twinNote}照这个 id 接着改就行，不用回读、不用列酒柜。（正文已常驻本轮系统提示词）${ledgerDigest()}${qualityHints(material, kind, String(material.id))}`,
     };
+}
+
+/** 把字段值格式化为人可读的短文本，用于变更明细的 old→new 展示 */
+function formatDiffValue(value: unknown): string {
+    if (value === undefined || value === null) return "（空）";
+    if (typeof value === "boolean") return value ? "是" : "否";
+    if (typeof value === "number") return String(value);
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return "（空）";
+        return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) return "（空数组）";
+        const joined = value.map(v => typeof v === "string" ? v : JSON.stringify(v)).join("、");
+        return joined.length > 80 ? `${joined.slice(0, 80)}…` : joined;
+    }
+    // 对象：JSON 序列化后截断
+    const json = JSON.stringify(value);
+    return json.length > 80 ? `${json.slice(0, 80)}…` : json;
 }
 
 export function mixToolUpdateMaterial(args: Record<string, unknown>): ToolResult {
@@ -557,7 +921,241 @@ export function mixToolUpdateMaterial(args: Record<string, unknown>): ToolResult
 
     saveMixMaterial(next as unknown as MixMaterial);
     broadcastCabinetUpdated();
-    return { name: NAME, success: true, data: `已更新${MIX_KIND_LABELS[existing.kind]}「${next.name}」的：${[...new Set(changed)].join("、")}。${qualityHints(next, existing.kind)}` };
+    recordMascotTaskLedger({ scope: "mixmat", kind: existing.kind, id: String(existing.id), name: String(next.name), label: `${MIX_KIND_LABELS[existing.kind]}「${next.name}」` });
+    // 更新后的材料正文 pin 进常驻板（续期或新增）：接着改不用再读
+    pinMixMaterial(existing.id, existing.kind, String(next.name), describeMaterial(next as unknown as MixMaterial));
+
+    // 构建具体变更明细：旧值→新值，让用户展开工具卡片就能看到改了什么
+    const uniqueChanged = [...new Set(changed)];
+    const diffLines: string[] = [];
+    for (const key of uniqueChanged) {
+        const oldVal = (existing as Record<string, unknown>)[key];
+        const newVal = next[key];
+        if (key === "cover") {
+            diffLines.push(`· cover：已更换封面图`);
+        } else {
+            diffLines.push(`· ${key}：${formatDiffValue(oldVal)} → ${formatDiffValue(newVal)}`);
+        }
+    }
+    const diffText = diffLines.length ? `\n${diffLines.join("\n")}` : "";
+    return { name: NAME, success: true, data: `已更新${MIX_KIND_LABELS[existing.kind]}「${next.name}」的：${uniqueChanged.join("、")}。${diffText}（正文已常驻本轮系统提示词）${ledgerDigest()}${qualityHints(next, existing.kind, String(existing.id))}` };
+}
+
+// ── 定点片段编辑 ─────────────────────────────────────
+// 一次调用可以带多条 edits，全部在内存副本上跑通才落盘（原子提交）：中途模型断联或
+// 第 N 条写错，不会留下「改了一半的材料」。回执只给变更摘要 + 字段地图，不回全文。
+
+type PatchEdit = {
+    field?: unknown; find?: unknown; replace?: unknown; all?: unknown;
+    append?: unknown; prepend?: unknown; sep?: unknown;
+    insertAfter?: unknown; insertBefore?: unknown; text?: unknown;
+    content?: unknown;
+};
+
+function patchOperation(edit: PatchEdit): string | null {
+    const ops = ["find", "insertAfter", "insertBefore", "append", "prepend", "content"]
+        .filter((key) => edit[key as keyof PatchEdit] !== undefined);
+    if (ops.length === 0) return "没有指定操作（find / append / prepend / insertAfter / insertBefore / content 任选一种）";
+    if (ops.length > 1) return `一次只能做一种操作，你同时给了：${ops.join("、")}`;
+    return null;
+}
+
+export function mixToolPatchMaterial(args: Record<string, unknown>): ToolResult {
+    const NAME = "改材料片段";
+    const r = findMaterial(args);
+    if (!r.ok) return { name: NAME, success: false, error: r.err };
+    const existing = r.ok;
+    if (isMixBuiltinId(existing.id)) return { name: NAME, success: false, error: "官方出厂件不可修改。可以参考它另建一件新材料。" };
+    if (existing.imported) return { name: NAME, success: false, error: "入柜导入的他人作品不可修改（与酒柜界面同规矩）。可以另建一件自己的材料。" };
+    if (isSealed(existing)) return { name: NAME, success: false, error: "导入的他人角色卡正文封存，不可修改。" };
+
+    // 兼容单条写法：直接把 field/find/... 放在参数里；批量写法用 edits:[…]
+    const rawEdits: unknown[] = Array.isArray(args.edits)
+        ? args.edits as unknown[]
+        : (args.field !== undefined ? [args] : []);
+    if (!rawEdits.length) {
+        return { name: NAME, success: false, error: "请传 edits 数组（或单条的 field + 一个操作）。改完不需要回读确认。" };
+    }
+    if (rawEdits.length > 20) return { name: NAME, success: false, error: "一次最多 20 条 edits；多的拆成下一次调用。" };
+
+    const kind = existing.kind;
+    const fieldMap = describeFieldMap(existing);
+    // 深拷贝：绝不能就地改到存储层的缓存对象，万一校验失败就脏了内存里的原件
+    const next = JSON.parse(JSON.stringify(existing)) as Record<string, unknown>;
+    const summary: string[] = [];
+
+    for (const [index, raw] of rawEdits.entries()) {
+        const edit = (raw && typeof raw === "object" ? raw : {}) as PatchEdit;
+        const prefix = `第 ${index + 1} 条`;
+        const opError = patchOperation(edit);
+        if (opError) return { name: NAME, success: false, error: `${prefix}：${opError}。\n字段地图：\n${fieldMap}` };
+        const path = parseFieldPath(edit.field);
+        if (!path || !fieldSpecFor(kind, path.top)) {
+            return { name: NAME, success: false, error: `${prefix}：field「${String(edit.field ?? "")}」不是这件${MIX_KIND_LABELS[kind]}可编辑的字段。\n字段地图：\n${fieldMap}` };
+        }
+        const current = readAtPath(next, path);
+        const before = typeof current === "string" ? current : "";
+        const canStartEmpty = edit.append !== undefined || edit.prepend !== undefined || edit.content !== undefined;
+        if (typeof current !== "string" && !canStartEmpty) {
+            return { name: NAME, success: false, error: `${prefix}：${path.label} 不是文本字段（或路径不存在）。只有 append / prepend / content 能往空字段里写。\n字段地图：\n${fieldMap}` };
+        }
+
+        let after = before;
+        let opLabel = "";
+        if (edit.find !== undefined) {
+            const find = text(edit.find);
+            const replace = text(edit.replace);
+            if (!find) return { name: NAME, success: false, error: `${prefix}：find 不能为空。` };
+            const count = before.split(find).length - 1;
+            if (count === 0) {
+                return {
+                    name: NAME, success: false,
+                    error: `${prefix}：在 ${path.label} 里找不到 find 片段（空格、换行、标点要完全一致）。${excerptAround(before, find)}\n改法：抄上面原文里的一小段做 find，或改用 append 追加，别重读整篇。`,
+                };
+            }
+            if (count > 1 && edit.all !== true) {
+                return { name: NAME, success: false, error: `${prefix}：find 匹配了 ${count} 处。加长片段让它唯一，或传 all:true 全部替换。` };
+            }
+            after = edit.all === true ? before.split(find).join(replace) : before.replace(find, replace);
+            opLabel = `替换 ${edit.all === true ? count : 1} 处`;
+        } else if (edit.insertAfter !== undefined || edit.insertBefore !== undefined) {
+            const anchor = text(edit.insertAfter !== undefined ? edit.insertAfter : edit.insertBefore);
+            const inserted = text(edit.text);
+            if (!anchor) return { name: NAME, success: false, error: `${prefix}：锚点不能为空。` };
+            const at = before.indexOf(anchor);
+            if (at < 0) {
+                return { name: NAME, success: false, error: `${prefix}：在 ${path.label} 里找不到锚点。${excerptAround(before, anchor)}` };
+            }
+            const pos = edit.insertAfter !== undefined ? at + anchor.length : at;
+            after = before.slice(0, pos) + inserted + before.slice(pos);
+            opLabel = edit.insertAfter !== undefined ? "锚点后插入" : "锚点前插入";
+        } else if (edit.append !== undefined) {
+            const sep = typeof edit.sep === "string" ? edit.sep : "\n";
+            const chunk = text(edit.append);
+            after = before ? before + sep + chunk : chunk;
+            opLabel = "分段追加";
+        } else if (edit.prepend !== undefined) {
+            const sep = typeof edit.sep === "string" ? edit.sep : "\n";
+            const chunk = text(edit.prepend);
+            after = before ? chunk + sep + before : chunk;
+            opLabel = "开头插入";
+        } else {
+            after = text(edit.content);
+            opLabel = "整段覆写";
+        }
+
+        if (!writeAtPath(next, path, after)) {
+            return { name: NAME, success: false, error: `${prefix}：写不进 ${path.label}（数组下标越界或路径不存在）。\n字段地图：\n${fieldMap}` };
+        }
+        summary.push(`· ${path.label}：${before.length} → ${after.length} 字（${opLabel}）`);
+    }
+
+    if (kind === "character") {
+        Object.assign(next, normalizeMixCardProfile(next as unknown as MixCharacterCard));
+        for (const key of [...MIX_CARD_FIELD_KEYS, "profileMode", "profileText", "worldText"] as const) {
+            if (next[key] === undefined) delete next[key];
+        }
+    }
+    const invalid = validateMaterial(next, kind);
+    if (invalid) return { name: NAME, success: false, error: `这批改动会让材料不合格：${invalid}（整批已撤销，一件都没写）。` };
+
+    next.updatedAt = Date.now();
+    saveMixMaterial(next as unknown as MixMaterial);
+    broadcastCabinetUpdated();
+    recordMascotTaskLedger({ scope: "mixmat", kind, id: String(existing.id), name: String(next.name), label: `${MIX_KIND_LABELS[kind]}「${next.name}」` });
+    // 定点修改后的材料正文 pin 进常驻板（续期或新增）：接着改不用再读
+    pinMixMaterial(existing.id, kind, String(next.name), describeMaterial(next as unknown as MixMaterial));
+    return {
+        name: NAME, success: true,
+        data: `已定点修改 ${materialHead(existing)} 的 ${summary.length} 处（原子提交，全部校验通过才落盘）：\n${summary.join("\n")}\n字段地图（改完直接照它接着改，不用回读全文）：\n${describeFieldMap(next as unknown as MixMaterial)}（正文已常驻本轮系统提示词）${ledgerDigest()}${qualityHints(next, kind, String(existing.id))}`,
+    };
+}
+
+// ── 批量建副本 ───────────────────────────────────────
+// 建一整套特调以前要「读规格 → 建材料 → 列酒柜 → 再建」来回十几轮，模型还记不住
+// 已经建过哪些、id 是什么。这里一次调用批量建一批材料；finish:true 时按本轮台账
+// 自动装槽并保存配方，模型完全不用记 id、不用扫酒柜。正文太长就分批 append 补，
+// 每批照常落盘，中途断联也不会把已建好的部分弄丢。
+
+/** 每杯副本各自攒的材料 id；finish 时只装自己这杯的，不误收本轮顺手建的别的东西 */
+const recipeDrafts = new Map<string, string[]>();
+
+export function mixToolBuildRecipe(args: Record<string, unknown>): ToolResult {
+    const NAME = "新建副本";
+    const recipeName = text(args.name).trim();
+    if (!recipeName) return { name: NAME, success: false, error: "请传特调名 name。" };
+    const materials = Array.isArray(args.materials) ? args.materials as unknown[] : [];
+    const finish = args.finish === true;
+    if (!materials.length && !finish) {
+        return { name: NAME, success: false, error: '请传 materials 数组，元素形如 {"kind":"base","name":"…","content":"…"}。一次可带多件；长正文之后用「改材料片段」的 append 分批补。' };
+    }
+
+    const created: string[] = [];
+    const failures: string[] = [];
+    for (const [index, raw] of materials.entries()) {
+        const one = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+        const result = mixToolCreateMaterial(one);
+        if (!result.success) {
+            failures.push(`第 ${index + 1} 件「${String(one.name ?? "")}」：${result.error}`);
+            continue;
+        }
+        const kind = text(one.kind).trim();
+        const entry = findInMascotTaskLedger({ scope: "mixmat", kind, name: text(one.name).trim() });
+        created.push(`${kind}「${text(one.name).trim()}」→ ${entry?.id ?? "（见创建回执）"}`);
+        if (entry?.id) {
+            const draft = recipeDrafts.get(recipeName) ?? [];
+            if (!draft.includes(entry.id)) draft.push(entry.id);
+            if (recipeDrafts.size > 50) {
+                const oldest = recipeDrafts.keys().next().value;
+                if (oldest) recipeDrafts.delete(oldest);
+            }
+            recipeDrafts.set(recipeName, draft);
+        }
+    }
+
+    const lines: string[] = [`本批新建 ${created.length} 件${failures.length ? `，${failures.length} 件没建成` : ""}。`];
+    if (created.length) lines.push(...created.map((line) => `· ${line}`));
+    if (failures.length) lines.push(...failures.map((line) => `✗ ${line}`));
+    lines.push(ledgerDigest().trim() || "【本轮材料台账】还是空的");
+
+    if (!finish) {
+        lines.push(`配方「${recipeName}」还没收尾：继续补正文（长文本用「改材料片段」的 append 分几轮写），材料齐了再调一次「新建副本」带 name + finish:true 自动装槽成杯。同名材料再建会被拒并把已有 id 还给你，重试是安全的。`);
+        return { name: NAME, success: true, data: lines.join("\n") };
+    }
+
+    // 只装这杯副本攒下的材料；没走过批量工具（一路用「创建材料」单件建的）才退回本轮台账
+    const byKind = new Map<string, string[]>();
+    const add = (kind: string, id: string) => {
+        const ids = byKind.get(kind) ?? [];
+        if (!ids.includes(id)) ids.push(id);
+        byKind.set(kind, ids);
+    };
+    const draftIds = recipeDrafts.get(recipeName) ?? [];
+    if (draftIds.length) {
+        for (const id of draftIds) {
+            const material = getMixMaterial(id);
+            if (material) add(material.kind, id);
+        }
+    } else {
+        for (const entry of listMascotTaskLedger("mixmat")) {
+            if (entry.kind) add(entry.kind, entry.id);
+        }
+    }
+    // 单件类各 1 件，其余每类最多 3 件
+    const slots: { kind: string; material: string }[] = [];
+    for (const kind of MIX_SLOT_ORDER) {
+        const ids = byKind.get(kind) ?? [];
+        const limit = SINGLE_KINDS.includes(kind) ? 1 : 3;
+        for (const id of ids.slice(0, limit)) slots.push({ kind, material: id });
+    }
+    const recipe = mixToolSaveRecipe({ name: recipeName, slots });
+    if (!recipe.success) {
+        lines.push(`自动装槽没成：${recipe.error}。材料都已入柜，补上缺的那类后带 finish:true 再收一次尾即可。`);
+        return { name: NAME, success: true, data: lines.join("\n") };
+    }
+    lines.push(`已自动装槽并保存配方：${recipe.data}`);
+    recipeDrafts.delete(recipeName);
+    return { name: NAME, success: true, data: lines.join("\n") };
 }
 
 // ── 保存配方 ─────────────────────────────────────────
@@ -606,16 +1204,78 @@ export function mixToolSaveRecipe(args: Record<string, unknown>): ToolResult {
 
     const existing = loadMixRecipes().find((r) => r.name === name && !r.imported);
     const now = Date.now();
+    const recipeId = String(existing?.id ?? createMixId("mixrec"));
     saveMixRecipe({
-        ...(existing ?? { id: createMixId("mixrec"), createdAt: now, updatedAt: now }),
+        ...(existing ?? { id: recipeId, createdAt: now, updatedAt: now }),
         name,
         slots,
         imported: undefined,
     });
     broadcastCabinetUpdated();
+    recordMascotTaskLedger({ scope: "recipe", id: recipeId, name, label: `特调「${name}」` });
     return {
         name: NAME, success: true,
-        data: `${existing ? "已更新" : "已调好"}特调「${name}」：${picked.join(" + ")}。用户在独家特调 App 的吧台就能选它开局。`,
+        data: `${existing
+            ? `「${name}」这杯已经调过一回了，这次是覆盖更新（id: ${recipeId}）`
+            : `已调好特调「${name}」（id: ${recipeId}）`}：${picked.join(" + ")}。用户在独家特调 App 的吧台就能选它开局。`,
+    };
+}
+
+// ── 工作副本装配 ───────────────────────────────────
+// 整套工作副本机制：一次性读取配方里所有材料到常驻板，供模型参考。
+// 修改还是通过现有工具（改材料片段、更新材料）实时写回，这些工具已经自动更新板。
+// 这样避免了"解析结构化文本回字段"的复杂问题。
+
+/**
+ * 装配工作副本：把指定配方（或酒柜全部）的所有材料一次性加载到常驻板。
+ * 所有正文常驻本轮系统提示词，模型可以直接参考。
+ * 修改通过现有工具（改材料片段、更新材料）实时写回，这些工具已经自动更新板。
+ */
+export function mixToolAssembleWorkingCopy(args: Record<string, unknown>): ToolResult {
+    const NAME = "装配工作副本";
+    const recipeRef = text(args.recipe).trim();
+
+    // 收集要加载的材料 id
+    const materialIds: string[] = [];
+
+    if (recipeRef) {
+        // 按配方加载：找配方，取所有槽位里的材料 id
+        const recipes = loadMixRecipes();
+        const recipe = recipes.find((r) => (r.id === recipeRef || r.name === recipeRef) && !r.imported);
+        if (!recipe) return { name: NAME, success: false, error: `找不到配方「${recipeRef}」。` };
+        for (const kind of MIX_SLOT_ORDER) {
+            const entries = recipe.slots[kind] ?? [];
+            for (const entry of entries) materialIds.push(entry.materialId);
+        }
+    } else {
+        // 没指定配方：加载酒柜全部（慎用，材料多会撑爆常驻板）
+        const cabinet = loadMixCabinet();
+        for (const m of cabinet) materialIds.push(m.id);
+    }
+
+    if (!materialIds.length) {
+        return { name: NAME, success: false, error: "没有材料可加载。" };
+    }
+
+    const loaded: string[] = [];
+    const missing: string[] = [];
+    for (const id of materialIds) {
+        const material = getMixMaterial(id);
+        if (!material) {
+            missing.push(id);
+            continue;
+        }
+        if (isSealed(material)) continue; // 封存的角色卡不回正文，也不 pin
+        const content = describeMaterial(material);
+        pinMixMaterial(material.id, material.kind, material.name, content);
+        loaded.push(`${MIX_KIND_LABELS[material.kind]}「${material.name}」`);
+    }
+
+    const loadedSummary = loaded.length ? `已加载 ${loaded.length} 件到常驻板：${loaded.join("、")}` : "没有可加载的材料";
+    const missingSummary = missing.length ? `（${missing.length} 件找不到：${missing.join("、")}）` : "";
+    return {
+        name: NAME, success: true,
+        data: `${loadedSummary}${missingSummary}。所有材料正文已常驻本轮系统提示词，可以直接参考。修改用「改材料片段」或「更新材料」，会自动同步到板。`,
     };
 }
 

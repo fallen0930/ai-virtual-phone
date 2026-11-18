@@ -6,7 +6,7 @@ import {
 } from "./mascot-engine";
 import { PAGE_GREETINGS } from "./mascot-prompts";
 import {
-    buildMascotPackageSchemaPrompt,
+    autoExpandMixologyPackage,
     clearExpandedPackages,
     executeMascotToolCall,
     findPackageByLabel,
@@ -17,9 +17,39 @@ import {
     type MascotToolContext,
 } from "./mascot-tools";
 import { isMascotPanelOpen } from "./mascot-state";
+import {
+    markWaitStart,
+    nowMono,
+    rollingPaceMs,
+    splitWaitGap,
+    type MascotWaitStart,
+} from "./mascot-waiting-pace";
 import { buildMascotSessionSummary } from "./mascot-conversation-utils";
-import { accountIdForConfig, beginTaskBilling, endTaskBilling, isTaskBillingActive, isTaskBillingEnabled, settleTaskBilling } from "./api-accounts";
+import { getMascotMaxOutputTokens, getMascotMaxRounds } from "./mascot-prefs";
+import {
+    MASCOT_AUTO_CONTINUE_PROMPT,
+    MASCOT_AUTO_CONTINUE_VISIBLE_HINT,
+    MASCOT_MAX_AUTO_CONTINUES,
+    MASCOT_MAX_NUDGES,
+    MASCOT_MAX_STALL_RETRIES,
+    MASCOT_ROUNDS_EXHAUSTED_NOTICE,
+    MASCOT_STALL_RETRY_VISIBLE_HINT,
+    MASCOT_TRUNCATED_EXHAUSTED_NOTICE,
+    buildMascotNudgePrompt,
+    buildMascotProgressDigest,
+    extractMascotActionDetail,
+    isMascotStallError,
+    looksLikeWrapUp,
+    type MascotExecutedAction,
+    type MascotProgressDigestReason,
+} from "./mascot-agent-policy";
+import { resetMascotTaskLedger, summarizeTaskLedger } from "./mascot-task-ledger";
+import { resetMixCraftSpecBoard } from "./mixology/spec-board";
+import { resetMixMaterialBoard } from "./mixology/material-board";
+import { accountIdForConfig, beginTaskBilling, cancelTaskBilling, endTaskBilling, isTaskBillingActive, isTaskBillingEnabled, settleTaskBilling } from "./api-accounts";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
+import { beginMascotDiagTask, type MascotDiagRoundRecorder } from "./mascot-diag";
+import { nativeToolProtocolForConfig } from "./llm-provider-adapter";
 
 const MASCOT_DB_NAME = "AiPhoneMascotDB";
 const MASCOT_DB_VERSION = 2;
@@ -53,12 +83,28 @@ type PersistedMascotState = {
     activeSessionId: string | null;
 };
 
+/**
+ * 卷宝这一轮正在等什么。两个起点时钟都要带：界面每秒用 `measureWait` 现算，
+ * 挂起的那一段（墙上 − 单调）不能算成「小卷想了很久」。
+ */
+export type MascotThinkingProgress = MascotWaitStart & {
+    /** 第几轮（1 起） */
+    round: number;
+    maxRounds: number;
+    /** 本轮已开始执行的动作中文名；null = 还在等模型回话 */
+    toolName: string | null;
+    /** 前几轮前台耗时均值（毫秒）；null = 样本还不够，不给参照 */
+    paceMs: number | null;
+};
+
 export type MascotChatSnapshot = {
     messages: MascotMsg[];
     sessions: MascotSession[];
     activeSessionId: string | null;
     hydrated: boolean;
     isThinking: boolean;
+    /** isThinking 为真时才有；停止 / 收尾时与 isThinking 一起清掉 */
+    thinkingProgress: MascotThinkingProgress | null;
     /** 当前会话上下文用量（0–1+，达到 1 附近即建议开新窗口） */
     contextUsage: number;
 };
@@ -70,9 +116,10 @@ let activeSessionId: string | null = null;
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
 let isThinking = false;
+let thinkingProgress: MascotThinkingProgress | null = null;
 let abortRequested = false;
 let abortController: AbortController | null = null;
-let snapshot: MascotChatSnapshot = { messages, sessions, activeSessionId, hydrated, isThinking, contextUsage: 0 };
+let snapshot: MascotChatSnapshot = { messages, sessions, activeSessionId, hydrated, isThinking, thinkingProgress, contextUsage: 0 };
 
 function openMascotDb(): IDBOpenDBRequest {
     const request = indexedDB.open(MASCOT_DB_NAME, MASCOT_DB_VERSION);
@@ -139,7 +186,7 @@ function computeContextUsage(): number {
 }
 
 function emit() {
-    snapshot = { messages, sessions, activeSessionId, hydrated, isThinking, contextUsage: computeContextUsage() };
+    snapshot = { messages, sessions, activeSessionId, hydrated, isThinking, thinkingProgress, contextUsage: computeContextUsage() };
     for (const listener of listeners) listener();
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("mascot-chat-updated", { detail: snapshot }));
@@ -364,7 +411,20 @@ function publishMessages(nextMessages: MascotMsg[], options: { persist?: boolean
 
 function setThinking(next: boolean) {
     isThinking = next;
+    // 停止与收尾必须把进度一起清掉：留着旧进度，界面上会挂着一句「第 3 / 8 步 · 正在保存配方」
+    // 而小卷其实已经不跑了。
+    if (!next) thinkingProgress = null;
     emit();
+}
+
+/** 本轮进度：第几步 / 正在做哪个动作 / 两个时钟的起点。只在 isThinking 期间有值 */
+function publishThinkingProgress(progress: MascotThinkingProgress | null) {
+    thinkingProgress = progress;
+    emit();
+}
+
+export function getMascotThinkingProgress(): MascotThinkingProgress | null {
+    return isThinking ? thinkingProgress : null;
 }
 
 export function subscribeMascotChat(listener: () => void): () => void {
@@ -619,6 +679,12 @@ export async function generateMascotReply({
 
     let workingMessages = normalizeMessages(messages);
     setThinking(true);
+    // 一条用户消息 = 一轮任务：台账清空，本轮建过的对象（材料/角色/预设/配方）从这里开始记
+    resetMascotTaskLedger();
+    // 制作规格常驻板同样是任务级状态：上一轮读过的规格不带进新任务
+    resetMixCraftSpecBoard();
+    // 材料正文常驻板也是任务级：上一轮读过的材料不带进新任务
+    resetMixMaterialBoard();
     /**
      * 记账口径由「卷宝用的那本账」决定：
      * - 默认 `per_call`：**每次真实调用各记一笔** —— 内部调 5 次就是 5 笔，账本贴近中转站的真实消耗；
@@ -629,15 +695,52 @@ export async function generateMascotReply({
     const deferBilling = isTaskBillingEnabled(accountIdForConfig(mascotBillingConfig));
     if (deferBilling) beginTaskBilling();
 
-    const MAX_ROUNDS = 16;
+    const MAX_ROUNDS = getMascotMaxRounds();
+    /**
+     * 诊断日志：开关没打开时返回 null，整条链路零开销。
+     * 一次提问一个 task，每轮模型调用一个 round；记录里只留判定所需的事实。
+     */
+    const diagTask = beginMascotDiagTask({
+        protocol: mascotBillingConfig && nativeToolProtocolForConfig(mascotBillingConfig) ? "native" : "text",
+        providerKind: mascotBillingConfig?.provider,
+        model: mascotBillingConfig?.defaultModel,
+        baseUrl: mascotBillingConfig?.baseUrl,
+        maxTokens: getMascotMaxOutputTokens(),
+        maxRounds: MAX_ROUNDS,
+        streaming: mascotBillingConfig ? mascotBillingConfig.enableStreaming !== false : true,
+        historyMessages: workingMessages.length,
+        historyChars: workingMessages.reduce((sum, msg) => sum + (msg.text?.length ?? 0), 0),
+        imageCount: workingMessages.reduce((sum, msg) => sum + (msg.images?.length ?? 0), 0),
+        contextUsage: snapshot.contextUsage,
+        userText: latestVisibleMessage.text,
+    });
+    let taskErrorMessage: string | undefined;
     /** 任务没做完却不再输出动作时，允许「提醒重试」的次数（文本协议下模型偶尔会写错动作格式） */
     let nudges = 0;
+    /** 输出被 max_tokens 截断后，允许自动续写的次数 */
+    let autoContinues = 0;
+    /** 本次任务真实执行过的动作，收尾兜底小结靠它拼「做了什么」 */
+    const ranActions: MascotExecutedAction[] = [];
     /** 实际跑了几轮：等于 MAX_ROUNDS 说明是被上限截断的，不是自然结束 */
     let roundsRun = 0;
+    /** 最后一轮留下的可见文字：空着就得补一条进度小结，不能让她对着「（无内容）」发呆 */
+    let lastVisibleReply = "";
+    /** 循环为什么结束：null = 模型自己收尾了，不需要额外说明 */
+    let digestReason: MascotProgressDigestReason | null = null;
+    let brokeOut = false;
+    /** 本次任务是否以报错收场：per_task 口径下这种时候不按包价结算（见 finally） */
+    let taskFailed = false;
     abortRequested = false;
     const controller = new AbortController();
     abortController = controller;
     let expandedPackageIds = loadExpandedPackages();
+    // 特调意图自动展开：用户原话明显要做特调时直接记入已展开集合，
+    // 省掉「模型先花一轮展开套件」；返回原引用 = 没变化，不触发持久化写入。
+    const autoExpandedIds = autoExpandMixologyPackage(expandedPackageIds, latestVisibleMessage?.text ?? "");
+    if (autoExpandedIds !== expandedPackageIds) {
+        expandedPackageIds = autoExpandedIds;
+        saveExpandedPackages(expandedPackageIds);
+    }
     // 每次用户发送消息就是一次独立任务；最多 8 轮工具调用共享同一备份集合。
     const toolCtx: MascotToolContext = {
         pageContext: context,
@@ -645,21 +748,81 @@ export async function generateMascotReply({
         characterBackupIds: new Set<string>(),
     };
 
+    /**
+     * 输出被 max_tokens 切断时向模型要一次续写：残缺的那条动作没有执行，任务并没有做完。
+     * 返回 false = 自动续写次数用完，调用方要把「为什么停了」写进会话，不能默默收场。
+     */
+    const requestAutoContinue = (): boolean => {
+        if (autoContinues >= MASCOT_MAX_AUTO_CONTINUES) return false;
+        autoContinues += 1;
+        workingMessages = normalizeMessages([...workingMessages,
+            {
+                role: "mascot",
+                text: MASCOT_AUTO_CONTINUE_VISIBLE_HINT,
+                createdAt: new Date().toISOString(),
+            },
+            {
+                role: "user",
+                text: MASCOT_AUTO_CONTINUE_PROMPT,
+                hidden: true,
+                displayText: "（系统提示：输出被截断，自动续写）",
+                createdAt: new Date().toISOString(),
+            },
+        ]);
+        publishMessages(workingMessages);
+        return true;
+    };
+
+    /**
+     * 本轮前台耗时样本（毫秒，已剔除挂起段）：给「前几轮通常 X」当参照。
+     * 只留最近 8 个，均值取最近 3 个 —— 冷启动那一轮最慢，取全局均值会把参照抬虚。
+     */
+    const foregroundSamples: number[] = [];
+    /** 正在跑的那一轮：报错时循环会直接跳到外层 catch，得在这儿留个把手才量得到挂起段 */
+    let inFlightDiagRound: MascotDiagRoundRecorder | null = null;
+    let inFlightWaitStart: MascotWaitStart | null = null;
+
+    /** 墙上 / 单调两个时钟各量一遍，拆出「前台真等」与「页面被挂起」 */
+    const measureRoundWait = (start: MascotWaitStart) => {
+        const wallMs = Date.now() - start.startedWallAt;
+        const monoMs = Math.max(0, Math.round(nowMono() - start.startedMonoAt));
+        return { wallMs, monoMs, ...splitWaitGap(wallMs, monoMs) };
+    };
+
     try {
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
             roundsRun = round + 1;
             if (abortRequested) break;
 
+            const diagRound: MascotDiagRoundRecorder | undefined = diagTask?.startRound(round + 1);
+            /** 这一轮的两个时钟起点：墙上时间会跨过挂起，单调时间不会 */
+            const roundWaitStart = markWaitStart();
+            inFlightDiagRound = diagRound ?? null;
+            inFlightWaitStart = roundWaitStart;
+            publishThinkingProgress({
+                ...roundWaitStart,
+                round: round + 1,
+                maxRounds: MAX_ROUNDS,
+                toolName: null,
+                paceMs: rollingPaceMs(foregroundSamples),
+            });
             let streamedDisplay = "";
             let lastStreamPaintAt = 0;
             let lastStreamPaintLength = 0;
+            /** 诊断：流式期间实际画到屏幕上的字数（最后一次成功绘制时的长度） */
+            let paintedDuringStream = 0;
+            let maxPaintGapMs = 0;
+            let maxRafWaitMs = 0;
+            let hiddenDuringStream = typeof document !== "undefined" && document.visibilityState === "hidden";
             const streamToolIds = new Set<string>();
             const streamToolMessages: MascotMsg[] = [];
             const paintStream = async (force = false) => {
                 const now = Date.now();
                 if (!force && streamedDisplay.length - lastStreamPaintLength < 12 && now - lastStreamPaintAt < 50) return;
+                if (lastStreamPaintAt > 0) maxPaintGapMs = Math.max(maxPaintGapMs, now - lastStreamPaintAt);
                 lastStreamPaintAt = now;
                 lastStreamPaintLength = streamedDisplay.length;
+                if (typeof document !== "undefined" && document.visibilityState === "hidden") hiddenDuringStream = true;
                 const liveItems: MascotMsg[] = [];
                 if (streamedDisplay.trim()) {
                     liveItems.push({
@@ -671,15 +834,20 @@ export async function generateMascotReply({
                 }
                 liveItems.push(...streamToolMessages.map(withTimestamp));
                 publishMessages([...workingMessages, ...liveItems], { persist: false });
+                const rafStart = Date.now();
                 await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                maxRafWaitMs = Math.max(maxRafWaitMs, Date.now() - rafStart);
+                // rAF 真的回调了，才算这一版画到屏幕上
+                paintedDuringStream = streamedDisplay.length;
             };
 
-            const response = await mascotChatWithTools(
+            const requestRound = () => mascotChatWithTools(
                 context,
                 workingMessages,
                 expandedPackageIds,
                 {
                     signal: controller.signal,
+                    diag: diagRound,
                     callbacks: {
                         async onAssistantDelta(delta) {
                             if (!delta) return;
@@ -689,6 +857,8 @@ export async function generateMascotReply({
                         async onToolCallStart(info) {
                             if (streamToolIds.has(info.id)) return;
                             streamToolIds.add(info.id);
+                            // 「正在做什么」直接写进等待提示，她不用猜小卷是在等模型还是在动手
+                            if (thinkingProgress) publishThinkingProgress({ ...thinkingProgress, toolName: info.name });
                             streamToolMessages.push({
                                 role: "tool",
                                 text: "",
@@ -706,9 +876,65 @@ export async function generateMascotReply({
                     },
                 },
             );
-            if (streamedDisplay) await paintStream(true);
+            /**
+             * 断流轮级重试（诊断 mascot-diag-20261112-1221：第 5 轮挂死 17.8 分钟、整个任务超时收场）——
+             * 看门狗判死/网络挂断这类错误里，这一轮的内容一个字都没落地，原地重试同一轮比让她整条重发便宜得多。
+             * 但只重试 MASCOT_MAX_STALL_RETRIES 次：中转要是死了，重试也白搭，报错让她喊「继续」才是正解；
+             * 「空内容」「4xx/额度」这类确定性错误不在列——重试只会再烧一次钱。
+             */
+            let response: Awaited<ReturnType<typeof mascotChatWithTools>>;
+            try {
+                response = await requestRound();
+            } catch (roundError) {
+                if (
+                    MASCOT_MAX_STALL_RETRIES < 1
+                    || controller.signal.aborted
+                    || !isMascotStallError(roundError)
+                ) {
+                    throw roundError;
+                }
+                diagRound?.markLoop("stall_retry");
+                // 断掉那半截不算数：续接缓冲清空，重试的回复重新流
+                streamedDisplay = "";
+                workingMessages = normalizeMessages([...workingMessages, {
+                    role: "mascot",
+                    text: MASCOT_STALL_RETRY_VISIBLE_HINT,
+                    createdAt: new Date().toISOString(),
+                }]);
+                publishMessages(workingMessages, { persist: false });
+                response = await requestRound();
+            }
+            // 诊断：先按「流式期间真正画出来多少」记一版，再强制补画。
+            // 后台 rAF 被挂起时补画会卡住，这一版就是唯一能留下的现场；
+            // 补画后的字数不能回填，否则会把「当时没画出来」擦干净。
+            /**
+             * 这一轮到底等了多久：墙上时间与单调时间各算一遍，差值就是页面被挂起的那一段。
+             * 必须每轮都记 —— 工具轮一个字都没吐，`ui` 那套统计对它是空的，
+             * 而「52 分钟里只有 9 秒在前台」这条证据恰恰只在这种轮次里出现。
+             */
+            const roundWait = measureRoundWait(roundWaitStart);
+            inFlightWaitStart = null;
+            inFlightDiagRound = null;
+            if (roundWait.foregroundMs > 0) {
+                foregroundSamples.push(roundWait.foregroundMs);
+                if (foregroundSamples.length > 8) foregroundSamples.shift();
+            }
+            diagRound?.markTiming(roundWait);
+            if (streamedDisplay) {
+                const paintedBeforeFinal = paintedDuringStream;
+                const uiStats = {
+                    engineChars: streamedDisplay.length,
+                    paintedChars: paintedBeforeFinal,
+                    maxPaintGapMs,
+                    maxRafWaitMs,
+                    hiddenDuringStream,
+                };
+                diagRound?.markUi(uiStats);
+                await paintStream(true);
+            }
 
             const displayReply = response.reply.join("\n");
+            if (displayReply.trim()) lastVisibleReply = displayReply;
             const assistantMsg: MascotMsg = {
                 role: "mascot",
                 text: response.rawAssistant,
@@ -734,7 +960,9 @@ export async function generateMascotReply({
                     expandedPackageIds = touchExpandedPackage(expandedPackageIds, pkg.id);
                     saveExpandedPackages(expandedPackageIds);
 
-                    const guideContent = `「${pkg.label}」已展开，详细动作如下：\n${buildMascotPackageSchemaPrompt(pkg.label, response.protocol)}`;
+                    // 动作说明不再整段塞进历史：历史只带最近 40 条，长任务里说明会被挤出窗口，
+                    // 模型于是凭记忆编动作名或反复展开。说明现在常驻系统提示，这里只留一行回执。
+                    const guideContent = `「${pkg.label}」已展开，动作说明已写进本轮系统提示，不用再展开一次。`;
 
                     if (response.protocol === "native") {
                         const loaderName = getMascotNativeLoaderName(pkg.id);
@@ -764,6 +992,13 @@ export async function generateMascotReply({
                     }
                     publishMessages(workingMessages);
                 }
+                if (response.truncated && !requestAutoContinue()) {
+                    diagRound?.markLoop("truncated");
+                    digestReason = "truncated";
+                    brokeOut = true;
+                    break;
+                }
+                diagRound?.markLoop(response.truncated ? "auto_continue" : "tool_fetch");
                 continue;
             }
 
@@ -796,6 +1031,11 @@ export async function generateMascotReply({
                     if (result.success) mascotFillField({ field: call.name, value: result.data || "" });
 
                     const resultText = result.success ? (result.data || "完成") : (result.error || "未知错误");
+                    ranActions.push({
+                        name: displayName,
+                        success: result.success,
+                        detail: result.success ? extractMascotActionDetail(resultText) : undefined,
+                    });
                     const updated = [...workingMessages];
                     updated[runningIdx] = {
                         role: "tool",
@@ -812,21 +1052,51 @@ export async function generateMascotReply({
                     workingMessages = normalizeMessages(updated);
                     publishMessages(workingMessages);
                 }
+                // 同一条回复里完整的动作照常执行了，但被切断的那半条没跑：不能当完工
+                if (response.truncated && !requestAutoContinue()) {
+                    diagRound?.markLoop("truncated");
+                    digestReason = "truncated";
+                    brokeOut = true;
+                    break;
+                }
+                diagRound?.markLoop(response.truncated ? "auto_continue" : "actions");
                 continue;
             }
 
             /**
              * 走到这里 = 模型这一轮既没要求展开套件、也没给出可执行动作。
-             * 两种可能：真的做完了，或者它把动作格式写错了（文本协议下很常见，parseToolCalls
-             * 会静默跳过解析不出来的动作）——后者会让任务半途而废，也就是用户说的「做了一半不干活」。
-             * 所以只要回复里没明确说完成，就提醒它一次；提醒过仍无动作才真的收工。
+             * 三种可能：真的做完了（写了一份收尾报告）；输出被截断（残缺动作没执行，任务没做完）；
+             * 或者它把动作格式写错了（文本协议下很常见，parseToolCalls 会静默跳过解析不出来的动作）。
+             * 后两种都不能收工——旧版只靠 /已完成/i 命中回复任意位置就 break，
+             * 「已完成一半，接下来…」也会被当成完工，这正是「没做几个任务就中断」的成因。
              */
-            const finishedHint = /已完成|已经完成|全部完成|搞定了?|done/i.test(displayReply);
-            if (nudges < 1 && !finishedHint) {
+            if (response.truncated) {
+                if (!requestAutoContinue()) {
+                    diagRound?.markLoop("truncated");
+                    digestReason = "truncated";
+                    brokeOut = true;
+                    break;
+                }
+                diagRound?.markLoop("auto_continue");
+                continue;
+            }
+
+            if (looksLikeWrapUp(displayReply)) {
+                diagRound?.markLoop("wrapup");
+                digestReason = null;
+                brokeOut = true;
+                break;
+            }
+
+            // 只在「任务确实动过手」或「这轮什么都没写」时催它继续；纯闲聊直接收场，
+            // 免得问一句用法也被推着去乱点按钮。
+            const wroteNothing = !displayReply.trim();
+            if ((ranActions.length > 0 || wroteNothing) && nudges < MASCOT_MAX_NUDGES) {
                 nudges += 1;
+                diagRound?.markLoop("nudge");
                 workingMessages = normalizeMessages([...workingMessages, {
                     role: "user",
-                    text: "（系统提醒）任务似乎还没做完。请继续输出**下一个动作**，格式为 [执行动作:动作名({\"参数\":\"值\"})]；如果确实已全部完成，请只回复：已完成。",
+                    text: buildMascotNudgePrompt(),
                     hidden: true,
                     displayText: "（系统提醒：继续执行）",
                     createdAt: new Date().toISOString(),
@@ -835,13 +1105,46 @@ export async function generateMascotReply({
                 continue;
             }
 
+            digestReason = "silent";
+            diagRound?.markLoop("silent");
+            brokeOut = true;
             break;
+        }
+
+        // 循环自然跑完 = 轮数预算用尽，不是模型收尾
+        if (!brokeOut && !abortRequested && roundsRun >= MAX_ROUNDS) digestReason = "rounds";
+        if (abortRequested) digestReason = "abort";
+
+        // 收尾兜底：非正常结束时，会话里必须留下「做了什么 / 还差什么」，
+        // 而不是只有一条飘过就消失的通知条（面板开着时以前连通知条都没有）。
+        const closingNotice = digestReason === "rounds"
+            ? MASCOT_ROUNDS_EXHAUSTED_NOTICE
+            : digestReason === "truncated"
+                ? MASCOT_TRUNCATED_EXHAUSTED_NOTICE
+                : "";
+        const needDigest = digestReason !== null
+            && ranActions.length > 0
+            && !looksLikeWrapUp(lastVisibleReply);
+        const digestText = needDigest && digestReason
+            ? buildMascotProgressDigest(ranActions, digestReason)
+            : "";
+        const closingText = [
+            closingNotice,
+            digestText,
+        ].filter(Boolean).join("\n\n");
+        if (closingText) {
+            workingMessages = normalizeMessages([...workingMessages, {
+                role: "mascot",
+                text: closingText,
+                createdAt: new Date().toISOString(),
+            }]);
+            publishMessages(workingMessages);
         }
 
         if (abortRequested) {
             publishMessages([...workingMessages, { role: "user", text: "[用户中止了操作]", hidden: false, createdAt: new Date().toISOString() }]);
         }
-        const hitRoundLimit = !abortRequested && roundsRun >= MAX_ROUNDS;
+        const hitRoundLimit = !abortRequested && digestReason === "rounds";
         if (!isMascotPanelOpen() && typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("global-notice", {
                 detail: abortRequested
@@ -852,19 +1155,41 @@ export async function generateMascotReply({
             }));
         }
     } catch (err) {
+        // 报错那一轮同样要留下 timing：502 / 断流的轮次恰好就是她觉得「一直在思考」的那几轮，
+        // 循环直接跳到这儿，正常收尾的 markTiming 已经轮不到了。
+        if (inFlightDiagRound && inFlightWaitStart) {
+            inFlightDiagRound.markTiming(measureRoundWait(inFlightWaitStart));
+            inFlightDiagRound = null;
+            inFlightWaitStart = null;
+        }
         if ((err as Error).name !== "AbortError" && !abortRequested) {
+            taskFailed = true;
+            taskErrorMessage = (err as Error).message;
             publishMessages([...workingMessages, { role: "mascot", text: `出错了...${(err as Error).message}`, createdAt: new Date().toISOString() }]);
             if (!isMascotPanelOpen() && typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("global-notice", { detail: "AI助手生成失败了..." }));
             }
         }
     } finally {
+        // 诊断日志收尾：单独一行，任何分支都要留下「这次为什么停」
+        if (diagTask) {
+            void diagTask.finish({
+                reason: abortRequested ? "abort" : (digestReason ?? (taskFailed ? "error" : "wrapup")),
+                rounds: roundsRun,
+                actions: ranActions.map((action) => ({ name: action.name, success: action.success })),
+                digestReason: digestReason ?? undefined,
+                error: taskErrorMessage,
+            });
+        }
         // per_task 口径才需要收尾结算；per_call 的账在每次调用时就已经记过了
         if (deferBilling) {
             endTaskBilling();
             if (!isTaskBillingActive()) {
                 try {
-                    settleTaskBilling(mascotBillingConfig);
+                    // 报错收场的任务没交付，不按「任务包价」结算；她按停的那次照结 ——
+                    // 那几轮请求真的发出去了，钱也真的从中转站扣走了。
+                    if (taskFailed) cancelTaskBilling();
+                    else settleTaskBilling(mascotBillingConfig, summarizeTaskLedger());
                 } catch (error) {
                     console.warn("[Mascot] 任务结算失败（不影响对话）", error);
                 }

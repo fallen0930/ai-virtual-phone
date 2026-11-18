@@ -1,6 +1,8 @@
 // lib/chat-engine.ts
 
 import { createSseJsonParser } from "./sse-json";
+import { StreamIdleWatchdog } from "./stream-idle-watchdog";
+import type { LlmStreamDiagEvent, LlmStreamDiagSink } from "./llm-stream-diag-types";
 import { maybeAppendShortcutCapability } from "./offline-shortcut-capability";
 import { loadCharacters } from "./character-storage";
 import { buildScreenEffectPromptHint } from "./chat-screen-effects";
@@ -769,6 +771,7 @@ async function readSseStream(
     providerKind: ChatCompletionStreamResult["providerKind"],
     callbacks?: ChatCompletionStreamCallbacks,
     stripTimestamps = true,
+    watchdog?: StreamIdleWatchdog | null,
 ): Promise<{ content: string; rawResponse: string; usage?: LlmStreamUsage }> {
     if (!response.body) throw new ChatEngineError("流式响应没有 body。");
     const reader = response.body.getReader();
@@ -813,6 +816,8 @@ async function readSseStream(
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // 每收到一块字节就给看门狗续命：连续 idleMs 没动静才判死
+        watchdog?.touch();
         buffer += decoder.decode(value, { stream: true });
         const parsed = parseSseEvents(buffer);
         buffer = parsed.rest;
@@ -851,6 +856,14 @@ export async function sendLLMStreamRequest(
         followUpCount?: number;
         debugSessionId?: string;
         signal?: AbortSignal;
+        /**
+         * 断流闸：连续多少毫秒没收到任何字节就判死中断。
+         * 不传则不挂断流闸，只保留总时长粗闸（500 秒）。
+         * 特调/续写等中转链路建议传 120_000~180_000。
+         */
+        streamIdleMs?: number;
+        /** 总时长闸（毫秒），默认 500_000。传 streamIdleMs 后生效 */
+        timeoutMs?: number;
     },
     callbacks?: ChatCompletionStreamCallbacks,
 ): Promise<ChatCompletionStreamResult> {
@@ -885,12 +898,18 @@ export async function sendLLMStreamRequest(
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
     const request = buildProviderRequest(config, effectivePreset, requestMessages, { stream: true });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
+    // 断流闸：调用方显式传 streamIdleMs 时启用，连续 N 秒没字节就判死中断；
+    // 否则保持旧的「总时长 500 秒粗闸」行为。
+    const streamWatchdog = options?.streamIdleMs !== undefined
+        ? new StreamIdleWatchdog({ totalMs: options?.timeoutMs ?? 500_000, idleMs: options.streamIdleMs, signal: options?.signal })
+        : null;
     const llmAbort = new AbortController();
-    const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
-    const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
+    const llmTimeout = streamWatchdog ? null : setTimeout(() => llmAbort.abort(), 500_000);
+    const detachExternalAbort = streamWatchdog ? null : attachExternalAbort(llmAbort, options?.signal);
+    const requestSignal = streamWatchdog?.signal ?? llmAbort.signal;
 
     try {
-        const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        const response = await fetchLlmPayload(request, { signal: requestSignal });
         if (!response.ok) {
             const errorText = await response.text();
             throw new ChatEngineError(`API Stream Error ${response.status}: ${errorText}`);
@@ -906,7 +925,7 @@ export async function sendLLMStreamRequest(
                 await (pluginCallbacks ?? callbacks)?.onReasoningDelta?.(text);
             },
         };
-        const { content: streamedContent, rawResponse, usage: streamedUsage } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
+        const { content: streamedContent, rawResponse, usage: streamedUsage } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip, streamWatchdog);
         if (!streamedContent.trim()) {
             throw new ChatEngineError("流式响应没有解析到文本增量。");
         }
@@ -940,6 +959,15 @@ export async function sendLLMStreamRequest(
         }
         return { content: rawOutput, rawResponse, providerKind: request.providerKind, usage: streamedUsage };
     } catch (error: unknown) {
+        if (streamWatchdog && streamWatchdog.timedOut && !options?.signal?.aborted) {
+            // 看门狗用 Error 作 abort reason，fetch 抛出的就是它而非 DOMException，判闸必须排前面
+            streamWatchdog.dispose();
+            if (streamWatchdog.idleTimedOut) {
+                throw new ChatEngineError(`AI 流式回复中断（${Math.round((options?.streamIdleMs ?? 0) / 1000)} 秒没有收到数据），请重试。`);
+            }
+            throw new ChatEngineError(`AI 流式回复超时（${Math.round((options?.timeoutMs ?? 500_000) / 1000)} 秒），请重试。`);
+        }
+        streamWatchdog?.dispose();
         if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
             if (options?.signal?.aborted) throw error;
             throw new ChatEngineError("AI 流式回复超时（500秒），请重试。");
@@ -948,8 +976,8 @@ export async function sendLLMStreamRequest(
         const detail = error instanceof Error ? error.message : String(error);
         throw new ChatEngineError(`Stream Network Error connecting to AI Provider: ${detail}`);
     } finally {
-        clearTimeout(llmTimeout);
-        detachExternalAbort();
+        if (llmTimeout) clearTimeout(llmTimeout);
+        if (detachExternalAbort) detachExternalAbort();
     }
 }
 
@@ -973,13 +1001,25 @@ export async function sendLLMRequest(
         followUpCount?: number;
         debugSessionId?: string;
         signal?: AbortSignal;
+        /**
+         * 单次最大输出 token：按调用覆盖。执笔写长正文要用——不传这个字段时请求体里
+         * 根本没有 max_tokens（preset 传 null → 启用集里没有它），单次能写多长就改由
+         * 中转站默认值决定，8000 字的杯型会被悄悄砍成 2000 字。
+         */
+        maxTokens?: number;
+        /**
+         * 结束原因出口：只观察、不改变返回文本。
+         * sendLLMRequest 的返回类型是 string（全站十几处调用方在用），改不动，
+         * 于是把 finish_reason 从回调递出去——「被上限切断」与「模型自己收尾」必须能分开。
+         */
+        onMeta?: (meta: { finishReason?: string; usage?: LlmStreamUsage }) => void;
     },
 ): Promise<string> {
     const pluginPurpose = options?.appId ?? "chat";
     const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId);
     const effectivePreset = afterPlugins.preset;
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
-    const request = buildProviderRequest(config, effectivePreset, requestMessages);
+    const request = buildProviderRequest(config, effectivePreset, requestMessages, { maxTokens: options?.maxTokens });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
     const requestBodyJson = JSON.stringify(request.body);
     const requestBodySize = requestBodyJson.length;
@@ -1027,6 +1067,15 @@ export async function sendLLMRequest(
         }
 
         // Prepend reasoning content as <think> block (only when caller requests it, e.g. story mode)
+        try {
+            options?.onMeta?.({
+                finishReason: extractFinishReason((parsed.raw ?? {}) as Record<string, unknown>),
+                usage: parsed.usage,
+            });
+        } catch {
+            // 观测出口不许拖垮请求
+        }
+
         if (options?.includeReasoning) {
             const reasoning = parsed.reasoning || "";
             if (reasoning) {
@@ -1153,6 +1202,16 @@ function finalizeStreamToolCalls(drafts: Map<number, StreamToolCallDraft>): { ca
     return { calls, truncatedNames };
 }
 
+/** 诊断日志用：把 chunk 序列化后只留尾部，避免把整段工具参数也带进日志 */
+function safeJsonTail(data: unknown, limit = 1200): string {
+    try {
+        const text = JSON.stringify(data);
+        return text.length > limit ? text.slice(-limit) : text;
+    } catch {
+        return "[unserializable]";
+    }
+}
+
 export async function sendLLMToolStreamRequest(
     config: ApiConfig,
     preset: PresetConfig | null,
@@ -1168,6 +1227,19 @@ export async function sendLLMToolStreamRequest(
         signal?: AbortSignal;
         /** 单次最大输出 token：按调用覆盖预设值（工坊输出护栏用） */
         maxTokens?: number;
+        /**
+         * 断流看门狗阈值（卷宝链路传入；不传保持旧行为——只有总时长粗闸）。
+         * 中转站「首包 3 分钟、中途 18 分钟没字节」都算正常延迟吗？不算：
+         * 连续 streamIdleMs 没有任何字节即判死，抛「回复中断」让上层重试。
+         */
+        streamIdleMs?: number;
+        /** 总时长闸（毫秒），默认 500 秒；只在传了 streamIdleMs 的看门狗路径生效 */
+        timeoutMs?: number;
+        /**
+         * 卷宝诊断日志的流事件出口（可选）。只观察、不改变请求行为；
+         * 出错也绝不能让日志拖垮聊天主流程。
+         */
+        diag?: LlmStreamDiagSink;
     },
     callbacks?: ChatCompletionStreamCallbacks,
 ): Promise<LLMToolRequestResult> {
@@ -1190,18 +1262,38 @@ export async function sendLLMToolStreamRequest(
     const effectivePreset = afterPlugins.preset;
     const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, { tools, stream: true, maxTokens: options?.maxTokens });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "native-tools-stream", tools });
+    // 看门狗只在调用方显式传 streamIdleMs 时启用（目前只有卷宝链路）；其余调用方保持旧的「总时长粗闸」行为。
+    const streamWatchdog = options?.streamIdleMs !== undefined
+        ? new StreamIdleWatchdog({ totalMs: options?.timeoutMs ?? 500_000, idleMs: options.streamIdleMs, signal: options?.signal })
+        : null;
     const llmAbort = new AbortController();
-    const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
-    const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
+    const llmTimeout = streamWatchdog ? null : setTimeout(() => llmAbort.abort(), 500_000);
+    const detachExternalAbort = streamWatchdog ? null : attachExternalAbort(llmAbort, options?.signal);
+    const requestSignal = streamWatchdog?.signal ?? llmAbort.signal;
     let rawResponse = "";
     let content = "";
     let reasoning = "";
+    let sawDone = false;
     const contentStripper = createStreamingTimestampStripper();
     const toolDrafts = new Map<number, StreamToolCallDraft>();
     const firedToolCallStarts = new Set<number>();
+    const emitDiag = (event: LlmStreamDiagEvent) => {
+        if (!options?.diag) return;
+        try {
+            options.diag(event);
+        } catch {
+            // 诊断日志不允许影响请求
+        }
+    };
 
     try {
-        const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        const response = await fetchLlmPayload(request, { signal: requestSignal });
+        emitDiag({
+            type: "headers",
+            at: Date.now(),
+            status: response.status,
+            requestId: response.headers?.get?.("x-request-id") ?? undefined,
+        });
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -1249,15 +1341,29 @@ export async function sendLLMToolStreamRequest(
                         }
                     }
             }
+            if (options?.diag) {
+                emitDiag({
+                    type: "chunk",
+                    at: Date.now(),
+                    data,
+                    contentChars: content.length,
+                    reasoningChars: reasoning.length,
+                    sawDone,
+                    rawTail: safeJsonTail(data),
+                });
+            }
         };
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
+            // 每来一块字节就续命：断流闸只盯「多久没动静」，慢而不断的长生成不误杀
+            streamWatchdog?.touch();
             buffer += decoder.decode(value, { stream: true });
             const parsed = parseSseEvents(buffer);
             buffer = parsed.rest;
             for (const event of parsed.events) {
                 if (rawResponse.length < 65_536) rawResponse += `${event}\n`;
+                if (event.includes("[DONE]")) sawDone = true;
                 for (const data of sseParser.pushEvent(event)) {
                     await handleParsedDelta(data);
                 }
@@ -1279,6 +1385,14 @@ export async function sendLLMToolStreamRequest(
             await callbacks?.onDelta?.(finalContent);
         }
         content = await applyChatPluginLlmResponse(content, pluginPurpose, options?.debugSessionId);
+        emitDiag({
+            type: "end",
+            at: Date.now(),
+            sawDone,
+            contentChars: content.length,
+            reasoningChars: reasoning.length,
+            rawTail: rawResponse.slice(-1200),
+        });
 
         const sanitizedMessages = request.messagesForLog.map(m => ({
             ...m,
@@ -1294,12 +1408,14 @@ export async function sendLLMToolStreamRequest(
             rawResponse: logEntryRaw,
             reasoning: reasoning || undefined,
         });
-        // 原生工具流式这条链路没有解析 usage：按次计价的配置照扣，按量计价的会跳过（避免瞎估）
-        chargeForLlmCall(config, undefined);
-
+        // 判空必须排在扣费前面：这条是卷宝的主路径，之前先扣后判，
+        // 于是「出错了…（没有解析到文本或动作）」的那一轮也记了一笔钱。
+        // 另外三条出口（sendLLMRequest / sendLLMStreamRequest / sendLLMToolRequest）本来就是这个顺序。
         if (!content && toolCalls.length === 0 && truncatedNames.length === 0) {
             throw new ChatEngineError("原生动作流式响应没有解析到文本或动作。");
         }
+        // 原生工具流式这条链路没有解析 usage：按次计价的配置照扣，按量计价的会跳过（避免瞎估）
+        chargeForLlmCall(config, undefined);
 
         return {
             content,
@@ -1311,16 +1427,34 @@ export async function sendLLMToolStreamRequest(
             providerKind: request.providerKind,
         };
     } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        emitDiag({
+            type: "error",
+            at: Date.now(),
+            message: detail.slice(0, 800),
+            aborted: !!options?.signal?.aborted,
+            timedOut: !options?.signal?.aborted && (streamWatchdog ? streamWatchdog.timedOut : llmAbort.signal.aborted),
+            contentChars: content.length,
+            reasoningChars: reasoning.length,
+            rawTail: rawResponse.slice(-1200),
+        });
+        if (streamWatchdog && streamWatchdog.timedOut && !options?.signal?.aborted) {
+            // 看门狗是用 Error 作 abort reason 的，fetch 抛出的是它而不是 DOMException，判闸必须排前面
+            if (streamWatchdog.idleTimedOut) {
+                throw new ChatEngineError(`AI 原生动作流式回复中断（${Math.round((options?.streamIdleMs ?? 0) / 1000)} 秒没有收到数据），请重试。`);
+            }
+            throw new ChatEngineError(`AI 原生动作流式回复超时（${Math.round((options?.timeoutMs ?? 500_000) / 1000)} 秒），请重试。`);
+        }
         if (error instanceof DOMException && error.name === "AbortError") {
             if (options?.signal?.aborted) throw error;
             throw new ChatEngineError("AI 原生动作流式回复超时（500秒），请重试。");
         }
         if (error instanceof ChatEngineError) throw error;
-        const detail = error instanceof Error ? error.message : String(error);
         throw new ChatEngineError(`Tool Stream Network Error connecting to AI Provider: ${detail}`);
     } finally {
-        clearTimeout(llmTimeout);
-        detachExternalAbort();
+        if (llmTimeout !== null) clearTimeout(llmTimeout);
+        if (detachExternalAbort) detachExternalAbort();
+        streamWatchdog?.dispose();
     }
 }
 

@@ -15,6 +15,8 @@ import type { ToolCall, ToolResult } from "./tool-executor";
 import type { MascotPageContext } from "./mascot-context";
 import type { Prompt } from "./settings-types";
 import { CHARACTER_CARD_PROMPT, CHARACTER_WORLD_PROMPT, WORLDBOOK_PROMPT, PRESET_PROMPT, GENERAL_PRESET_PROMPT, REGEX_PROMPT, CSS_PROMPT, WIDGET_PROMPT, MIXOLOGY_PROMPT } from "./mascot-prompts";
+import { describeMascotNameConflict, describeMascotNameMiss, pickMascotNameCandidates } from "./mascot-entity-lookup";
+import { recordMascotTaskLedger } from "./mascot-task-ledger";
 import {
     buildCssAssetNineSliceCss,
     calibrateCssAssetNineSlice,
@@ -776,17 +778,29 @@ const MIX_LIST_CABINET_SCHEMA = {
 const MIX_READ_MATERIAL_SCHEMA = {
     type: "object",
     properties: {
-        id: { type: "string", description: "材料 id（优先用，列出酒柜可查）" },
+        id: { type: "string", description: "材料 id（优先用；写操作的成功回执与本轮台账都带 id）" },
         name: { type: "string", description: "材料名（无 id 时用；重名会返回候选列表）" },
+        mode: {
+            type: "string",
+            enum: ["outline", "window", "full"],
+            description: "outline = 只回字段地图（每个字段的路径/字数/开头锚点，不含正文）——改文本前默认用这个，最省 token；window = 只回 anchor 附近一小段原文，用来抄准 find 片段；full = 整件材料全文（兼容旧用法，角色卡近万字，非必要别用）。",
+        },
+        fields: {
+            type: "array",
+            items: { type: "string" },
+            description: "只取这些字段路径的全文，如 [\"profileText\"]、[\"openings.0\",\"canvas\"]。给了 fields 就忽略 mode。",
+        },
+        anchor: { type: "string", description: "mode=window 时必填：原文里已知的一小段文字，回它附近的原文窗口" },
+        radius: { type: "number", description: "mode=window 的窗口大小（字符），默认 320，最大 1200" },
     },
 };
 
 const MIX_READ_CRAFT_SPEC_SCHEMA = {
     type: "object",
     properties: {
-        kind: { type: "string", enum: MIX_KIND_ENUM, description: "要读哪一类材料的制作规格" },
+        kind: { type: "string", enum: MIX_KIND_ENUM, description: "只读一类时用。读多类请改用 kinds，一轮拿齐" },
+        kinds: { type: "array", items: { type: "string", enum: MIX_KIND_ENUM }, description: "一次读多类的制作规格（建一整套副本时推荐：把要写的种类一轮全读）。规格读后常驻本轮系统提示词，不用重读" },
     },
-    required: ["kind"],
 };
 
 /** 创建/更新共用的字段说明（按 kind 取用，执行器会校验字段归属） */
@@ -911,6 +925,73 @@ const MIX_SAVE_RECIPE_SCHEMA = {
         },
     },
     required: ["name", "slots"],
+};
+
+/** 装配工作副本：一次性把配方里所有材料加载到常驻板 */
+const MIX_ASSEMBLE_WORKING_COPY_SCHEMA = {
+    type: "object",
+    properties: {
+        recipe: { type: "string", description: "配方名或 id；不传则加载酒柜全部材料（慎用）" },
+    },
+};
+
+/** 定点片段编辑：只输出改动片段，宿主内部完成 取原文→替换→校验→原子落盘 */
+const MIX_PATCH_MATERIAL_SCHEMA = {
+    type: "object",
+    properties: {
+        id: { type: "string", description: "材料 id（写操作回执 / 本轮台账里有）" },
+        name: { type: "string", description: "材料名（无 id 时用）" },
+        edits: {
+            type: "array",
+            description: "一批定点改动，全部校验通过才一次性落盘（原子提交）；一处都不要把整篇正文重新输出一遍。",
+            items: {
+                type: "object",
+                properties: {
+                    field: { type: "string", description: "字段路径，见 读取材料 mode:outline 的字段地图。如 content / profileText / worldText / canvas / contract / renderHtml / css / script / panelHtml / openings.0 / examples.2.text" },
+                    find: { type: "string", description: "【替换】要被换掉的原文片段，须与原文完全一致（含空格换行），默认要求唯一匹配" },
+                    replace: { type: "string", description: "【替换】换上去的新片段；传空串表示删除" },
+                    all: { type: "boolean", description: "【替换】find 匹配多处时传 true 全部替换" },
+                    append: { type: "string", description: "【分段追加】把这一小段接到字段末尾。长正文分几轮 append，每轮只输出一段，绝不会被输出上限截断" },
+                    prepend: { type: "string", description: "【开头插入】把这一小段插到字段开头" },
+                    sep: { type: "string", description: "append / prepend 的连接符，默认换行；不想换行就传空串" },
+                    insertAfter: { type: "string", description: "【锚点插入】在这段原文之后插入 text" },
+                    insertBefore: { type: "string", description: "【锚点插入】在这段原文之前插入 text" },
+                    text: { type: "string", description: "【锚点插入】要插入的内容，配 insertAfter / insertBefore 用" },
+                    content: { type: "string", description: "【整段覆写】只在确实要重写整个字段时用，等价于更新材料" },
+                },
+                required: ["field"],
+            },
+        },
+        // 单条便捷写法：不想包 edits 时，直接把 field + 一个操作平铺在参数里
+        field: { type: "string", description: "单条写法的字段路径（与 edits 二选一）" },
+        find: { type: "string" }, replace: { type: "string" }, all: { type: "boolean" },
+        append: { type: "string" }, prepend: { type: "string" }, sep: { type: "string" },
+        insertAfter: { type: "string" }, insertBefore: { type: "string" }, text: { type: "string" },
+        content: { type: "string" },
+    },
+};
+
+/** 批量建副本：一次建一批材料；finish 时按本轮台账自动装槽成杯 */
+const MIX_BUILD_RECIPE_SCHEMA = {
+    type: "object",
+    properties: {
+        name: { type: "string", description: "这杯特调的名字（整轮任务里保持同一个名字）" },
+        materials: {
+            type: "array",
+            description: "本批要建的材料。每件至少给必填正文的起手内容，长正文之后用「改材料片段」的 append 分批补；一次带 2~4 件即可，别把整套长文塞进一次输出。",
+            items: {
+                type: "object",
+                properties: {
+                    kind: { type: "string", enum: MIX_KIND_ENUM, description: "材料种类" },
+                    name: { type: "string", description: "材料名" },
+                    ...MIX_MATERIAL_FIELDS,
+                },
+                required: ["kind", "name"],
+            },
+        },
+        finish: { type: "boolean", description: "true = 材料齐了，按本轮台账自动装槽并保存配方（不用再调「保存配方」，也不用记任何 id）。false / 不传 = 只建材料，回执带完整 id 台账供后续接着补正文。" },
+    },
+    required: ["name"],
 };
 
 export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
@@ -1042,14 +1123,17 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
     {
         id: "mixology_pack",
         label: "独家特调套件",
-        description: "管理「独家特调」App（调酒式角色扮演）的酒柜材料与配方：12 类材料（角色卡/面具/序言/基底/风味/杯型/苦精/小票/外观/尾调/滤网/机括）的创建修改、配方调制，以及机括调外部接口用的连接器。与聊天系统的角色卡完全无关。写代码类材料前必须先 读取制作说明。",
+        description: "管理「独家特调」App（调酒式角色扮演）的酒柜材料与配方：13 类材料的创建修改、配方调制，以及机括调外部接口用的连接器。与聊天系统的角色卡完全无关。改一句话用「改材料片段」定点替换，不要读全文再整篇重写；建一整套用「新建副本」批量建材料并自动装槽；写代码类材料前先 读取制作说明。",
         subTools: [
-            { name: "列出酒柜", description: "列出酒柜材料与官方出厂件（含 id/种类/来源），不传 kind 时附配方清单。", parameterSchema: MIX_LIST_CABINET_SCHEMA },
-            { name: "读取材料", description: "按 id 或名字读取一件材料的完整字段。导入的他人角色卡正文封存，只回元信息。", parameterSchema: MIX_READ_MATERIAL_SCHEMA },
-            { name: "读取制作说明", description: "获取某类材料的完整制作规格（机制约束 + 质量要求 + 字段对照）。新建小票/尾调/机括/带画布的角色卡之前必读。", parameterSchema: MIX_READ_CRAFT_SPEC_SCHEMA },
-            { name: "创建材料", description: "新建一件材料入柜。字段按 kind 取用（见各字段说明），执行器会按类校验并给出精确报错。", parameterSchema: MIX_CREATE_MATERIAL_SCHEMA },
-            { name: "更新材料", description: "增量修改一件自建材料（只传要改的字段）。官方件与导入件不可改。", parameterSchema: MIX_UPDATE_MATERIAL_SCHEMA },
-            { name: "保存配方", description: "把酒柜/官方材料按槽位配成一杯特调（可设生效条件），用户在吧台即可选它开局。", parameterSchema: MIX_SAVE_RECIPE_SCHEMA },
+            { name: "列出酒柜", description: "列出酒柜材料与官方出厂件（含 id/种类/来源），不传 kind 时附配方清单。写操作的回执里带本轮台账，通常不必再调它。", parameterSchema: MIX_LIST_CABINET_SCHEMA },
+            { name: "读取材料", description: "按 id 或名字读取材料。默认 mode:outline 只回字段地图（字段名/字数/开头锚点，不含正文）；要看局部原文用 mode:window + anchor；只取某字段用 fields；mode:full 才回全文。导入的他人角色卡正文封存。", parameterSchema: MIX_READ_MATERIAL_SCHEMA },
+            { name: "读取制作说明", description: "获取材料的制作规格（机制约束 + 质量要求 + 字段对照）。读过的规格常驻本轮系统提示词，整轮有效、不用重读；建一整套时用 kinds 一次读多类。新建小票/尾调/机括/带画布的角色卡之前必读。", parameterSchema: MIX_READ_CRAFT_SPEC_SCHEMA },
+            { name: "创建材料", description: "新建一件材料入柜。字段按 kind 取用（见各字段说明），执行器会按类校验并给出精确报错。建多件优先用「新建副本」。", parameterSchema: MIX_CREATE_MATERIAL_SCHEMA },
+            { name: "改材料片段", description: "改已有材料的首选：按 (材料 id, 字段路径) 做 find/replace 片段替换、append 分段追加、锚点插入。只输出改动片段，不输出整篇正文；可一次带多条 edits，全部校验通过才原子落盘。失败回执自带附近原文，不必重读全文。", parameterSchema: MIX_PATCH_MATERIAL_SCHEMA },
+            { name: "新建副本", description: "建一整套特调的入口：一次批量建 2~4 件材料，回执给完整 id 台账；材料齐后带 finish:true 自动按台账装槽并保存配方。同名再建会被拒并还回已有 id，中途断联重试安全。", parameterSchema: MIX_BUILD_RECIPE_SCHEMA },
+            { name: "更新材料", description: "整段覆写一个字段时用（只传要改的字段）。改局部文字一律优先「改材料片段」。官方件与导入件不可改。", parameterSchema: MIX_UPDATE_MATERIAL_SCHEMA },
+            { name: "保存配方", description: "把酒柜/官方材料按槽位配成一杯特调（可设生效条件），用户在吧台即可选它开局。用「新建副本」finish:true 时不用再调它。", parameterSchema: MIX_SAVE_RECIPE_SCHEMA },
+            { name: "装配工作副本", description: "把指定配方（或酒柜全部）的所有材料一次性加载到常驻板，所有正文常驻本轮系统提示词。修改用「改材料片段」或「更新材料」实时写回，会自动同步到板。", parameterSchema: MIX_ASSEMBLE_WORKING_COPY_SCHEMA },
             { name: "列出连接器", description: "列出用户本机的连接器（机括 mix.call 用的外部接口：名字/地址/密钥是否已填）与可用预设。密钥值不会返回。", parameterSchema: MIX_LIST_CONNECTORS_SCHEMA },
             { name: "创建连接器", description: "替用户建一个连接器：传 preset 一键生成（如 MiniMax 语音），或自己给 url/headers/body。密钥留占位，由用户到酒柜「连接器」里填。", parameterSchema: MIX_SAVE_CONNECTOR_SCHEMA },
             { name: "删除连接器", description: "按名字删除一个连接器。", parameterSchema: MIX_DELETE_CONNECTOR_SCHEMA },
@@ -1086,7 +1170,7 @@ export function buildMascotToolsListPrompt(): string {
     lines.push("===== 调用规则 =====");
     lines.push("· 展开套件：使用 [获取指令:套件名] 格式，例如 [获取指令:CSS样式套件]");
     lines.push("· 执行动作：使用 [执行动作:动作名({\"参数\":\"值\"})] 格式，例如 [执行动作:读取CSS({\"location\":\"chat_session\"})]");
-    lines.push("· 同时展开的套件最多 2 个，超过会自动淘汰最旧的");
+    lines.push(`· 同时展开的套件最多 ${MASCOT_MAX_EXPANDED} 个，超过会自动淘汰最旧的`);
     lines.push("· 不需要工具时直接回复文字，正常聊天");
     lines.push("· 重要：调用动作时，回复文本里**不要复述**动作参数的内容（比如不要把 persona 完整文本再写一遍），回复只用一两句话简短说明你在做什么");
     return lines.join("\n");
@@ -1177,8 +1261,11 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "读取材料": "mascot_mix_read_material",
     "读取制作说明": "mascot_mix_read_craft_spec",
     "创建材料": "mascot_mix_create_material",
+    "改材料片段": "mascot_mix_patch_material",
+    "新建副本": "mascot_mix_build_recipe",
     "更新材料": "mascot_mix_update_material",
     "保存配方": "mascot_mix_save_recipe",
+    "装配工作副本": "mascot_mix_assemble_working_copy",
     "列出连接器": "mascot_mix_list_connectors",
     "创建连接器": "mascot_mix_save_connector",
     "删除连接器": "mascot_mix_delete_connector",
@@ -1386,7 +1473,8 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "移除DIY组件": return await handleRemoveDiyWidget(call.args);
 
             // ─── 独家特调 ───
-            case "列出酒柜": case "读取材料": case "读取制作说明": case "创建材料": case "更新材料": case "保存配方":
+            case "列出酒柜": case "读取材料": case "读取制作说明": case "创建材料": case "改材料片段": case "新建副本": case "更新材料": case "保存配方":
+            case "装配工作副本":
             case "列出连接器": case "创建连接器": case "删除连接器": {
                 const mix = await import("./mixology/mascot-tools");
                 switch (call.name) {
@@ -1394,7 +1482,10 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
                     case "读取材料": return mix.mixToolReadMaterial(call.args);
                     case "读取制作说明": return mix.mixToolReadCraftSpec(call.args);
                     case "创建材料": return mix.mixToolCreateMaterial(call.args);
+                    case "改材料片段": return mix.mixToolPatchMaterial(call.args);
+                    case "新建副本": return mix.mixToolBuildRecipe(call.args);
                     case "更新材料": return mix.mixToolUpdateMaterial(call.args);
+                    case "装配工作副本": return mix.mixToolAssembleWorkingCopy(call.args);
                     case "列出连接器": return mix.mixToolListConnectors();
                     case "创建连接器": return mix.mixToolSaveConnector(call.args);
                     case "删除连接器": return mix.mixToolDeleteConnector(call.args);
@@ -1879,6 +1970,11 @@ async function handleClearCss(args: Record<string, unknown>, ctx: MascotToolCont
 
 // ── Character Handlers ──────────────────────────
 
+/** 角色池子按 {id,name} 取出来，供统一的名字回执用 */
+function characterLookupRows(chars: { id: string; name?: string | null }[]) {
+    return chars.map((c) => ({ id: c.id, name: String(c.name || "") }));
+}
+
 async function handleReadCharacter(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadCharacters } = await import("./character-storage");
     const chars = loadCharacters();
@@ -1889,7 +1985,17 @@ async function handleReadCharacter(args: Record<string, unknown>): Promise<ToolR
         return { name: "读取角色", success: true, data: `共 ${chars.length} 个角色：\n${lines.join("\n")}` };
     }
     const char = chars.find((c) => c.name === name);
-    if (!char) return { name: "读取角色", success: false, error: `找不到角色：${name}` };
+    if (!char) {
+        return {
+            name: "读取角色",
+            success: false,
+            error: describeMascotNameMiss({
+                label: "角色",
+                name,
+                candidates: pickMascotNameCandidates(characterLookupRows(chars), name, (c) => `角色「${c.name}」`),
+            }),
+        };
+    }
     const parts: string[] = [];
     parts.push(`id: ${char.id}`);
     parts.push(`name: ${char.name || ""}`);
@@ -1902,7 +2008,15 @@ async function handleReadCharacter(args: Record<string, unknown>): Promise<ToolR
 async function handleCreateCharacter(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadCharacters, saveCharacters } = await import("./character-storage");
     const chars = loadCharacters();
-    if (chars.find((c) => c.name === args.name)) return { name: "创建角色", success: false, error: "已存在同名角色" };
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    const twin = chars.find((c) => c.name === name);
+    if (twin) {
+        return {
+            name: "创建角色",
+            success: false,
+            error: describeMascotNameConflict({ label: "角色", name, id: twin.id, updateTool: "更新角色字段" }),
+        };
+    }
     const now = new Date().toISOString();
     const briefPersona = typeof args.briefPersona === "string" ? args.briefPersona.trim() : "";
     const newChar = {
@@ -1918,7 +2032,8 @@ async function handleCreateCharacter(args: Record<string, unknown>): Promise<Too
     };
     chars.push(newChar as typeof chars[number]);
     saveCharacters(chars);
-    return { name: "创建角色", success: true, data: `已创建角色 ${newChar.name} (${newChar.id})${briefPersona ? "，含简量人设" : ""}` };
+    recordMascotTaskLedger({ scope: "character", id: newChar.id, name: String(newChar.name), label: `角色「${newChar.name}」` });
+    return { name: "创建角色", success: true, data: `已创建角色 ${newChar.name}（id: ${newChar.id}）${briefPersona ? "，含简量人设" : ""}` };
 }
 
 async function handleUpdateCharacterField(args: Record<string, unknown>, ctx: MascotToolContext): Promise<ToolResult> {
@@ -1926,7 +2041,17 @@ async function handleUpdateCharacterField(args: Record<string, unknown>, ctx: Ma
     const { backupCharacterVersion, getCharacterCurrentVersion } = await import("./character-version-storage");
     const chars = loadCharacters();
     const idx = chars.findIndex((c) => c.name === args.name);
-    if (idx < 0) return { name: "更新角色字段", success: false, error: `找不到角色：${args.name}` };
+    if (idx < 0) {
+        return {
+            name: "更新角色字段",
+            success: false,
+            error: describeMascotNameMiss({
+                label: "角色",
+                name: typeof args.name === "string" ? args.name : String(args.name ?? ""),
+                candidates: pickMascotNameCandidates(characterLookupRows(chars), String(args.name ?? ""), (c) => `角色「${c.name}」`),
+            }),
+        };
+    }
     const field = args.field as string;
     const value = args.value as string;
     const now = new Date().toISOString();
@@ -1950,10 +2075,16 @@ async function handleUpdateCharacterField(args: Record<string, unknown>, ctx: Ma
     char.updatedAt = now;
     chars[idx] = char as typeof chars[number];
     saveCharacters(chars);
+    recordMascotTaskLedger({
+        scope: "character",
+        id: String(char.id),
+        name: String(field === "name" ? value : char.name ?? args.name ?? ""),
+        label: `角色「${char.name}」`,
+    });
     return {
         name: "更新角色字段",
         success: true,
-        data: `${didBackup ? "已为本次任务自动备份旧卡，并" : "本次任务已备份，继续"}更新 ${args.name} 的 ${field}；当前版本 V${nextVersion}`,
+        data: `${didBackup ? "已为本次任务自动备份旧卡，并" : "本次任务已备份，继续"}更新 ${args.name} 的 ${field}（id: ${char.id}）；当前版本 V${nextVersion}`,
     };
 }
 
@@ -2211,6 +2342,32 @@ async function loadPresetStorage() {
     return storage;
 }
 
+/**
+ * 预设引用：id 与名字都认（真机里模型把名字塞进 presetId 的情况很多，旧代码只会回
+ * 「找不到预设 id：剧情」，它就再去 列出预设 绕一圈）。先按 id、再按精确名，
+ * 都不中就把现有预设连 id 一起端回去。
+ */
+function resolvePresetRef<T extends { id: string; name: string }>(
+    presets: T[],
+    value: unknown,
+): { ok?: T; err?: string } {
+    const NAME_LABEL = "预设";
+    const ref = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+    if (!ref) return { err: `请传预设 id 或名字。` };
+    const byId = presets.find((p) => p.id === ref);
+    if (byId) return { ok: byId };
+    const byName = presets.find((p) => p.name === ref);
+    if (byName) return { ok: byName };
+    return {
+        err: describeMascotNameMiss({
+            label: NAME_LABEL,
+            name: ref,
+            candidates: pickMascotNameCandidates(presets, ref, (p) => `${NAME_LABEL}「${p.name}」`),
+            listTool: "列出预设",
+        }),
+    };
+}
+
 function createPresetPromptIdentifier(name: string, requested: unknown, existingIds: Set<string>): string {
     const requestedId = typeof requested === "string" ? requested.trim() : "";
     const markerId = name.startsWith("◇ ") ? MARKER_NAMES[name] : "";
@@ -2251,8 +2408,11 @@ async function handleListPresets(): Promise<ToolResult> {
 async function handleReadPreset(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets } = await loadPresetStorage();
     const presets = loadPresets();
-    const preset = presets.find((p) => p.name === args.name || p.name.includes(args.name as string));
-    if (!preset) return { name: "读取预设", success: false, error: `找不到预设：${args.name}` };
+    // 精确命中：旧的 `p.name === name || p.name.includes(name)` 会静默抓到近似名的第一件，
+    // 结果「剧情」读到的是「剧情·加长版」，模型据此改动了另一杯东西。
+    const found = resolvePresetRef(presets, args.name ?? args.presetId);
+    if (!found.ok) return { name: "读取预设", success: false, error: found.err };
+    const preset = found.ok;
     const parts: string[] = [];
     parts.push(`id: ${preset.id}`);
     parts.push(`name: ${preset.name}`);
@@ -2285,8 +2445,10 @@ async function handleReadPreset(args: Record<string, unknown>): Promise<ToolResu
 async function handleReadPresetPrompt(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets } = await loadPresetStorage();
     const presets = loadPresets();
-    const preset = presets.find((p) => p.id === args.presetId);
-    if (!preset) return { name: "读取预设条目", success: false, error: `找不到预设 id：${args.presetId}` };
+    const found = resolvePresetRef(presets, args.presetId ?? args.presetName);
+    if (!found.ok) return { name: "读取预设条目", success: false, error: found.err };
+    const preset = presets.find((p) => p.id === found.ok?.id);
+    if (!preset) return { name: "读取预设条目", success: false, error: `找不到预设：${String(args.presetId ?? "")}` };
     const idx = args.promptIndex as number;
     const p = preset.prompts?.[idx];
     if (!p) return { name: "读取预设条目", success: false, error: `promptIndex ${idx} 越界（共 ${preset.prompts?.length || 0} 条）` };
@@ -2310,7 +2472,11 @@ async function handleReadPresetPrompt(args: Record<string, unknown>): Promise<To
 async function handleCreateStoryPreset(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync, createPreset } = await loadPresetStorage();
     const presets = loadPresets();
-    if (presets.find((p) => p.name === args.name)) return { name: "创建剧情预设", success: false, error: "已存在同名预设" };
+    const presetName = typeof args.name === "string" ? args.name.trim() : "";
+    const twin = presets.find((p) => p.name === presetName);
+    if (twin) {
+        return { name: "创建剧情预设", success: false, error: describeMascotNameConflict({ label: "预设", name: presetName, id: twin.id, updateTool: "更新预设信息" }) };
+    }
 
     const promptInputs = (args.prompts as Array<Record<string, unknown>>) || [];
     // 用现成的 createPreset 拿带默认采样参数（temperature/top_p 等）的骨架，避免缺字段
@@ -2346,13 +2512,18 @@ async function handleCreateStoryPreset(args: Record<string, unknown>): Promise<T
 
     presets.push(newPreset);
     await savePresetsAsync(presets);
-    return { name: "创建剧情预设", success: true, data: `已创建剧情预设 ${newPreset.name} (${newPreset.id})，含 ${newPreset.prompts.length} 条 prompt` };
+    recordMascotTaskLedger({ scope: "preset", id: String(newPreset.id), name: String(newPreset.name), label: `预设「${newPreset.name}」` });
+    return { name: "创建剧情预设", success: true, data: `已创建剧情预设 ${newPreset.name}（id: ${newPreset.id}），含 ${newPreset.prompts.length} 条 prompt` };
 }
 
 async function handleCloneBuiltinPreset(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync } = await loadPresetStorage();
     const presets = loadPresets();
-    if (presets.find((p) => p.name === args.name)) return { name: "克隆内置预设", success: false, error: "已存在同名预设" };
+    const cloneName = typeof args.name === "string" ? args.name.trim() : "";
+    const cloneTwin = presets.find((p) => p.name === cloneName);
+    if (cloneTwin) {
+        return { name: "克隆内置预设", success: false, error: describeMascotNameConflict({ label: "预设", name: cloneName, id: cloneTwin.id, updateTool: "更新预设信息" }) };
+    }
 
     const builtIn = presets.find((p) => p.builtIn);
     if (!builtIn) return { name: "克隆内置预设", success: false, error: "系统里没有内置预设，无法克隆" };
@@ -2367,16 +2538,31 @@ async function handleCloneBuiltinPreset(args: Record<string, unknown>): Promise<
     copy.updatedAt = Date.now();
     presets.push(copy);
     await savePresetsAsync(presets);
-    return { name: "克隆内置预设", success: true, data: `已克隆内置预设为「${copy.name}」(${copy.id})，含 ${copy.prompts.length} 条 prompt。后续按需用「更新预设条目」改` };
+    recordMascotTaskLedger({ scope: "preset", id: String(copy.id), name: String(copy.name), label: `预设「${copy.name}」` });
+    return { name: "克隆内置预设", success: true, data: `已克隆内置预设为「${copy.name}」（id: ${copy.id}），含 ${copy.prompts.length} 条 prompt。后续按需用「更新预设条目」改` };
 }
 
 async function handleDuplicatePreset(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync } = await loadPresetStorage();
     const presets = loadPresets();
-    const source = presets.find((p) => p.name === args.sourceName || p.name.includes(args.sourceName as string));
-    if (!source) return { name: "复制预设", success: false, error: `找不到源预设：${args.sourceName}` };
+    const source = presets.find((p) => p.name === args.sourceName || p.id === args.sourceName);
+    if (!source) {
+        return {
+            name: "复制预设",
+            success: false,
+            error: describeMascotNameMiss({
+                label: "源预设",
+                name: String(args.sourceName ?? ""),
+                candidates: pickMascotNameCandidates(presets, String(args.sourceName ?? ""), (p) => `预设「${p.name}」`),
+                listTool: "列出预设",
+            }),
+        };
+    }
     const newName = args.newName as string;
-    if (presets.find((p) => p.name === newName)) return { name: "复制预设", success: false, error: `已存在同名预设：${newName}` };
+    const copyTwin = presets.find((p) => p.name === newName);
+    if (copyTwin) {
+        return { name: "复制预设", success: false, error: describeMascotNameConflict({ label: "预设", name: newName, id: copyTwin.id, updateTool: "更新预设信息" }) };
+    }
     const copy = JSON.parse(JSON.stringify(source)) as typeof source;
     copy.id = `preset_${Date.now()}`;
     copy.name = newName;
@@ -2387,14 +2573,16 @@ async function handleDuplicatePreset(args: Record<string, unknown>): Promise<Too
     copy.updatedAt = Date.now();
     presets.push(copy);
     await savePresetsAsync(presets);
-    return { name: "复制预设", success: true, data: `已基于「${source.name}」创建副本「${copy.name}」(${copy.id})，含 ${copy.prompts.length} 条 prompt` };
+    return { name: "复制预设", success: true, data: `已基于「${source.name}」创建副本「${copy.name}」（id: ${copy.id}），含 ${copy.prompts.length} 条 prompt` };
 }
 
 async function handleAddPresetPrompt(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync } = await loadPresetStorage();
     const presets = loadPresets();
-    const idx = presets.findIndex((p) => p.id === args.presetId);
-    if (idx < 0) return { name: "添加预设条目", success: false, error: `找不到预设 id：${args.presetId}` };
+    const found = resolvePresetRef(presets, args.presetId ?? args.presetName);
+    if (!found.ok) return { name: "添加预设条目", success: false, error: found.err };
+    const idx = presets.findIndex((p) => p.id === found.ok?.id);
+    if (idx < 0) return { name: "添加预设条目", success: false, error: `找不到预设：${String(args.presetId ?? "")}` };
 
     const name = typeof args.name === "string" ? args.name.trim() : "";
     if (!name) return { name: "添加预设条目", success: false, error: "name 不能为空" };
@@ -2437,14 +2625,16 @@ async function handleAddPresetPrompt(args: Record<string, unknown>): Promise<Too
     await savePresetsAsync(presets);
 
     const promptIndex = preset.prompts.findIndex((item) => item.identifier === prompt.identifier);
-    return { name: "添加预设条目", success: true, data: `已添加 prompt[${promptIndex}]「${prompt.name}」(${prompt.identifier})` };
+    return { name: "添加预设条目", success: true, data: `已给「${preset.name}」（id: ${preset.id}）添加 prompt[${promptIndex}]「${prompt.name}」(${prompt.identifier})` };
 }
 
 async function handleUpdatePresetPrompt(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync } = await loadPresetStorage();
     const presets = loadPresets();
-    const idx = presets.findIndex((p) => p.id === args.presetId);
-    if (idx < 0) return { name: "更新预设条目", success: false, error: `找不到预设 id：${args.presetId}` };
+    const found = resolvePresetRef(presets, args.presetId ?? args.presetName);
+    if (!found.ok) return { name: "更新预设条目", success: false, error: found.err };
+    const idx = presets.findIndex((p) => p.id === found.ok?.id);
+    if (idx < 0) return { name: "更新预设条目", success: false, error: `找不到预设：${String(args.presetId ?? "")}` };
     const preset = { ...presets[idx], prompts: [...presets[idx].prompts] };
     const promptIdx = args.promptIndex as number;
     if (promptIdx < 0 || promptIdx >= preset.prompts.length) return { name: "更新预设条目", success: false, error: `promptIndex 越界（共 ${preset.prompts.length} 条）` };
@@ -2460,21 +2650,24 @@ async function handleUpdatePresetPrompt(args: Record<string, unknown>): Promise<
     preset.updatedAt = Date.now();
     presets[idx] = preset;
     await savePresetsAsync(presets);
-    return { name: "更新预设条目", success: true, data: `已更新 prompt[${promptIdx}] 的 ${field}` };
+    return { name: "更新预设条目", success: true, data: `已更新「${preset.name}」（id: ${preset.id}）的 prompt[${promptIdx}] 的 ${field}` };
 }
 
 async function handleUpdatePresetInfo(args: Record<string, unknown>): Promise<ToolResult> {
     const { loadPresets, savePresetsAsync } = await loadPresetStorage();
     const presets = loadPresets();
-    const idx = presets.findIndex((p) => p.id === args.presetId);
-    if (idx < 0) return { name: "更新预设信息", success: false, error: `找不到预设 id：${args.presetId}` };
+    const found = resolvePresetRef(presets, args.presetId ?? args.presetName ?? args.oldName);
+    if (!found.ok) return { name: "更新预设信息", success: false, error: found.err };
+    const idx = presets.findIndex((p) => p.id === found.ok?.id);
+    if (idx < 0) return { name: "更新预设信息", success: false, error: `找不到预设：${String(args.presetId ?? "")}` };
     const preset = { ...presets[idx] };
     if (args.name !== undefined) preset.name = args.name as string;
     if (args.description !== undefined) preset.description = args.description as string;
     preset.updatedAt = Date.now();
     presets[idx] = preset;
     await savePresetsAsync(presets);
-    return { name: "更新预设信息", success: true, data: `已更新预设 ${preset.name}` };
+    recordMascotTaskLedger({ scope: "preset", id: String(preset.id), name: String(preset.name), label: `预设「${preset.name}」` });
+    return { name: "更新预设信息", success: true, data: `已更新预设 ${preset.name}（id: ${preset.id}）` };
 }
 
 // ── Regex Handlers ────────────────────────────
@@ -2880,7 +3073,12 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
 // ── 套件展开管理 ─────────────────────────────
 
 const EXPANDED_STORAGE_KEY = "mascot_expanded_packages_v1";
-const MAX_EXPANDED = 2;
+/**
+ * 同时记住的套件上限。
+ * 旧值 2 太紧：跨套件做事（特调 + 角色卡 + 图像）时第三个一进来就把第一个挤掉，
+ * 说明没了，模型只能再展开一次——真机日志里一条任务展开 9~10 次、全程 55 次。
+ */
+export const MASCOT_MAX_EXPANDED = 3;
 
 function normalizeExpandedPackageIds(ids: unknown): string[] {
     if (!Array.isArray(ids)) return [];
@@ -2892,7 +3090,7 @@ function normalizeExpandedPackageIds(ids: unknown): string[] {
         if (existing >= 0) normalized.splice(existing, 1);
         normalized.push(id);
     }
-    return normalized.slice(-MAX_EXPANDED);
+    return normalized.slice(-MASCOT_MAX_EXPANDED);
 }
 
 export function loadExpandedPackages(): string[] {
@@ -2929,7 +3127,62 @@ export function touchExpandedPackage(currentIds: string[], packageId: string): s
     if (!validIds.has(packageId)) return currentIds;
     const next = currentIds.filter((id) => id !== packageId);
     next.push(packageId);
-    return next.slice(-MAX_EXPANDED);
+    return next.slice(-MASCOT_MAX_EXPANDED);
+}
+
+/**
+ * 特调意图判定：用户原话里出现这些词，基本就是要动酒柜/配方。
+ * 宁可略宽（多展开一个套件只花一份常驻说明），不可漏判（漏了就要多花一整轮去展开）。
+ * 「角色卡」不算：聊天系统的角色编辑与特调无关，只有特调专有词才触发。
+ */
+const MIXOLOGY_INTENT_RE = /特调|副本|酒柜|酒材|配方|调酒|材料|基底|风味|杯型|苦精|小票|尾调|机括|滤网|核对|面具|序言|开场画布|连接器/;
+
+export function detectMixologyIntent(text: string): boolean {
+    return MIXOLOGY_INTENT_RE.test(text || "");
+}
+
+/**
+ * 意图自动展开：用户这条消息明显要做特调时，直接把 mixology_pack 记进已展开集合，
+ * 省掉「模型先花一轮展开套件」的开销。无意图或已展开时返回原引用（调用方据此跳过持久化）。
+ */
+export function autoExpandMixologyPackage(currentIds: string[], userText: string): string[] {
+    if (!detectMixologyIntent(userText)) return currentIds;
+    if (currentIds.includes("mixology_pack")) return currentIds;
+    return touchExpandedPackage(currentIds, "mixology_pack");
+}
+
+/**
+ * 已展开套件的动作说明，作为系统提示的常驻段落。
+ *
+ * 旧做法是把说明当一条普通 tool 消息塞进历史，而历史只带最近 40 条：
+ * 长任务里指南被挤出窗口，模型开始凭记忆编动作名（真机日志里 7 个动作名压根不存在），
+ * 或者干脆再展开一次（一条任务展开 9~10 次）。改成进系统提示后，只要套件还在展开集合里就一直有效。
+ */
+export function buildExpandedPackageGuidePrompt(
+    packageIds: string[],
+    protocol: "text" | "native" = "text",
+): string {
+    const blocks: string[] = [];
+    for (const id of packageIds || []) {
+        const pkg = MASCOT_TOOL_PACKAGES.find((p) => p.id === id);
+        if (!pkg) continue;
+        // 原生协议下动作 schema 已经在 tools 里给过模型了，重复贴一遍只是烧 token；
+        // 但「写作指南」不在 schema 里，正是被历史窗口挤出去后模型开始编动作名的那部分，必须常驻。
+        if (protocol === "native") {
+            if (!pkg.usageGuide) continue;
+            blocks.push(`【${pkg.label}】\n${pkg.usageGuide}`);
+        } else {
+            blocks.push(buildMascotPackageSchemaPrompt(pkg.label, protocol));
+        }
+    }
+    if (!blocks.length) return "";
+    return [
+        "===== 已展开套件的动作说明 =====",
+        "下面这些套件本轮已经展开，说明在这一整轮任务里持续有效：**不用再展开一次**，直接按里面的动作名和参数调用。",
+        "没列出来的套件才需要展开。动作名只能从这里和上面的套件清单里挑，别凭记忆编。",
+        "",
+        blocks.join("\n\n"),
+    ].join("\n");
 }
 
 /** 套件 label → packageId */
